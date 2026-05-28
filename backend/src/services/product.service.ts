@@ -1,0 +1,989 @@
+import prisma from "../prisma";
+import {
+  ProductType,
+  Location,
+  MovementType,
+  Product,
+  SaleUnit,
+} from "@prisma/client";
+import { Express } from "express";
+import cloudinary from "../config/cloudinary";
+import fs from "fs";
+
+function normalizeSku(raw: string): string {
+  return raw
+    .trim()
+    .replace(/['"]/g, "")
+    .replace(/\s+/g, "");
+}
+
+function toNumberOrNull(v: any) {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toNumberOrZero(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function isValidPositiveNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0;
+}
+
+type ProductComponentInput = {
+  componentId?: string;
+  productId?: string;
+  quantity?: number | string;
+  quantityKg?: number | string;
+};
+
+type CreateProductInput = {
+  name: string;
+  type?: ProductType;
+  price?: number | string;
+  wholesalePrice?: number | string;
+  clientPrice?: number | string;
+
+  // Nueva categoría dinámica
+  categoryId?: string;
+
+  // Compatibilidad vieja, no se guarda más como enum
+  category?: string;
+
+  saleUnit?: SaleUnit | "UNIT" | "KG";
+  pricePerKg?: number | string;
+  clientPricePerKg?: number | string;
+  wholesalePricePerKg?: number | string;
+  stockLocalKg?: number | string;
+  stockDepositoKg?: number | string;
+  minStockKg?: number | string;
+
+  sku: string;
+
+  minStock?: number | string;
+  stockLocal?: number | string;
+  stockDeposito?: number | string;
+
+  file?: Express.Multer.File;
+
+  // Nuevo formato
+  components?: ProductComponentInput[];
+
+  // Compatibilidad con frontend viejo
+  boxContents?: { productId: string; quantity: number }[];
+};
+
+function normalizeComponents(data: CreateProductInput | any): ProductComponentInput[] {
+  if (Array.isArray(data.components)) return data.components;
+
+  if (Array.isArray(data.boxContents)) {
+    return data.boxContents.map((item: any) => ({
+      componentId: item.productId,
+      quantity: item.quantity,
+      quantityKg: item.quantityKg,
+    }));
+  }
+
+  return [];
+}
+
+async function validateCategory(categoryId?: string | null) {
+  if (!categoryId) return;
+
+  const category = await prisma.productCategory.findUnique({
+    where: { id: categoryId },
+    select: { id: true, isActive: true },
+  });
+
+  if (!category) {
+    throw new Error("La categoría seleccionada no existe");
+  }
+
+  if (!category.isActive) {
+    throw new Error("La categoría seleccionada está inactiva");
+  }
+}
+
+async function validateComponents(
+  compositeId: string | null,
+  components: ProductComponentInput[]
+) {
+  const normalized = components.map((c) => {
+    const componentId = c.componentId ?? c.productId;
+
+    return {
+      componentId,
+      quantity: toNumberOrNull(c.quantity),
+      quantityKg: toNumberOrNull(c.quantityKg),
+    };
+  });
+
+  const seen = new Set<string>();
+
+  for (const c of normalized) {
+    if (!c.componentId) {
+      throw new Error("Cada componente debe tener componentId");
+    }
+
+    if (compositeId && c.componentId === compositeId) {
+      throw new Error("Un producto no puede ser componente de sí mismo");
+    }
+
+    if (seen.has(c.componentId)) {
+      throw new Error("No podés repetir el mismo componente dentro de una promo");
+    }
+
+    seen.add(c.componentId);
+
+    const hasUnitQty = c.quantity !== null && c.quantity > 0;
+    const hasKgQty = c.quantityKg !== null && c.quantityKg > 0;
+
+    if (!hasUnitQty && !hasKgQty) {
+      throw new Error("Cada componente debe tener quantity o quantityKg mayor a 0");
+    }
+
+    const componentProduct = await prisma.product.findUnique({
+      where: { id: c.componentId },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        saleUnit: true,
+        isActive: true,
+      },
+    });
+
+    if (!componentProduct) {
+      throw new Error(`Componente ${c.componentId} no encontrado`);
+    }
+
+    if (!componentProduct.isActive) {
+      throw new Error(`El componente "${componentProduct.name}" está inactivo`);
+    }
+
+    if (componentProduct.type === ProductType.COMPUESTO) {
+      throw new Error(
+        `El componente "${componentProduct.name}" es COMPUESTO. Por ahora no se permiten promos dentro de promos`
+      );
+    }
+
+    if (componentProduct.saleUnit === SaleUnit.UNIT && hasKgQty) {
+      throw new Error(
+        `El componente "${componentProduct.name}" se vende por unidad, no por KG`
+      );
+    }
+
+    if (componentProduct.saleUnit === SaleUnit.KG && hasUnitQty) {
+      throw new Error(
+        `El componente "${componentProduct.name}" se vende por KG, no por unidad`
+      );
+    }
+  }
+
+  return normalized;
+}
+
+function validatePricesBySaleUnit(data: CreateProductInput | any) {
+  const saleUnit: SaleUnit = (data.saleUnit as SaleUnit) ?? SaleUnit.UNIT;
+  const type: ProductType = (data.type as ProductType) ?? ProductType.SIMPLE;
+
+  // Un producto compuesto/promo tiene precio propio.
+  // No lo tratamos como "descuento negativo"; tiene que tener precio válido.
+  if (saleUnit === SaleUnit.KG) {
+    const pricePerKg = toNumberOrNull(data.pricePerKg);
+    const clientPricePerKg = toNumberOrNull(data.clientPricePerKg);
+    const wholesalePricePerKg = toNumberOrNull(data.wholesalePricePerKg);
+
+    if (pricePerKg === null) {
+      throw new Error("Si saleUnit es KG, pricePerKg es requerido");
+    }
+
+    if (clientPricePerKg === null) {
+      throw new Error("Si saleUnit es KG, clientPricePerKg es requerido");
+    }
+
+    if (wholesalePricePerKg === null) {
+      throw new Error("Si saleUnit es KG, wholesalePricePerKg es requerido");
+    }
+
+    if (!isValidPositiveNumber(pricePerKg)) {
+      throw new Error("Si saleUnit es KG, pricePerKg debe ser mayor a 0");
+    }
+
+    if (!isValidPositiveNumber(clientPricePerKg)) {
+      throw new Error("Si saleUnit es KG, clientPricePerKg debe ser mayor a 0");
+    }
+
+    if (!isValidPositiveNumber(wholesalePricePerKg)) {
+      throw new Error("Si saleUnit es KG, wholesalePricePerKg debe ser mayor a 0");
+    }
+  }
+
+  if (saleUnit === SaleUnit.UNIT) {
+    const price = toNumberOrNull(data.price);
+    const clientPrice = toNumberOrNull(data.clientPrice);
+    const wholesalePrice = toNumberOrNull(data.wholesalePrice);
+
+    if (price === null) {
+      throw new Error("Si saleUnit es UNIT, price es requerido");
+    }
+
+    if (clientPrice === null) {
+      throw new Error("Si saleUnit es UNIT, clientPrice es requerido");
+    }
+
+    if (wholesalePrice === null) {
+      throw new Error("Si saleUnit es UNIT, wholesalePrice es requerido");
+    }
+
+    if (!isValidPositiveNumber(price)) {
+      throw new Error("Si saleUnit es UNIT, price debe ser mayor a 0");
+    }
+
+    if (!isValidPositiveNumber(clientPrice)) {
+      throw new Error("Si saleUnit es UNIT, clientPrice debe ser mayor a 0");
+    }
+
+    if (!isValidPositiveNumber(wholesalePrice)) {
+      throw new Error("Si saleUnit es UNIT, wholesalePrice debe ser mayor a 0");
+    }
+  }
+
+  if (type === ProductType.COMPUESTO && saleUnit === SaleUnit.KG) {
+    throw new Error("Por ahora los productos COMPUESTOS deben venderse por UNIT");
+  }
+}
+
+export const productService = {
+  async getAll() {
+    return prisma.product.findMany({
+      where: { isActive: true },
+      include: {
+        category: true,
+        components: {
+          include: {
+            component: {
+              include: {
+                category: true,
+              },
+            },
+          },
+        },
+        usedIn: {
+          include: {
+            composite: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  },
+
+  async getBySku(rawSku: string) {
+    const sku = normalizeSku(rawSku);
+
+    return prisma.product.findUnique({
+      where: { sku },
+      include: {
+        category: true,
+        components: {
+          include: {
+            component: {
+              include: {
+                category: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  },
+
+  async getById(id: string) {
+    return prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        components: {
+          include: {
+            component: {
+              include: {
+                category: true,
+              },
+            },
+          },
+        },
+        usedIn: {
+          include: {
+            composite: true,
+          },
+        },
+      },
+    });
+  },
+
+  async create(data: CreateProductInput) {
+    if (!data.name || !data.name.trim()) {
+      return { statusCode: 400, message: "El nombre del producto es requerido" };
+    }
+
+    if (!data.sku || !data.sku.trim()) {
+      return { statusCode: 400, message: "El SKU es requerido" };
+    }
+
+    const sku = normalizeSku(data.sku);
+
+    if (!sku) {
+      return { statusCode: 400, message: "El SKU no puede quedar vacío" };
+    }
+
+    const type: ProductType = (data.type as ProductType) ?? ProductType.SIMPLE;
+    const saleUnit: SaleUnit = (data.saleUnit as SaleUnit) ?? SaleUnit.UNIT;
+
+    try {
+      await validateCategory(data.categoryId);
+
+      validatePricesBySaleUnit({
+        ...data,
+        type,
+        saleUnit,
+      });
+
+      const rawComponents = normalizeComponents(data);
+
+      if (type === ProductType.COMPUESTO && rawComponents.length === 0) {
+        return {
+          statusCode: 400,
+          message: "Un producto COMPUESTO debe tener al menos un componente",
+        };
+      }
+
+      if (type === ProductType.SIMPLE && rawComponents.length > 0) {
+        return {
+          statusCode: 400,
+          message: "Un producto SIMPLE no puede tener componentes",
+        };
+      }
+
+      const components = await validateComponents(null, rawComponents);
+
+      let imageUrl: string | undefined;
+      let imageId: string | undefined;
+
+      if (data.file) {
+        const result = await cloudinary.uploader.upload(data.file.path, {
+          folder: "von-konig/products",
+        });
+
+        imageUrl = result.secure_url;
+        imageId = result.public_id;
+
+        fs.unlinkSync(data.file.path);
+      }
+
+      const base = {
+        name: data.name.trim(),
+        type,
+        categoryId: data.categoryId || null,
+        saleUnit,
+        sku,
+        minStock: toNumberOrNull(data.minStock),
+        minStockKg: toNumberOrNull(data.minStockKg),
+        imageUrl,
+        imageId,
+      };
+
+      const unitData =
+        saleUnit === SaleUnit.UNIT
+          ? {
+              price: toNumberOrZero(data.price),
+              clientPrice: toNumberOrZero(data.clientPrice),
+              wholesalePrice: toNumberOrZero(data.wholesalePrice),
+              stockLocal: toNumberOrZero(data.stockLocal),
+              stockDeposito: toNumberOrZero(data.stockDeposito),
+
+              pricePerKg: null,
+              clientPricePerKg: null,
+              wholesalePricePerKg: null,
+              stockLocalKg: 0,
+              stockDepositoKg: 0,
+            }
+          : {
+              pricePerKg: toNumberOrZero(data.pricePerKg),
+              clientPricePerKg: toNumberOrZero(data.clientPricePerKg),
+              wholesalePricePerKg: toNumberOrZero(data.wholesalePricePerKg),
+              stockLocalKg: toNumberOrZero(data.stockLocalKg),
+              stockDepositoKg: toNumberOrZero(data.stockDepositoKg),
+
+              price: 0,
+              clientPrice: 0,
+              wholesalePrice: 0,
+              stockLocal: 0,
+              stockDeposito: 0,
+            };
+
+      const created = await prisma.product.create({
+        data: {
+          ...base,
+          ...unitData,
+          ...(type === ProductType.COMPUESTO
+            ? {
+                components: {
+                  create: components.map((component) => ({
+                    componentId: component.componentId!,
+                    quantity: component.quantity,
+                    quantityKg: component.quantityKg,
+                  })),
+                },
+              }
+            : {}),
+        },
+        include: {
+          category: true,
+          components: {
+            include: {
+              component: {
+                include: {
+                  category: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      return created;
+    } catch (err: any) {
+      if (data.file?.path && fs.existsSync(data.file.path)) {
+        fs.unlinkSync(data.file.path);
+      }
+
+      if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
+        return { statusCode: 409, message: "Ya existe un producto con ese SKU" };
+      }
+
+      return {
+        statusCode: 400,
+        message: err?.message ?? "Error al crear producto",
+      };
+    }
+  },
+
+  async updateImage(productId: string, file: Express.Multer.File) {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) throw new Error("Producto no encontrado");
+
+    if (product.imageId) {
+      await cloudinary.uploader.destroy(product.imageId);
+    }
+
+    const result = await cloudinary.uploader.upload(file.path, {
+      folder: "von-konig/products",
+    });
+
+    fs.unlinkSync(file.path);
+
+    return prisma.product.update({
+      where: { id: productId },
+      data: {
+        imageUrl: result.secure_url,
+        imageId: result.public_id,
+      },
+      include: {
+        category: true,
+        components: {
+          include: {
+            component: true,
+          },
+        },
+      },
+    });
+  },
+
+  async update(id: string, data: Partial<Product> & any) {
+    const existing = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        components: true,
+      },
+    });
+
+    if (!existing) {
+      throw new Error("Producto no encontrado");
+    }
+
+    if (data.sku !== undefined) {
+      const normalized = normalizeSku(String(data.sku));
+      if (!normalized) throw new Error("El SKU no puede quedar vacío");
+      data.sku = normalized;
+    }
+
+    if (data.categoryId !== undefined && data.categoryId !== null && data.categoryId !== "") {
+      await validateCategory(data.categoryId);
+    }
+
+    const nextType = (data.type as ProductType | undefined) ?? existing.type;
+    const nextSaleUnit = (data.saleUnit as SaleUnit | undefined) ?? existing.saleUnit;
+
+    if (nextType === ProductType.COMPUESTO && nextSaleUnit === SaleUnit.KG) {
+      throw new Error("Por ahora los productos COMPUESTOS deben venderse por UNIT");
+    }
+
+    const prismaData: any = {};
+
+    const setIfDefined = (key: string, value: any) => {
+      if (value !== undefined) prismaData[key] = value;
+    };
+
+    setIfDefined("name", data.name !== undefined ? String(data.name).trim() : undefined);
+    setIfDefined("type", data.type);
+    setIfDefined("categoryId", data.categoryId === "" ? null : data.categoryId);
+    setIfDefined("sku", data.sku);
+    setIfDefined("imageUrl", data.imageUrl);
+    setIfDefined("imageId", data.imageId);
+    setIfDefined("isActive", data.isActive);
+    setIfDefined("saleUnit", data.saleUnit);
+
+    setIfDefined("price", data.price !== undefined ? Number(data.price) : undefined);
+    setIfDefined(
+      "clientPrice",
+      data.clientPrice !== undefined ? Number(data.clientPrice) : undefined
+    );
+    setIfDefined(
+      "wholesalePrice",
+      data.wholesalePrice !== undefined ? Number(data.wholesalePrice) : undefined
+    );
+
+    setIfDefined(
+      "stockLocal",
+      data.stockLocal !== undefined ? Number(data.stockLocal) : undefined
+    );
+    setIfDefined(
+      "stockDeposito",
+      data.stockDeposito !== undefined ? Number(data.stockDeposito) : undefined
+    );
+    setIfDefined(
+      "minStock",
+      data.minStock !== undefined ? Number(data.minStock) : undefined
+    );
+
+    setIfDefined(
+      "pricePerKg",
+      data.pricePerKg !== undefined ? Number(data.pricePerKg) : undefined
+    );
+    setIfDefined(
+      "clientPricePerKg",
+      data.clientPricePerKg !== undefined ? Number(data.clientPricePerKg) : undefined
+    );
+    setIfDefined(
+      "wholesalePricePerKg",
+      data.wholesalePricePerKg !== undefined ? Number(data.wholesalePricePerKg) : undefined
+    );
+
+    setIfDefined(
+      "stockLocalKg",
+      data.stockLocalKg !== undefined ? Number(data.stockLocalKg) : undefined
+    );
+    setIfDefined(
+      "stockDepositoKg",
+      data.stockDepositoKg !== undefined ? Number(data.stockDepositoKg) : undefined
+    );
+    setIfDefined(
+      "minStockKg",
+      data.minStockKg !== undefined ? Number(data.minStockKg) : undefined
+    );
+
+    if (data.saleUnit === SaleUnit.UNIT) {
+      prismaData.pricePerKg = null;
+      prismaData.clientPricePerKg = null;
+      prismaData.wholesalePricePerKg = null;
+      prismaData.stockLocalKg = 0;
+      prismaData.stockDepositoKg = 0;
+    }
+
+    if (data.saleUnit === SaleUnit.KG) {
+      prismaData.price = 0;
+      prismaData.clientPrice = 0;
+      prismaData.wholesalePrice = 0;
+      prismaData.stockLocal = 0;
+      prismaData.stockDeposito = 0;
+    }
+
+    try {
+      return await prisma.product.update({
+        where: { id },
+        data: prismaData,
+        include: {
+          category: true,
+          components: {
+            include: {
+              component: {
+                include: {
+                  category: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
+        throw new Error("Ya existe un producto con ese SKU");
+      }
+
+      throw err;
+    }
+  },
+
+  async updateComponents(
+    productId: string,
+    components: ProductComponentInput[]
+  ) {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        type: true,
+        name: true,
+        saleUnit: true,
+      },
+    });
+
+    if (!product) throw new Error("Producto no encontrado");
+
+    if (product.type !== ProductType.COMPUESTO) {
+      throw new Error(`El producto "${product.name}" no es de tipo COMPUESTO`);
+    }
+
+    const normalizedComponents = await validateComponents(productId, components);
+
+    await prisma.$transaction([
+      prisma.productComponent.deleteMany({
+        where: { compositeId: productId },
+      }),
+      prisma.productComponent.createMany({
+        data: normalizedComponents.map((component) => ({
+          compositeId: productId,
+          componentId: component.componentId!,
+          quantity: component.quantity,
+          quantityKg: component.quantityKg,
+        })),
+      }),
+    ]);
+
+    return prisma.product.findUnique({
+      where: { id: productId },
+      include: {
+        category: true,
+        components: {
+          include: {
+            component: {
+              include: {
+                category: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  },
+
+  async delete(id: string) {
+    return prisma.product.update({
+      where: { id },
+      data: { isActive: false },
+    });
+  },
+
+  async transferStock(
+    productId: string,
+    from: Location,
+    quantity: number,
+    userId: string
+  ) {
+    if (!userId) throw new Error("Falta userId en la operación de transferencia");
+
+    const qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error("Cantidad inválida");
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) throw new Error("Producto no encontrado");
+
+    if (product.saleUnit !== SaleUnit.UNIT) {
+      throw new Error("Este producto no se maneja por unidades");
+    }
+
+    if (product.type === ProductType.COMPUESTO) {
+      throw new Error("No se transfiere stock directo de productos compuestos. Transferí sus componentes");
+    }
+
+    const to = from === Location.DEPOSITO ? Location.LOCAL : Location.DEPOSITO;
+
+    if (from === Location.DEPOSITO && product.stockDeposito < qty) {
+      throw new Error("Stock insuficiente en depósito");
+    }
+
+    if (from === Location.LOCAL && product.stockLocal < qty) {
+      throw new Error("Stock insuficiente en local");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const productUpdated = await tx.product.update({
+        where: { id: productId },
+        data:
+          from === Location.DEPOSITO
+            ? {
+                stockDeposito: { decrement: qty },
+                stockLocal: { increment: qty },
+              }
+            : {
+                stockLocal: { decrement: qty },
+                stockDeposito: { increment: qty },
+              },
+      });
+
+      await tx.stockMovement.create({
+        data: {
+          type: MovementType.TRANSFER,
+          from,
+          to,
+          quantity: qty,
+          product: { connect: { id: productId } },
+          user: { connect: { id: userId } },
+        },
+      });
+
+      return productUpdated;
+    });
+
+    return updated;
+  },
+
+  async transferStockKg(
+    productId: string,
+    from: Location,
+    quantityKg: number,
+    userId: string
+  ) {
+    if (!userId) throw new Error("Falta userId en la operación de transferencia");
+
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) throw new Error("Producto no encontrado");
+
+    if (product.saleUnit !== SaleUnit.KG) {
+      throw new Error("Este producto no es por KG");
+    }
+
+    if (product.type === ProductType.COMPUESTO) {
+      throw new Error("No se transfiere stock directo de productos compuestos. Transferí sus componentes");
+    }
+
+    const qty = Number(quantityKg);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error("Cantidad KG inválida");
+    }
+
+    const to = from === Location.DEPOSITO ? Location.LOCAL : Location.DEPOSITO;
+
+    if (from === Location.DEPOSITO && (product.stockDepositoKg ?? 0) < qty) {
+      throw new Error("Stock insuficiente en depósito KG");
+    }
+
+    if (from === Location.LOCAL && (product.stockLocalKg ?? 0) < qty) {
+      throw new Error("Stock insuficiente en local KG");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const productUpdated = await tx.product.update({
+        where: { id: productId },
+        data:
+          from === Location.DEPOSITO
+            ? {
+                stockDepositoKg: { decrement: qty },
+                stockLocalKg: { increment: qty },
+              }
+            : {
+                stockLocalKg: { decrement: qty },
+                stockDepositoKg: { increment: qty },
+              },
+      });
+
+      await tx.stockMovement.create({
+        data: {
+          type: MovementType.TRANSFER,
+          from,
+          to,
+          quantityKg: qty,
+          product: { connect: { id: productId } },
+          user: { connect: { id: userId } },
+        },
+      });
+
+      return productUpdated;
+    });
+
+    return updated;
+  },
+
+  async addStockKg(
+    productId: string,
+    to: Location,
+    quantityKg: number,
+    userId: string
+  ) {
+    if (!userId) throw new Error("Falta userId en la operación de ingreso");
+
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) throw new Error("Producto no encontrado");
+
+    if (product.saleUnit !== SaleUnit.KG) {
+      throw new Error("Este producto no es por KG");
+    }
+
+    if (product.type === ProductType.COMPUESTO) {
+      throw new Error("No se agrega stock directo a productos compuestos. Agregá stock a sus componentes");
+    }
+
+    const qty = Number(quantityKg);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error("Cantidad KG inválida");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const productUpdated = await tx.product.update({
+        where: { id: productId },
+        data: {
+          stockLocalKg: to === Location.LOCAL ? { increment: qty } : undefined,
+          stockDepositoKg: to === Location.DEPOSITO ? { increment: qty } : undefined,
+        },
+      });
+
+      await tx.stockMovement.create({
+        data: {
+          productId,
+          userId,
+          type: MovementType.INGRESS,
+          from: null,
+          to,
+          quantityKg: qty,
+        },
+      });
+
+      return productUpdated;
+    });
+
+    return updated;
+  },
+
+  async addStock(
+    productId: string,
+    to: Location,
+    quantity: number,
+    userId: string
+  ) {
+    if (!userId) throw new Error("Falta userId en la operación de ingreso");
+
+    const qty = Number(quantity);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error("Cantidad inválida");
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) throw new Error("Producto no encontrado");
+
+    if (product.saleUnit !== SaleUnit.UNIT) {
+      throw new Error("Este producto no se maneja por unidades");
+    }
+
+    if (product.type === ProductType.COMPUESTO) {
+      throw new Error("No se agrega stock directo a productos compuestos. Agregá stock a sus componentes");
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const productUpdated = await tx.product.update({
+        where: { id: productId },
+        data: {
+          stockLocal: to === Location.LOCAL ? { increment: qty } : undefined,
+          stockDeposito: to === Location.DEPOSITO ? { increment: qty } : undefined,
+        },
+      });
+
+      await tx.stockMovement.create({
+        data: {
+          productId,
+          userId,
+          type: MovementType.INGRESS,
+          from: null,
+          to,
+          quantity: qty,
+        },
+      });
+
+      return productUpdated;
+    });
+
+    return updated;
+  },
+
+  async getMovements(filters?: {
+    productId?: string;
+    userId?: string;
+    fromDate?: Date;
+    toDate?: Date;
+  }) {
+    const createdAt: any = {};
+
+    if (filters?.fromDate) createdAt.gte = filters.fromDate;
+    if (filters?.toDate) createdAt.lte = filters.toDate;
+
+    return prisma.stockMovement.findMany({
+      where: {
+        productId: filters?.productId,
+        userId: filters?.userId,
+        ...(Object.keys(createdAt).length > 0 && { createdAt }),
+      },
+      include: {
+        product: {
+          include: {
+            category: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  },
+};

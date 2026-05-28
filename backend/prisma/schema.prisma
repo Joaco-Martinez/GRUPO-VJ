@@ -1,0 +1,532 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      Role
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  Sale             Sale[]
+  StockMovements   StockMovement[]
+  accountMovements AccountMovement[]
+}
+
+model Client {
+  id        String         @id @default(uuid())
+  nombre    String
+  apellido  String
+  dni       String         @unique
+  telefono  String?
+  gmail     String?        @unique
+  category  CategoryClient
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  // Cuenta corriente
+  currentBalance Float @default(0)
+  creditLimit    Float?
+  isAccountEnabled Boolean @default(true)
+
+  sales            Sale[]
+  accountMovements AccountMovement[]
+
+  @@index([dni])
+  @@index([gmail])
+}
+
+model ProductCategory {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products Product[]
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model Product {
+  id             String      @id @default(uuid())
+  name           String
+  type           ProductType @default(SIMPLE)
+
+  // Precios para venta por unidad
+  price          Float
+  wholesalePrice Float
+  clientPrice    Float
+
+  // Stock por unidad
+  minStock       Int?
+  stockLocal     Int @default(0)
+  stockDeposito  Int @default(0)
+
+  // Categoría dinámica
+  categoryId String?
+  category   ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  imageUrl String?
+  imageId  String?
+
+  isActive Boolean @default(true)
+  sku      String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Venta por unidad o por KG
+  saleUnit SaleUnit @default(UNIT)
+
+  // Precios por KG
+  pricePerKg          Float?
+  wholesalePricePerKg Float?
+  clientPricePerKg    Float?
+
+  // Stock por KG
+  stockLocalKg    Float @default(0)
+  stockDepositoKg Float @default(0)
+  minStockKg      Float? @default(0)
+
+  // Producto compuesto:
+  // Si este producto es una promo/pack/caja, acá van sus componentes.
+  components ProductComponent[] @relation("CompositeProduct")
+
+  // Si este producto simple participa dentro de una promo/pack/caja.
+  usedIn ProductComponent[] @relation("ComponentProduct")
+
+  SaleItem      SaleItem[]
+  BoxContent    BoxContent[]
+  StockMovement StockMovement[]
+  alerts        Alert[]
+  stats         ProductStats[]
+
+  @@index([sku])
+  @@index([categoryId])
+  @@index([type])
+  @@index([isActive])
+}
+
+model ProductComponent {
+  id String @id @default(uuid())
+
+  // Producto compuesto.
+  // Ejemplo: Promo Fernet + Coca.
+  compositeId String
+  composite   Product @relation("CompositeProduct", fields: [compositeId], references: [id], onDelete: Cascade)
+
+  // Producto componente.
+  // Ejemplo: Fernet o Coca.
+  componentId String
+  component   Product @relation("ComponentProduct", fields: [componentId], references: [id])
+
+  // Para componentes por unidad.
+  // Ejemplo: 1 Fernet + 1 Coca.
+  quantity Int?
+
+  // Para componentes vendidos por KG.
+  // Ejemplo: 0.250 kg de chocolate.
+  quantityKg Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([compositeId, componentId])
+  @@index([componentId])
+}
+
+model AfipToken {
+  id         String   @id @default(uuid())
+  token      String
+  sign       String
+  expiration DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model CbteCounter {
+  id         String   @id @default(uuid())
+  ptoVta     Int
+  cbteTipo   Int
+  lastNumber Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([ptoVta, cbteTipo])
+}
+
+model InvoiceAfip {
+  id     String  @id @default(uuid())
+  saleId String? @unique
+  sale   Sale?   @relation(fields: [saleId], references: [id])
+
+  relatedInvoiceId String?
+  relatedInvoice   InvoiceAfip?  @relation("CreditNoteRelation", fields: [relatedInvoiceId], references: [id])
+  creditNotes      InvoiceAfip[] @relation("CreditNoteRelation")
+
+  cuit                 String
+  puntoVenta           Int
+  tipoComprobante      Int
+  tipoDoc              Int
+  nroDoc               BigInt
+  numero               Int
+  fechaEmision         DateTime
+  resultado            String
+  cae                  String?
+  caeVto               DateTime?
+  total                Float
+  neto                 Float
+  iva                  Float
+  condicionIVAReceptor Int
+  moneda               String    @default("PES")
+  urlQR                String?
+  qrBase64             String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([puntoVenta, tipoComprobante, numero])
+  @@index([cuit, puntoVenta, tipoComprobante])
+}
+
+model Sale {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+
+  gmailSend String?
+
+  subtotal Float @default(0)
+  total    Float @default(0)
+
+  discountType  DiscountType?
+  discountValue Float?
+
+  isInvoiced   Boolean @default(false)
+  isNoteCredit Boolean @default(false)
+
+  invoiceStatus   InvoiceStatus @default(NONE)
+  afipLastError   String?
+  nextRetryAt     DateTime?
+  retryCount      Int           @default(0)
+  afipPayloadJson Json?
+
+  // Puede ser EFECTIVO, TRANSFERENCIA, CUENTA_CORRIENTE, etc.
+  paymentMethod PaymentMethod
+  receiptType   ReceiptType
+  status        SaleStatus    @default(PENDING)
+
+  // Cuenta corriente
+  isAccountSale Boolean @default(false)
+  accountDebtAmount Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoiceAfip      InvoiceAfip?
+  pdfUrl           String?
+  invoice          Invoice?
+  items            SaleItem[]
+  payments         SalePayment[]
+  accountMovements AccountMovement[]
+
+  @@index([clientId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SaleItem {
+  id     String @id @default(uuid())
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity   Int
+  quantityKg Float?
+
+  // Precio unitario final del producto vendido.
+  // Si es promo, guarda el precio de la promo, no la suma de componentes.
+  price Float
+
+  // Subtotal del item al momento de vender.
+  subtotal Float @default(0)
+
+  // Snapshot útil para tickets, reportes e historial.
+  productNameSnapshot String?
+  productSkuSnapshot  String?
+
+  boxContents BoxContent[]
+
+  createdAt DateTime @default(now())
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model BoxContent {
+  id         String   @id @default(uuid())
+  saleItemId String
+  saleItem   SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity   Int?
+  quantityKg Float?
+
+  @@index([saleItemId])
+  @@index([productId])
+}
+
+model SalePayment {
+  id     String @id @default(uuid())
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  method PaymentMethod
+  amount Float
+
+  reference String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([saleId])
+  @@index([method])
+}
+
+model AccountMovement {
+  id String @id @default(uuid())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // Venta que generó la deuda, si corresponde.
+  saleId String?
+  sale   Sale? @relation(fields: [saleId], references: [id], onDelete: SetNull)
+
+  // Usuario que cargó el abono/deuda/ajuste.
+  userId String?
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  type AccountMovementType
+
+  // Siempre positivo.
+  // DEBT suma saldo.
+  // PAYMENT resta saldo.
+  // ADJUSTMENT_POSITIVE suma.
+  // ADJUSTMENT_NEGATIVE resta.
+  amount Float
+
+  previousBalance Float
+  newBalance      Float
+
+  paymentMethod PaymentMethod?
+  reference      String?
+  description    String?
+
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@index([saleId])
+  @@index([type])
+  @@index([date])
+}
+
+model Alert {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  message   String
+  createdAt DateTime @default(now())
+  resolved  Boolean  @default(false)
+
+  @@index([productId])
+  @@index([resolved])
+}
+
+model ProductStats {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity   Int?
+  quantityKg Float?
+
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@index([date])
+}
+
+model Finance {
+  id            String          @id @default(uuid())
+  type          FinanceType
+  amount        Float
+  category      CategoryFinance
+  paymentMethod PaymentMethod?
+  description   String?
+  date          DateTime
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([type])
+  @@index([category])
+  @@index([date])
+}
+
+model StockMovement {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  type MovementType
+
+  from Location?
+  to   Location?
+
+  quantity   Int?
+  quantityKg Float?
+
+  // Para rastrear ventas/promos que dispararon movimientos.
+  reason    String?
+  reference String?
+
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model Invoice {
+  id        String   @id @default(uuid())
+  saleId    String   @unique
+  sale      Sale     @relation(fields: [saleId], references: [id])
+  pdfUrl    String?
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  ADMIN
+  EMPLEADO
+}
+
+enum CategoryClient {
+  Mayorista
+  Cliente
+}
+
+enum ProductType {
+  SIMPLE
+  COMPUESTO
+}
+
+enum SaleUnit {
+  UNIT
+  KG
+}
+
+enum MovementType {
+  TRANSFER
+  INGRESS
+  ADJUSTMENT
+  SALE
+  SALE_CANCEL
+}
+
+enum Location {
+  LOCAL
+  DEPOSITO
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum InvoiceStatus {
+  NONE
+  PENDING_AFIP
+  INVOICED
+  ERROR
+}
+
+enum PaymentMethod {
+  EFECTIVO
+  TARJETA
+  TRANSFERENCIA
+  QR
+  DEBITO
+  CREDITO
+  QR_NACION
+  QR_MERCADOPAGO
+  TARJETA_DEBITO
+  TARJETA_CREDITO
+
+  // Para ventas fiadas / deuda de cliente
+  CUENTA_CORRIENTE
+}
+
+enum ReceiptType {
+  TICKET
+  FACTURA
+}
+
+enum FinanceType {
+  INGRESO
+  EGRESO
+}
+
+enum SaleStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum AccountMovementType {
+  DEBT
+  PAYMENT
+  ADJUSTMENT_POSITIVE
+  ADJUSTMENT_NEGATIVE
+  CREDIT_NOTE
+}
+
+enum CategoryFinance {
+  VENTA
+  COBRANZA
+  AlquilerL1
+  AlquilerF1
+  Alarma
+  Sueldos
+  MateriaPrima
+  Impuestos
+  VEP
+  Contadora
+  Arca
+  Eenvios
+  Publicidad
+  Otro
+}

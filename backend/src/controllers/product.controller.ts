@@ -1,0 +1,381 @@
+import { Request, Response, NextFunction } from "express";
+import { productService } from "../services/product.service";
+import multer from "multer";
+
+const upload = multer({ dest: "uploads/" });
+
+const toNumberOrUndefined = (v: any) =>
+  v === undefined || v === null || v === "" ? undefined : Number(v);
+
+function parseJsonArray(value: any) {
+  if (!value) return undefined;
+
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeBoolean(value: any) {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return Boolean(value);
+}
+
+export const productController = {
+  async getAll(req: Request, res: Response, next: NextFunction) {
+    try {
+      const products = await productService.getAll();
+      res.json(products);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const product = await productService.getById(req.params.id);
+
+      if (!product) {
+        return res.status(404).json({ message: "Producto no encontrado" });
+      }
+
+      res.json(product);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  create: [
+    upload.single("image"),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const newProduct = await productService.create({
+          name: req.body.name,
+          type: req.body.type,
+
+          // Nueva categoría dinámica
+          categoryId: req.body.categoryId,
+
+          // Compatibilidad vieja, por si el frontend todavía manda category
+          category: req.body.category,
+
+          price: req.body.price,
+          wholesalePrice: req.body.wholesalePrice,
+          clientPrice: req.body.clientPrice,
+
+          saleUnit: req.body.saleUnit,
+
+          pricePerKg: req.body.pricePerKg,
+          clientPricePerKg: req.body.clientPricePerKg,
+          wholesalePricePerKg: req.body.wholesalePricePerKg,
+
+          sku: req.body.sku,
+
+          stockLocal: req.body.stockLocal,
+          stockDeposito: req.body.stockDeposito,
+
+          stockLocalKg: req.body.stockLocalKg,
+          stockDepositoKg: req.body.stockDepositoKg,
+
+          minStock: req.body.minStock,
+          minStockKg: req.body.minStockKg,
+
+          file: req.file,
+
+          // Nuevo formato
+          components: parseJsonArray(req.body.components),
+
+          // Compatibilidad vieja
+          boxContents: parseJsonArray(req.body.boxContents),
+        });
+
+        if ((newProduct as any)?.statusCode) {
+          return res
+            .status((newProduct as any).statusCode)
+            .json({ message: (newProduct as any).message });
+        }
+
+        res.status(201).json(newProduct);
+      } catch (err) {
+        next(err);
+      }
+    },
+  ],
+
+  async update(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = req.body ?? {};
+      const cleanBody: any = {};
+
+      if (body.name !== undefined) cleanBody.name = String(body.name);
+      if (body.type !== undefined) cleanBody.type = body.type;
+
+      // Nueva categoría dinámica
+      if (body.categoryId !== undefined) cleanBody.categoryId = body.categoryId;
+
+      if (body.sku !== undefined) cleanBody.sku = String(body.sku);
+      if (body.saleUnit !== undefined) cleanBody.saleUnit = body.saleUnit;
+
+      if (body.imageUrl !== undefined) cleanBody.imageUrl = body.imageUrl;
+      if (body.imageId !== undefined) cleanBody.imageId = body.imageId;
+      if (body.isActive !== undefined) {
+        cleanBody.isActive = normalizeBoolean(body.isActive);
+      }
+
+      if (body.price !== undefined) {
+        cleanBody.price = toNumberOrUndefined(body.price);
+      }
+
+      if (body.clientPrice !== undefined) {
+        cleanBody.clientPrice = toNumberOrUndefined(body.clientPrice);
+      }
+
+      if (body.wholesalePrice !== undefined) {
+        cleanBody.wholesalePrice = toNumberOrUndefined(body.wholesalePrice);
+      }
+
+      if (body.pricePerKg !== undefined) {
+        cleanBody.pricePerKg = toNumberOrUndefined(body.pricePerKg);
+      }
+
+      if (body.clientPricePerKg !== undefined) {
+        cleanBody.clientPricePerKg = toNumberOrUndefined(body.clientPricePerKg);
+      }
+
+      if (body.wholesalePricePerKg !== undefined) {
+        cleanBody.wholesalePricePerKg = toNumberOrUndefined(body.wholesalePricePerKg);
+      }
+
+      if (body.stockLocal !== undefined) {
+        cleanBody.stockLocal = toNumberOrUndefined(body.stockLocal);
+      }
+
+      if (body.stockDeposito !== undefined) {
+        cleanBody.stockDeposito = toNumberOrUndefined(body.stockDeposito);
+      }
+
+      if (body.minStock !== undefined) {
+        cleanBody.minStock = toNumberOrUndefined(body.minStock);
+      }
+
+      if (body.stockLocalKg !== undefined) {
+        cleanBody.stockLocalKg = toNumberOrUndefined(body.stockLocalKg);
+      }
+
+      if (body.stockDepositoKg !== undefined) {
+        cleanBody.stockDepositoKg = toNumberOrUndefined(body.stockDepositoKg);
+      }
+
+      if (body.minStockKg !== undefined) {
+        cleanBody.minStockKg = toNumberOrUndefined(body.minStockKg);
+      }
+
+      const updated = await productService.update(req.params.id, cleanBody);
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async delete(req: Request, res: Response, next: NextFunction) {
+    try {
+      await productService.delete(req.params.id);
+      res.json({ message: "Producto eliminado" });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async transferStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productId, from, quantity } = req.body;
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const updated = await productService.transferStock(
+        productId,
+        from,
+        Number(quantity),
+        userId
+      );
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async addStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productId, to, quantity } = req.body;
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const updated = await productService.addStock(
+        productId,
+        to,
+        Number(quantity),
+        userId
+      );
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async transferStockKg(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { from, quantityKg } = req.body;
+
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const updated = await productService.transferStockKg(
+        id,
+        from,
+        Number(quantityKg),
+        userId
+      );
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async addStockKg(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { to, quantityKg } = req.body;
+
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const updated = await productService.addStockKg(
+        id,
+        to,
+        Number(quantityKg),
+        userId
+      );
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async updateComponents(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+
+      const components = Array.isArray(req.body.components)
+        ? req.body.components
+        : parseJsonArray(req.body.components);
+
+      if (!Array.isArray(components)) {
+        return res.status(400).json({
+          message: "Se requiere un array 'components'",
+        });
+      }
+
+      const result = await productService.updateComponents(id, components);
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getBySku(req: Request, res: Response) {
+    try {
+      const { sku } = req.params;
+
+      if (!sku) {
+        return res.status(400).json({ message: "SKU requerido" });
+      }
+
+      const product = await productService.getBySku(sku);
+
+      if (!product) {
+        return res.status(404).json({ message: "Producto no encontrado" });
+      }
+
+      return res.status(200).json(product);
+    } catch (error) {
+      console.error("Error getBySku:", error);
+      return res.status(500).json({
+        message: "Error interno del servidor",
+      });
+    }
+  },
+
+  async getMovements(req: Request, res: Response, next: NextFunction) {
+    try {
+      const movements = await productService.getMovements({
+        productId: req.query.productId as string | undefined,
+        userId: req.query.userId as string | undefined,
+        fromDate: req.query.fromDate
+          ? new Date(req.query.fromDate as string)
+          : undefined,
+        toDate: req.query.toDate
+          ? new Date(req.query.toDate as string)
+          : undefined,
+      });
+
+      res.json(movements);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  updateImage: [
+    upload.single("image"),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({
+            message: "Debe enviar una imagen.",
+          });
+        }
+
+        const updatedProduct = await productService.updateImage(
+          req.params.id,
+          req.file
+        );
+
+        res.json({
+          message: "Imagen actualizada correctamente",
+          content: updatedProduct,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  ],
+};

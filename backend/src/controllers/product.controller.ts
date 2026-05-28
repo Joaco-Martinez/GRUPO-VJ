@@ -1,8 +1,30 @@
 import { Request, Response, NextFunction } from "express";
 import { productService } from "../services/product.service";
 import multer from "multer";
+import path from "path";
 
-const upload = multer({ dest: "uploads/" });
+const upload = multer({
+  dest: "uploads/",
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return cb(new Error("Formato de imagen inválido. Usá JPG, PNG o WEBP."));
+    }
+
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+
+    if (!allowedExtensions.includes(ext)) {
+      return cb(new Error("Extensión de imagen inválida. Usá JPG, PNG o WEBP."));
+    }
+
+    cb(null, true);
+  },
+});
 
 const toNumberOrUndefined = (v: any) =>
   v === undefined || v === null || v === "" ? undefined : Number(v);
@@ -62,6 +84,8 @@ export const productController = {
       try {
         const newProduct = await productService.create({
           name: req.body.name,
+          description: req.body.description,
+
           type: req.body.type,
 
           // Nueva categoría dinámica
@@ -119,6 +143,11 @@ export const productController = {
       const cleanBody: any = {};
 
       if (body.name !== undefined) cleanBody.name = String(body.name);
+
+      if (body.description !== undefined) {
+        cleanBody.description = String(body.description);
+      }
+
       if (body.type !== undefined) cleanBody.type = body.type;
 
       // Nueva categoría dinámica
@@ -129,6 +158,7 @@ export const productController = {
 
       if (body.imageUrl !== undefined) cleanBody.imageUrl = body.imageUrl;
       if (body.imageId !== undefined) cleanBody.imageId = body.imageId;
+
       if (body.isActive !== undefined) {
         cleanBody.isActive = normalizeBoolean(body.isActive);
       }

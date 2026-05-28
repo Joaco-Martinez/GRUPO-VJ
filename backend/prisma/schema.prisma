@@ -13,12 +13,19 @@ model User {
   password  String
   name      String
   role      Role
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Si el usuario es CLIENTE, puede estar vinculado a una ficha comercial Client.
+  client Client?
 
   Sale             Sale[]
   StockMovements   StockMovement[]
   accountMovements AccountMovement[]
+
+  @@index([role])
+  @@index([isActive])
 }
 
 model Client {
@@ -28,20 +35,26 @@ model Client {
   dni       String         @unique
   telefono  String?
   gmail     String?        @unique
-  category  CategoryClient
+  category  CategoryClient @default(Price)
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
+  // Usuario de login para ecommerce/web.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   // Cuenta corriente
-  currentBalance Float @default(0)
-  creditLimit    Float?
-  isAccountEnabled Boolean @default(true)
+  currentBalance   Float   @default(0)
+  creditLimit      Float?
+  isAccountEnabled Boolean @default(false)
 
   sales            Sale[]
   accountMovements AccountMovement[]
 
   @@index([dni])
   @@index([gmail])
+  @@index([category])
+  @@index([userId])
 }
 
 model ProductCategory {
@@ -60,19 +73,23 @@ model ProductCategory {
 }
 
 model Product {
-  id             String      @id @default(uuid())
-  name           String
-  type           ProductType @default(SIMPLE)
+  id          String      @id @default(uuid())
+  name        String
+  description String?
+  type        ProductType @default(SIMPLE)
 
   // Precios para venta por unidad
+  // price = precio público
+  // clientPrice = precio cliente
+  // wholesalePrice = precio mayorista
   price          Float
   wholesalePrice Float
   clientPrice    Float
 
   // Stock por unidad
-  minStock       Int?
-  stockLocal     Int @default(0)
-  stockDeposito  Int @default(0)
+  minStock      Int?
+  stockLocal    Int @default(0)
+  stockDeposito Int @default(0)
 
   // Categoría dinámica
   categoryId String?
@@ -122,22 +139,13 @@ model Product {
 model ProductComponent {
   id String @id @default(uuid())
 
-  // Producto compuesto.
-  // Ejemplo: Promo Fernet + Coca.
   compositeId String
   composite   Product @relation("CompositeProduct", fields: [compositeId], references: [id], onDelete: Cascade)
 
-  // Producto componente.
-  // Ejemplo: Fernet o Coca.
   componentId String
   component   Product @relation("ComponentProduct", fields: [componentId], references: [id])
 
-  // Para componentes por unidad.
-  // Ejemplo: 1 Fernet + 1 Coca.
-  quantity Int?
-
-  // Para componentes vendidos por KG.
-  // Ejemplo: 0.250 kg de chocolate.
+  quantity   Int?
   quantityKg Float?
 
   createdAt DateTime @default(now())
@@ -225,14 +233,13 @@ model Sale {
   retryCount      Int           @default(0)
   afipPayloadJson Json?
 
-  // Puede ser EFECTIVO, TRANSFERENCIA, CUENTA_CORRIENTE, etc.
   paymentMethod PaymentMethod
   receiptType   ReceiptType
   status        SaleStatus    @default(PENDING)
 
   // Cuenta corriente
-  isAccountSale Boolean @default(false)
-  accountDebtAmount Float @default(0)
+  isAccountSale     Boolean @default(false)
+  accountDebtAmount Float   @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -261,14 +268,9 @@ model SaleItem {
   quantity   Int
   quantityKg Float?
 
-  // Precio unitario final del producto vendido.
-  // Si es promo, guarda el precio de la promo, no la suma de componentes.
-  price Float
-
-  // Subtotal del item al momento de vender.
+  price    Float
   subtotal Float @default(0)
 
-  // Snapshot útil para tickets, reportes e historial.
   productNameSnapshot String?
   productSkuSnapshot  String?
 
@@ -317,21 +319,14 @@ model AccountMovement {
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  // Venta que generó la deuda, si corresponde.
   saleId String?
   sale   Sale? @relation(fields: [saleId], references: [id], onDelete: SetNull)
 
-  // Usuario que cargó el abono/deuda/ajuste.
   userId String?
   user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   type AccountMovementType
 
-  // Siempre positivo.
-  // DEBT suma saldo.
-  // PAYMENT resta saldo.
-  // ADJUSTMENT_POSITIVE suma.
-  // ADJUSTMENT_NEGATIVE resta.
   amount Float
 
   previousBalance Float
@@ -409,7 +404,6 @@ model StockMovement {
   quantity   Int?
   quantityKg Float?
 
-  // Para rastrear ventas/promos que dispararon movimientos.
   reason    String?
   reference String?
 
@@ -432,11 +426,13 @@ model Invoice {
 enum Role {
   ADMIN
   EMPLEADO
+  CLIENTE
 }
 
 enum CategoryClient {
-  Mayorista
+  Price
   Cliente
+  Mayorista
 }
 
 enum ProductType {
@@ -486,7 +482,6 @@ enum PaymentMethod {
   TARJETA_DEBITO
   TARJETA_CREDITO
 
-  // Para ventas fiadas / deuda de cliente
   CUENTA_CORRIENTE
 }
 

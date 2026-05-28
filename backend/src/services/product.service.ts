@@ -6,7 +6,7 @@ import {
   Product,
   SaleUnit,
 } from "@prisma/client";
-import { Express } from "express";
+import type { Express } from "express";
 import cloudinary from "../config/cloudinary";
 import fs from "fs";
 
@@ -33,6 +33,12 @@ function isValidPositiveNumber(v: any) {
   return Number.isFinite(n) && n > 0;
 }
 
+function safeDeleteLocalFile(path?: string) {
+  if (path && fs.existsSync(path)) {
+    fs.unlinkSync(path);
+  }
+}
+
 type ProductComponentInput = {
   componentId?: string;
   productId?: string;
@@ -42,6 +48,8 @@ type ProductComponentInput = {
 
 type CreateProductInput = {
   name: string;
+  description?: string | null;
+
   type?: ProductType;
   price?: number | string;
   wholesalePrice?: number | string;
@@ -73,7 +81,7 @@ type CreateProductInput = {
   components?: ProductComponentInput[];
 
   // Compatibilidad con frontend viejo
-  boxContents?: { productId: string; quantity: number }[];
+  boxContents?: { productId: string; quantity: number; quantityKg?: number }[];
 };
 
 function normalizeComponents(data: CreateProductInput | any): ProductComponentInput[] {
@@ -190,8 +198,6 @@ function validatePricesBySaleUnit(data: CreateProductInput | any) {
   const saleUnit: SaleUnit = (data.saleUnit as SaleUnit) ?? SaleUnit.UNIT;
   const type: ProductType = (data.type as ProductType) ?? ProductType.SIMPLE;
 
-  // Un producto compuesto/promo tiene precio propio.
-  // No lo tratamos como "descuento negativo"; tiene que tener precio válido.
   if (saleUnit === SaleUnit.KG) {
     const pricePerKg = toNumberOrNull(data.pricePerKg);
     const clientPricePerKg = toNumberOrNull(data.clientPricePerKg);
@@ -257,27 +263,29 @@ function validatePricesBySaleUnit(data: CreateProductInput | any) {
   }
 }
 
+const productInclude = {
+  category: true,
+  components: {
+    include: {
+      component: {
+        include: {
+          category: true,
+        },
+      },
+    },
+  },
+  usedIn: {
+    include: {
+      composite: true,
+    },
+  },
+};
+
 export const productService = {
   async getAll() {
     return prisma.product.findMany({
       where: { isActive: true },
-      include: {
-        category: true,
-        components: {
-          include: {
-            component: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-        usedIn: {
-          include: {
-            composite: true,
-          },
-        },
-      },
+      include: productInclude,
       orderBy: {
         createdAt: "desc",
       },
@@ -289,41 +297,14 @@ export const productService = {
 
     return prisma.product.findUnique({
       where: { sku },
-      include: {
-        category: true,
-        components: {
-          include: {
-            component: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-      },
+      include: productInclude,
     });
   },
 
   async getById(id: string) {
     return prisma.product.findUnique({
       where: { id },
-      include: {
-        category: true,
-        components: {
-          include: {
-            component: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-        usedIn: {
-          include: {
-            composite: true,
-          },
-        },
-      },
+      include: productInclude,
     });
   },
 
@@ -345,6 +326,9 @@ export const productService = {
     const type: ProductType = (data.type as ProductType) ?? ProductType.SIMPLE;
     const saleUnit: SaleUnit = (data.saleUnit as SaleUnit) ?? SaleUnit.UNIT;
 
+    let imageUrl: string | undefined;
+    let imageId: string | undefined;
+
     try {
       await validateCategory(data.categoryId);
 
@@ -357,6 +341,8 @@ export const productService = {
       const rawComponents = normalizeComponents(data);
 
       if (type === ProductType.COMPUESTO && rawComponents.length === 0) {
+        safeDeleteLocalFile(data.file?.path);
+
         return {
           statusCode: 400,
           message: "Un producto COMPUESTO debe tener al menos un componente",
@@ -364,6 +350,8 @@ export const productService = {
       }
 
       if (type === ProductType.SIMPLE && rawComponents.length > 0) {
+        safeDeleteLocalFile(data.file?.path);
+
         return {
           statusCode: 400,
           message: "Un producto SIMPLE no puede tener componentes",
@@ -372,22 +360,21 @@ export const productService = {
 
       const components = await validateComponents(null, rawComponents);
 
-      let imageUrl: string | undefined;
-      let imageId: string | undefined;
-
       if (data.file) {
         const result = await cloudinary.uploader.upload(data.file.path, {
-          folder: "von-konig/products",
+          folder: "grupo-vj/products",
+          resource_type: "image",
         });
 
         imageUrl = result.secure_url;
         imageId = result.public_id;
 
-        fs.unlinkSync(data.file.path);
+        safeDeleteLocalFile(data.file.path);
       }
 
       const base = {
         name: data.name.trim(),
+        description: data.description?.trim() || null,
         type,
         categoryId: data.categoryId || null,
         saleUnit,
@@ -443,24 +430,15 @@ export const productService = {
               }
             : {}),
         },
-        include: {
-          category: true,
-          components: {
-            include: {
-              component: {
-                include: {
-                  category: true,
-                },
-              },
-            },
-          },
-        },
+        include: productInclude,
       });
 
       return created;
     } catch (err: any) {
-      if (data.file?.path && fs.existsSync(data.file.path)) {
-        fs.unlinkSync(data.file.path);
+      safeDeleteLocalFile(data.file?.path);
+
+      if (imageId) {
+        await cloudinary.uploader.destroy(imageId).catch(() => undefined);
       }
 
       if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
@@ -479,33 +457,44 @@ export const productService = {
       where: { id: productId },
     });
 
-    if (!product) throw new Error("Producto no encontrado");
-
-    if (product.imageId) {
-      await cloudinary.uploader.destroy(product.imageId);
+    if (!product) {
+      safeDeleteLocalFile(file?.path);
+      throw new Error("Producto no encontrado");
     }
 
-    const result = await cloudinary.uploader.upload(file.path, {
-      folder: "von-konig/products",
-    });
+    let newImageId: string | undefined;
 
-    fs.unlinkSync(file.path);
+    try {
+      const result = await cloudinary.uploader.upload(file.path, {
+        folder: "grupo-vj/products",
+        resource_type: "image",
+      });
 
-    return prisma.product.update({
-      where: { id: productId },
-      data: {
-        imageUrl: result.secure_url,
-        imageId: result.public_id,
-      },
-      include: {
-        category: true,
-        components: {
-          include: {
-            component: true,
-          },
+      newImageId = result.public_id;
+
+      safeDeleteLocalFile(file.path);
+
+      if (product.imageId) {
+        await cloudinary.uploader.destroy(product.imageId).catch(() => undefined);
+      }
+
+      return prisma.product.update({
+        where: { id: productId },
+        data: {
+          imageUrl: result.secure_url,
+          imageId: result.public_id,
         },
-      },
-    });
+        include: productInclude,
+      });
+    } catch (err) {
+      safeDeleteLocalFile(file?.path);
+
+      if (newImageId) {
+        await cloudinary.uploader.destroy(newImageId).catch(() => undefined);
+      }
+
+      throw err;
+    }
   },
 
   async update(id: string, data: Partial<Product> & any) {
@@ -544,6 +533,12 @@ export const productService = {
     };
 
     setIfDefined("name", data.name !== undefined ? String(data.name).trim() : undefined);
+
+    setIfDefined(
+      "description",
+      data.description !== undefined ? String(data.description).trim() || null : undefined
+    );
+
     setIfDefined("type", data.type);
     setIfDefined("categoryId", data.categoryId === "" ? null : data.categoryId);
     setIfDefined("sku", data.sku);
@@ -553,10 +548,12 @@ export const productService = {
     setIfDefined("saleUnit", data.saleUnit);
 
     setIfDefined("price", data.price !== undefined ? Number(data.price) : undefined);
+
     setIfDefined(
       "clientPrice",
       data.clientPrice !== undefined ? Number(data.clientPrice) : undefined
     );
+
     setIfDefined(
       "wholesalePrice",
       data.wholesalePrice !== undefined ? Number(data.wholesalePrice) : undefined
@@ -566,10 +563,12 @@ export const productService = {
       "stockLocal",
       data.stockLocal !== undefined ? Number(data.stockLocal) : undefined
     );
+
     setIfDefined(
       "stockDeposito",
       data.stockDeposito !== undefined ? Number(data.stockDeposito) : undefined
     );
+
     setIfDefined(
       "minStock",
       data.minStock !== undefined ? Number(data.minStock) : undefined
@@ -579,10 +578,12 @@ export const productService = {
       "pricePerKg",
       data.pricePerKg !== undefined ? Number(data.pricePerKg) : undefined
     );
+
     setIfDefined(
       "clientPricePerKg",
       data.clientPricePerKg !== undefined ? Number(data.clientPricePerKg) : undefined
     );
+
     setIfDefined(
       "wholesalePricePerKg",
       data.wholesalePricePerKg !== undefined ? Number(data.wholesalePricePerKg) : undefined
@@ -592,10 +593,12 @@ export const productService = {
       "stockLocalKg",
       data.stockLocalKg !== undefined ? Number(data.stockLocalKg) : undefined
     );
+
     setIfDefined(
       "stockDepositoKg",
       data.stockDepositoKg !== undefined ? Number(data.stockDepositoKg) : undefined
     );
+
     setIfDefined(
       "minStockKg",
       data.minStockKg !== undefined ? Number(data.minStockKg) : undefined
@@ -621,18 +624,7 @@ export const productService = {
       return await prisma.product.update({
         where: { id },
         data: prismaData,
-        include: {
-          category: true,
-          components: {
-            include: {
-              component: {
-                include: {
-                  category: true,
-                },
-              },
-            },
-          },
-        },
+        include: productInclude,
       });
     } catch (err: any) {
       if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
@@ -643,10 +635,7 @@ export const productService = {
     }
   },
 
-  async updateComponents(
-    productId: string,
-    components: ProductComponentInput[]
-  ) {
+  async updateComponents(productId: string, components: ProductComponentInput[]) {
     const product = await prisma.product.findUnique({
       where: { id: productId },
       select: {
@@ -681,18 +670,7 @@ export const productService = {
 
     return prisma.product.findUnique({
       where: { id: productId },
-      include: {
-        category: true,
-        components: {
-          include: {
-            component: {
-              include: {
-                category: true,
-              },
-            },
-          },
-        },
-      },
+      include: productInclude,
     });
   },
 
@@ -703,15 +681,11 @@ export const productService = {
     });
   },
 
-  async transferStock(
-    productId: string,
-    from: Location,
-    quantity: number,
-    userId: string
-  ) {
+  async transferStock(productId: string, from: Location, quantity: number, userId: string) {
     if (!userId) throw new Error("Falta userId en la operación de transferencia");
 
     const qty = Number(quantity);
+
     if (!Number.isFinite(qty) || qty <= 0) {
       throw new Error("Cantidad inválida");
     }
@@ -772,12 +746,7 @@ export const productService = {
     return updated;
   },
 
-  async transferStockKg(
-    productId: string,
-    from: Location,
-    quantityKg: number,
-    userId: string
-  ) {
+  async transferStockKg(productId: string, from: Location, quantityKg: number, userId: string) {
     if (!userId) throw new Error("Falta userId en la operación de transferencia");
 
     const product = await prisma.product.findUnique({
@@ -842,12 +811,7 @@ export const productService = {
     return updated;
   },
 
-  async addStockKg(
-    productId: string,
-    to: Location,
-    quantityKg: number,
-    userId: string
-  ) {
+  async addStockKg(productId: string, to: Location, quantityKg: number, userId: string) {
     if (!userId) throw new Error("Falta userId en la operación de ingreso");
 
     const product = await prisma.product.findUnique({
@@ -896,12 +860,7 @@ export const productService = {
     return updated;
   },
 
-  async addStock(
-    productId: string,
-    to: Location,
-    quantity: number,
-    userId: string
-  ) {
+  async addStock(productId: string, to: Location, quantity: number, userId: string) {
     if (!userId) throw new Error("Falta userId en la operación de ingreso");
 
     const qty = Number(quantity);

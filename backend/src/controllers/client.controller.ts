@@ -22,9 +22,13 @@ export const clientController = {
         ...req.body,
         creditLimit: toNumberOrNull(req.body.creditLimit),
         isAccountEnabled: toBoolean(req.body.isAccountEnabled),
+        createUser: toBoolean(req.body.createUser),
       });
 
-      res.status(201).json({ ok: true, client });
+      res.status(201).json({
+        ok: true,
+        client,
+      });
     } catch (error) {
       next(error);
     }
@@ -33,7 +37,11 @@ export const clientController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const clients = await clientService.getClients();
-      res.json({ ok: true, clients });
+
+      res.json({
+        ok: true,
+        clients,
+      });
     } catch (error) {
       next(error);
     }
@@ -45,10 +53,16 @@ export const clientController = {
       const client = await clientService.getClientById(id);
 
       if (!client) {
-        return res.status(404).json({ ok: false, message: "Cliente no encontrado" });
+        return res.status(404).json({
+          ok: false,
+          message: "Cliente no encontrado",
+        });
       }
 
-      res.json({ ok: true, client });
+      res.json({
+        ok: true,
+        client,
+      });
     } catch (error) {
       next(error);
     }
@@ -59,11 +73,28 @@ export const clientController = {
       const { id } = req.params;
       const body = { ...req.body };
 
-      if (body.creditLimit !== undefined) body.creditLimit = toNumberOrNull(body.creditLimit) ?? null;
-      if (body.isAccountEnabled !== undefined) body.isAccountEnabled = toBoolean(body.isAccountEnabled);
+      if (body.creditLimit !== undefined) {
+        body.creditLimit = toNumberOrNull(body.creditLimit) ?? null;
+      }
+
+      if (body.isAccountEnabled !== undefined) {
+        body.isAccountEnabled = toBoolean(body.isAccountEnabled);
+      }
+
+      if (body.createUser !== undefined) {
+        body.createUser = toBoolean(body.createUser);
+      }
+
+      if (body.unlinkUser !== undefined) {
+        body.unlinkUser = toBoolean(body.unlinkUser);
+      }
 
       const client = await clientService.updateClient(id, body);
-      res.json({ ok: true, client });
+
+      res.json({
+        ok: true,
+        client,
+      });
     } catch (error) {
       next(error);
     }
@@ -73,7 +104,11 @@ export const clientController = {
     try {
       const { id } = req.params;
       await clientService.deleteClient(id);
-      res.json({ ok: true, message: "Cliente eliminado correctamente" });
+
+      res.json({
+        ok: true,
+        message: "Cliente eliminado correctamente",
+      });
     } catch (error) {
       next(error);
     }

@@ -2,56 +2,117 @@ import prisma from "../prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Response, Request } from "express";
+import { CategoryClient, Role } from "@prisma/client";
+
 const isProd = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
+
+function getCookieOptions() {
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? ("none" as const) : ("lax" as const),
+    domain: isProd ? COOKIE_DOMAIN : undefined,
+    path: "/",
+    maxAge: 24 * 60 * 60 * 1000,
+  };
+}
+
+function sanitizeUser(user: any) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+    isActive: user.isActive,
+    client: user.client ?? null,
+  };
+}
 
 export const authService = {
-  // ✅ Obtener usuario desde token
-  async getMe(token: string) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+  async register(data: {
+    email: string;
+    password: string;
+    nombre?: string;
+    apellido?: string;
+    name?: string;
+    dni: string;
+    telefono?: string | null;
+  }) {
+    const email = String(data.email || "").trim().toLowerCase();
+    const password = String(data.password || "");
+    const dni = String(data.dni || "").trim();
+    const nombre = String(data.nombre || data.name || "").trim();
+    const apellido = String(data.apellido || "").trim();
 
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.userId },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-        },
-      });
-
-      if (!user) throw new Error("Usuario no encontrado");
-
-      return user;
-    } catch {
-      throw new Error("Token inválido");
+    if (!email) throw new Error("El email es obligatorio");
+    if (!password || password.length < 6) {
+      throw new Error("La contraseña debe tener al menos 6 caracteres");
     }
-  },
+    if (!dni) throw new Error("El DNI/CUIT es obligatorio");
+    if (!nombre) throw new Error("El nombre es obligatorio");
 
-  // ✅ Registro
-  async register(
-    email: string,
-    password: string,
-    name: string,
-    role: "ADMIN" | "EMPLEADO"
-  ) {
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) throw new Error("El email ya está registrado");
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) throw new Error("El email ya está registrado");
+
+    const existingClientByDni = await prisma.client.findUnique({
+      where: { dni },
+    });
+    if (existingClientByDni) throw new Error("Ya existe un cliente con ese DNI/CUIT");
+
+    const existingClientByEmail = await prisma.client.findUnique({
+      where: { gmail: email },
+    });
+    if (existingClientByEmail) throw new Error("Ya existe un cliente con ese email");
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    return prisma.user.create({
-      data: { email, password: hashedPassword, name, role },
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        name: apellido ? `${nombre} ${apellido}` : nombre,
+        role: Role.CLIENTE,
+        isActive: true,
+        client: {
+          create: {
+            nombre,
+            apellido,
+            dni,
+            telefono: data.telefono ?? null,
+            gmail: email,
+            category: CategoryClient.Price,
+            currentBalance: 0,
+            creditLimit: null,
+            isAccountEnabled: false,
+          },
+        },
+      },
+      include: {
+        client: true,
+      },
     });
+
+    return sanitizeUser(user);
   },
 
-  // ✅ Login: genera token + setea cookies
   async login(email: string, password: string, res: Response) {
-    console.log(email, password);
-    const user = await prisma.user.findUnique({ where: { email } });
-    console.log(user);
-    if (!user) throw new Error("Credenciales gmail");
+    const cleanEmail = String(email || "").trim().toLowerCase();
+
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: {
+        client: true,
+      },
+    });
+
+    if (!user) throw new Error("Credenciales inválidas");
+
+    if (user.isActive === false) {
+      throw new Error("Usuario deshabilitado");
+    }
+
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) throw new Error("Credenciales inválidas");
 
@@ -61,70 +122,83 @@ export const authService = {
       { expiresIn: "1d" }
     );
 
-    // 🔒 Cookie segura con el token
+    const cleanUser = sanitizeUser(user);
 
-res.cookie("token", token, {
-  httpOnly: true,
-  secure: isProd,               // 🔥 Solo true en prod
-  sameSite: isProd ? "none" : "lax", // 🔥 En localhost debe ser "lax"
-  domain: isProd ? ".vonkonigerp.com.ar" : undefined, // 🔥 En localhost NO se usa domain
-  path: "/",
-  maxAge: 24 * 60 * 60 * 1000,
-});
+    res.cookie("token", token, getCookieOptions());
 
-// Cookie con datos del usuario
-res.cookie("user", JSON.stringify({
-  id: user.id,
-  email: user.email,
-  role: user.role,
-  name: user.name,
-}), {
-  httpOnly: true,
-  secure: isProd,
-  sameSite: isProd ? "none" : "lax",
-  domain: isProd ? ".vonkonigerp.com.ar" : undefined,
-  path: "/",
-  maxAge: 24 * 60 * 60 * 1000,
-});
+    res.cookie("user", JSON.stringify(cleanUser), {
+      ...getCookieOptions(),
+      httpOnly: false,
+    });
 
     return {
-      user: { id: user.id, email: user.email, role: user.role, name: user.name },
+      user: cleanUser,
     };
   },
 
-  // ✅ Logout
   async logout(res: Response) {
-    res.clearCookie("token", { path: "/" });
-    res.clearCookie("user", { path: "/" });
+    res.clearCookie("token", {
+      path: "/",
+      domain: isProd ? COOKIE_DOMAIN : undefined,
+    });
+
+    res.clearCookie("user", {
+      path: "/",
+      domain: isProd ? COOKIE_DOMAIN : undefined,
+    });
+
     return { message: "Logout exitoso" };
   },
 
-  // ✅ Endpoint /me → obtiene usuario desde cookie
   async me(req: Request) {
     const token = req.cookies?.token;
     if (!token) throw new Error("No autenticado");
 
     try {
       const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          name: true,
+        include: {
+          client: true,
         },
       });
 
       if (!user) throw new Error("Usuario no encontrado");
 
-      return user;
+      if (user.isActive === false) {
+        throw new Error("Usuario deshabilitado");
+      }
+
+      return sanitizeUser(user);
     } catch {
       throw new Error("Token inválido");
     }
   },
 
-  // ✅ Eliminar usuario
+  async getMe(token: string) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        include: {
+          client: true,
+        },
+      });
+
+      if (!user) throw new Error("Usuario no encontrado");
+
+      if (user.isActive === false) {
+        throw new Error("Usuario deshabilitado");
+      }
+
+      return sanitizeUser(user);
+    } catch {
+      throw new Error("Token inválido");
+    }
+  },
+
   async deleteUser(id: string) {
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) throw new Error("Usuario no encontrado");

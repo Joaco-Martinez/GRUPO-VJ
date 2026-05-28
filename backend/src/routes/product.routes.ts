@@ -31,7 +31,13 @@ router.get("/sku/:sku", authMiddleware, productController.getBySku);
 
 // CRUD
 router.get("/", authMiddleware, productController.getAll);
-router.post("/", authMiddleware, requireRole("ADMIN"), productController.create);
+
+router.post(
+  "/",
+  authMiddleware,
+  requireRole("ADMIN"),
+  productController.create
+);
 
 // Producto compuesto: definir/actualizar componentes de una promo
 router.put(
@@ -51,7 +57,19 @@ router.patch(
 
 // Dinámicas
 router.get("/:id", authMiddleware, productController.getById);
-router.put("/:id", authMiddleware, requireRole("ADMIN"), productController.update);
-router.delete("/:id", authMiddleware, requireRole("ADMIN"), productController.delete);
+
+router.put(
+  "/:id",
+  authMiddleware,
+  requireRole("ADMIN"),
+  productController.update
+);
+
+router.delete(
+  "/:id",
+  authMiddleware,
+  requireRole("ADMIN"),
+  productController.delete
+);
 
 export default router;

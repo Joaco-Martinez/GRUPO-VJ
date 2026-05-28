@@ -8,6 +8,7 @@ import {
   MovementType,
   Location,
   AccountMovementType,
+  CategoryClient,
 } from "@prisma/client";
 import { financeService } from "./finance.service";
 import { generateInvoicePDF } from "../utils/pdfGenerator";
@@ -41,7 +42,6 @@ type CreateSaleInput = {
     quantityKg?: number;
     price?: number;
 
-    // Legacy: se mantiene por compatibilidad.
     boxContents?: {
       productId: string;
       quantity?: number;
@@ -51,7 +51,7 @@ type CreateSaleInput = {
 };
 
 type ClientMini = {
-  category: "Cliente" | "Mayorista";
+  category: CategoryClient;
 } | null;
 
 type ResolvedSaleItem = {
@@ -81,11 +81,6 @@ type StockLine = {
 
 function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-function toNumberOrZero(value: any) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
 }
 
 function resolveQty(product: any, item: any) {
@@ -133,21 +128,22 @@ function resolveUnitPrice(product: any, client: ClientMini) {
     return p;
   };
 
-  if (!client) {
+  if (!client || client.category === CategoryClient.Price) {
     return validate(Number(publicPrice), "público");
   }
 
-  if (client.category === "Mayorista") {
-    return validate(Number(wholesalePrice ?? clientPrice ?? publicPrice), "mayorista");
+  if (client.category === CategoryClient.Mayorista) {
+    return validate(Number(wholesalePrice ?? publicPrice), "mayorista");
   }
 
-  return validate(Number(clientPrice ?? publicPrice), "cliente");
+  if (client.category === CategoryClient.Cliente) {
+    return validate(Number(clientPrice ?? publicPrice), "cliente");
+  }
+
+  return validate(Number(publicPrice), "público");
 }
 
-function addStockLine(
-  map: Map<string, StockLine>,
-  line: StockLine
-) {
+function addStockLine(map: Map<string, StockLine>, line: StockLine) {
   const existing = map.get(line.productId);
 
   if (!existing) {
@@ -336,7 +332,7 @@ async function restoreStockLines(
       to: Location.LOCAL,
       quantity: line.quantity > 0 ? line.quantity : null,
       quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
-      reason: `Cancelación de venta`,
+      reason: "Cancelación de venta",
       reference: saleId,
       product: {
         connect: {
@@ -358,7 +354,6 @@ async function restoreStockLines(
     });
   }
 }
-
 
 type PaymentCalcResult = {
   hasPayments: boolean;
@@ -387,6 +382,7 @@ function calculatePaymentState(params: {
 
   if (!hasPayments) {
     const isAccountSale = params.paymentMethod === PaymentMethod.CUENTA_CORRIENTE;
+
     return {
       hasPayments: false,
       totalPaid: isAccountSale ? 0 : params.total,
@@ -406,6 +402,7 @@ function calculatePaymentState(params: {
     }
 
     const amount = Number(payment.amount);
+
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error("Cada pago necesita amount > 0");
     }
@@ -416,6 +413,7 @@ function calculatePaymentState(params: {
     }
 
     totalPaid += amount;
+
     paymentsToPersist.push({
       method: payment.method,
       amount,
@@ -442,13 +440,16 @@ function calculatePaymentState(params: {
   };
 }
 
-async function createAccountDebtMovement(tx: any, data: {
-  clientId: string;
-  saleId: string;
-  userId?: string | null;
-  amount: number;
-  description?: string;
-}) {
+async function createAccountDebtMovement(
+  tx: any,
+  data: {
+    clientId: string;
+    saleId: string;
+    userId?: string | null;
+    amount: number;
+    description?: string;
+  }
+) {
   const debtAmount = round2(data.amount);
   if (debtAmount <= 0) return null;
 
@@ -463,6 +464,7 @@ async function createAccountDebtMovement(tx: any, data: {
   });
 
   if (!client) throw new Error("Cliente no encontrado");
+
   if (!client.isAccountEnabled) {
     throw new Error("La cuenta corriente de este cliente está deshabilitada");
   }
@@ -1043,17 +1045,17 @@ export const saleService = {
     if (status === SaleStatus.COMPLETED) {
       await financeService.registerIncomeFromSale(id);
 
-await productStatsService.createStatsFromSale(
-  sale.items.map((item) => {
-    const saleUnit = item.product?.saleUnit as SaleUnit;
+      await productStatsService.createStatsFromSale(
+        sale.items.map((item) => {
+          const saleUnit = item.product?.saleUnit as SaleUnit;
 
-    return {
-      productId: item.productId,
-      quantity: saleUnit === SaleUnit.KG ? 0 : item.quantity,
-      quantityKg: saleUnit === SaleUnit.KG ? item.quantityKg ?? 0 : undefined,
-    };
-  })
-);
+          return {
+            productId: item.productId,
+            quantity: saleUnit === SaleUnit.KG ? 0 : item.quantity,
+            quantityKg: saleUnit === SaleUnit.KG ? item.quantityKg ?? 0 : undefined,
+          };
+        })
+      );
     }
 
     return updated;
@@ -1139,7 +1141,7 @@ await productStatsService.createStatsFromSale(
     });
   },
 
- async updatePayments(
+  async updatePayments(
     id: string,
     payments: {
       method: PaymentMethod;

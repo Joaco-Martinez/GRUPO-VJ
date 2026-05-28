@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { ElementType } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth';
@@ -16,34 +17,107 @@ import {
   Wallet,
   LogOut,
   ChevronRight,
-  X,
   CreditCard,
   PanelLeftClose,
   PanelLeftOpen,
+  FolderTree,
 } from 'lucide-react';
 
 const NAV = [
-  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', color: '#00e5a0' },
-  { href: '/pos', icon: ShoppingCart, label: 'POS — Ventas', color: '#4f8eff' },
-  { href: '/ventas', icon: Receipt, label: 'Historial Ventas', color: '#4f8eff' },
-  { href: '/productos', icon: Package, label: 'Productos', color: '#00e5a0' },
-  { href: '/clientes', icon: Users, label: 'Clientes', color: '#ff6b35' },
-  { href: '/cuentas-corrientes', icon: CreditCard, label: 'Cuentas Corrientes', color: '#fbbf24' },
-  { href: '/stock', icon: BarChart2, label: 'Stock', color: '#a78bfa' },
-  { href: '/finanzas', icon: Wallet, label: 'Finanzas', color: '#34d399' },
-  { href: '/alertas', icon: AlertTriangle, label: 'Alertas', color: '#ef4444' },
-  { href: '/reportes', icon: BarChart2, label: 'Reportes', color: '#fbbf24' },
-  { href: '/facturacion', icon: Receipt, label: 'AFIP / Facturas', color: '#06b6d4' },
+  {
+    href: '/dashboard',
+    icon: LayoutDashboard,
+    label: 'Dashboard',
+    color: '#00e5a0',
+  },
+  {
+    href: '/pos',
+    icon: ShoppingCart,
+    label: 'POS — Ventas',
+    color: '#4f8eff',
+  },
+  {
+    href: '/ventas',
+    icon: Receipt,
+    label: 'Historial Ventas',
+    color: '#4f8eff',
+  },
+  {
+    href: '/productos',
+    icon: Package,
+    label: 'Productos',
+    color: '#00e5a0',
+  },
+  {
+    href: '/categorias',
+    icon: FolderTree,
+    label: 'Categorías',
+    color: '#f97316',
+  },
+  {
+    href: '/clientes',
+    icon: Users,
+    label: 'Clientes',
+    color: '#ff6b35',
+  },
+  {
+    href: '/stock',
+    icon: BarChart2,
+    label: 'Stock',
+    color: '#a78bfa',
+  },
+  {
+    href: '/alertas',
+    icon: AlertTriangle,
+    label: 'Alertas',
+    color: '#ef4444',
+  },
+  {
+    href: '/facturacion',
+    icon: Receipt,
+    label: 'AFIP / Facturas',
+    color: '#06b6d4',
+  },
 ];
 
 const ADMIN_NAV = [
-  { href: '/usuarios', icon: UserCog, label: 'Usuarios', color: '#fb923c' },
+  {
+    href: '/usuarios',
+    icon: UserCog,
+    label: 'Usuarios',
+    color: '#fb923c',
+  },
+  {
+    href: '/reportes',
+    icon: BarChart2,
+    label: 'Reportes',
+    color: '#fbbf24',
+  },
+   {
+    href: '/finanzas',
+    icon: Wallet,
+    label: 'Finanzas',
+    color: '#34d399',
+  },
+    {
+    href: '/cuentas-corrientes',
+    icon: CreditCard,
+    label: 'Cuentas Corrientes',
+    color: '#fbbf24',
+  },
 ];
 
 interface SidebarProps {
   open?: boolean;
   onClose?: () => void;
 }
+
+type NavItem = {
+  href: string;
+  icon: ElementType;
+  label: string;
+  color: string;
+};
 
 const SIDEBAR_STORAGE_KEY = 'grupo-vj-sidebar-collapsed';
 
@@ -52,47 +126,36 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const { user, logout } = useAuthStore();
 
   const [collapsed, setCollapsed] = useState(false);
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-
     const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+
     if (saved === 'true') {
       setCollapsed(true);
     }
   }, []);
 
-const toggleCollapsed = () => {
-  const nextCollapsed = !collapsed;
+  const toggleCollapsed = () => {
+    const nextCollapsed = !collapsed;
 
-  setCollapsed(nextCollapsed);
+    setCollapsed(nextCollapsed);
 
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(SIDEBAR_STORAGE_KEY, String(nextCollapsed));
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, String(nextCollapsed));
 
-    window.dispatchEvent(
-      new CustomEvent('sidebar-collapsed-change', {
-        detail: { collapsed: nextCollapsed },
-      })
-    );
-  }
-};
+      window.dispatchEvent(
+        new CustomEvent('sidebar-collapsed-change', {
+          detail: { collapsed: nextCollapsed },
+        })
+      );
+    }
+  };
 
   const sidebarWidth = collapsed ? 78 : 240;
 
-  const renderNavItem = ({
-    href,
-    icon: Icon,
-    label,
-    color,
-  }: {
-    href: string;
-    icon: React.ElementType;
-    label: string;
-    color: string;
-  }) => {
-    const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
+  const renderNavItem = ({ href, icon: Icon, label, color }: NavItem) => {
+    const active =
+      pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
 
     return (
       <Link
@@ -145,7 +208,14 @@ const toggleCollapsed = () => {
 
         {!collapsed && (
           <>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span
+              style={{
+                flex: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {label}
             </span>
 
@@ -174,8 +244,12 @@ const toggleCollapsed = () => {
         transition: 'width 0.2s ease',
       }}
     >
-      {/* Logo */}
-      <div style={{ padding: collapsed ? '20px 12px' : '24px 20px 20px', borderBottom: '1px solid var(--border)' }}>
+      <div
+        style={{
+          padding: collapsed ? '20px 12px' : '24px 20px 20px',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
         <div className="flex items-center justify-between">
           <div
             style={{
@@ -194,7 +268,7 @@ const toggleCollapsed = () => {
                     fontSize: 9,
                     color: 'var(--accent)',
                     letterSpacing: 3,
-                    textTransform: 'uppercase' as const,
+                    textTransform: 'uppercase',
                     display: 'block',
                     marginBottom: 4,
                   }}
@@ -204,15 +278,27 @@ const toggleCollapsed = () => {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <svg width="32" height="32" viewBox="0 0 100 100" fill="none">
-                    <polygon points="10,15 50,85 90,15 75,15 50,60 25,15" fill="white" />
-                    <polygon points="60,15 90,15 90,55 75,55 75,30" fill="white" />
+                    <polygon
+                      points="10,15 50,85 90,15 75,15 50,60 25,15"
+                      fill="white"
+                    />
+                    <polygon
+                      points="60,15 90,15 90,55 75,55 75,30"
+                      fill="white"
+                    />
                   </svg>
 
                   <div>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>
+                    <div
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 800,
+                        color: 'var(--text)',
+                        lineHeight: 1,
+                      }}
+                    >
                       Grupo VJ
                     </div>
-
                   </div>
                 </div>
               </div>
@@ -220,17 +306,26 @@ const toggleCollapsed = () => {
 
             {collapsed && (
               <svg width="34" height="34" viewBox="0 0 100 100" fill="none">
-                <polygon points="10,15 50,85 90,15 75,15 50,60 25,15" fill="white" />
-                <polygon points="60,15 90,15 90,55 75,55 75,30" fill="white" />
+                <polygon
+                  points="10,15 50,85 90,15 75,15 50,60 25,15"
+                  fill="white"
+                />
+                <polygon
+                  points="60,15 90,15 90,55 75,55 75,30"
+                  fill="white"
+                />
               </svg>
             )}
           </div>
-
         </div>
       </div>
 
-      {/* Collapse button desktop */}
-      <div className="hidden md:block" style={{ padding: collapsed ? '10px 12px 4px' : '10px 10px 4px' }}>
+      <div
+        className="hidden md:block"
+        style={{
+          padding: collapsed ? '10px 12px 4px' : '10px 10px 4px',
+        }}
+      >
         <button
           type="button"
           onClick={toggleCollapsed}
@@ -248,15 +343,17 @@ const toggleCollapsed = () => {
         </button>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 overflow-y-auto" style={{ padding: collapsed ? '8px 10px' : '12px 10px' }}>
+      <nav
+        className="flex-1 overflow-y-auto"
+        style={{ padding: collapsed ? '8px 10px' : '12px 10px' }}
+      >
         {!collapsed && (
           <div
             style={{
               fontSize: 9,
               color: 'var(--text3)',
               letterSpacing: 2,
-              textTransform: 'uppercase' as const,
+              textTransform: 'uppercase',
               fontFamily: 'var(--mono)',
               padding: '8px 10px 4px',
             }}
@@ -275,7 +372,7 @@ const toggleCollapsed = () => {
                   fontSize: 9,
                   color: 'var(--text3)',
                   letterSpacing: 2,
-                  textTransform: 'uppercase' as const,
+                  textTransform: 'uppercase',
                   fontFamily: 'var(--mono)',
                   padding: '16px 10px 4px',
                 }}
@@ -289,8 +386,12 @@ const toggleCollapsed = () => {
         )}
       </nav>
 
-      {/* User */}
-      <div style={{ padding: collapsed ? '12px 10px' : '14px 12px', borderTop: '1px solid var(--border)' }}>
+      <div
+        style={{
+          padding: collapsed ? '12px 10px' : '14px 12px',
+          borderTop: '1px solid var(--border)',
+        }}
+      >
         <div
           style={{
             display: 'flex',
@@ -334,6 +435,7 @@ const toggleCollapsed = () => {
               >
                 {user?.name}
               </div>
+
               <div
                 style={{
                   fontSize: 10,
@@ -367,7 +469,6 @@ const toggleCollapsed = () => {
 
   return (
     <>
-      {/* Desktop */}
       <div
         className="hidden md:flex"
         style={{
@@ -384,7 +485,6 @@ const toggleCollapsed = () => {
         {content}
       </div>
 
-      {/* Mobile overlay */}
       {open && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
           <div
@@ -396,7 +496,16 @@ const toggleCollapsed = () => {
             }}
             onClick={onClose}
           />
-          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 260 }}>
+
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 260,
+            }}
+          >
             {content}
           </div>
         </div>

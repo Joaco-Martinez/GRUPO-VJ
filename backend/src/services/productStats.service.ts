@@ -77,11 +77,6 @@ function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-/**
- * Como los abonos actuales de cuenta corriente se guardan con saleId null,
- * asignamos los pagos por cliente con criterio FIFO:
- * el pago cancela primero la deuda más vieja.
- */
 async function buildAccountDebtAllocationBySale(clientIds: string[]) {
   const result = new Map<string, AccountDebtAllocation>();
 
@@ -114,28 +109,28 @@ async function buildAccountDebtAllocationBySale(clientIds: string[]) {
     ],
   });
 
-const payments = await prisma.accountMovement.findMany({
-  where: {
-    clientId: {
-      in: clientIds,
+  const payments = await prisma.accountMovement.findMany({
+    where: {
+      clientId: {
+        in: clientIds,
+      },
+      type: AccountMovementType.PAYMENT,
     },
-    type: AccountMovementType.PAYMENT,
-  },
-  select: {
-    clientId: true,
-    amount: true,
-    date: true,
-    createdAt: true,
-  },
-  orderBy: [
-    {
-      clientId: "asc",
+    select: {
+      clientId: true,
+      amount: true,
+      date: true,
+      createdAt: true,
     },
-    {
-      date: "asc",
-    },
-  ],
-});
+    orderBy: [
+      {
+        clientId: "asc",
+      },
+      {
+        date: "asc",
+      },
+    ],
+  });
 
   for (const clientId of clientIds) {
     const clientSales = accountSales.filter((s) => s.clientId === clientId);
@@ -189,7 +184,6 @@ const payments = await prisma.accountMovement.findMany({
 
       if (diff !== 0) return diff;
 
-      // Si cae en el mismo momento, registramos primero la deuda y después el pago.
       if (a.kind === "DEBT" && b.kind === "PAYMENT") return -1;
       if (a.kind === "PAYMENT" && b.kind === "DEBT") return 1;
 
@@ -450,8 +444,7 @@ export const productStatsService = {
 
       const saleCollected = round2(directCollected + accountCollected);
 
-      const collectedRatio =
-        saleTotal > 0 ? Math.min(saleCollected / saleTotal, 1) : 0;
+      const collectedRatio = saleTotal > 0 ? Math.min(saleCollected / saleTotal, 1) : 0;
 
       const collectedRevenue = round2(grossRevenue * collectedRatio);
       const pendingRevenue = round2(Math.max(grossRevenue - collectedRevenue, 0));
@@ -526,6 +519,24 @@ export const productStatsService = {
     });
 
     return data.sort((a, b) => b.rankValue - a.rankValue).slice(0, limit);
+  },
+
+  async getWorstProductsByRange(
+    startDate: Date,
+    endDate: Date,
+    limit: number,
+    unit?: "UNIT" | "KG"
+  ) {
+    const data = await this.buildProductReport({
+      startDate,
+      endDate,
+      unit,
+    });
+
+    return data
+      .filter((p) => p.rankValue > 0)
+      .sort((a, b) => a.rankValue - b.rankValue)
+      .slice(0, limit);
   },
 
   async getBestProductByMonth(year: number, month: number, unit?: "UNIT" | "KG") {
@@ -662,9 +673,7 @@ export const productStatsService = {
 
     const grossRevenue = round2(n0(totalRevenueAgg._sum.total));
     const collectedRevenue = round2(n0(financeIncomeAgg._sum.amount));
-    const pendingRevenue = round2(
-      products.reduce((acc, p) => acc + n0(p.pendingRevenue), 0)
-    );
+    const pendingRevenue = round2(products.reduce((acc, p) => acc + n0(p.pendingRevenue), 0));
 
     const totalUnits = round2(products.reduce((acc, p) => acc + p.unitsSold, 0));
     const totalKg = round2(products.reduce((acc, p) => acc + p.kgSold, 0));

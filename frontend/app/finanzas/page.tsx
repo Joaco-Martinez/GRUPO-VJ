@@ -199,12 +199,17 @@ const safeGet = async <T,>(
         endDate: dateTo,
       });
 
-      const topProductsData =
-        normalizeArray<AnyObj>(topRangeData).length > 0
-          ? topRangeData
-          : await safeGet<any>('/finance/products/top', []);
+      const topProductsData = await safeGet<any>('/finance/products/top-range', [], {
+  startDate: dateFrom,
+  endDate: dateTo,
+  limit: 5,
+});
 
-      const worstProductsData = await safeGet<any>('/finance/products/worst', []);
+const worstProductsData = await safeGet<any>('/finance/products/worst-range', [], {
+  startDate: dateFrom,
+  endDate: dateTo,
+  limit: 5,
+});
 
       setEntries(normalizeArray<FinanceEntry>(financeData));
 
@@ -281,6 +286,17 @@ const safeGet = async <T,>(
 
     return Object.values(map);
   }, [filteredEntries]);
+
+  const filteredWorstProducts = useMemo(() => {
+  const topNames = new Set(
+    topProducts.map(p => getProductName(p).toLowerCase().trim())
+  );
+
+  return worstProducts.filter(p => {
+    const name = getProductName(p).toLowerCase().trim();
+    return !topNames.has(name);
+  });
+}, [topProducts, worstProducts]);
 
   const field = (k: string, v: string) => {
     setForm(p => ({
@@ -773,9 +789,9 @@ const safeGet = async <T,>(
             </div>
           </div>
 
-          {worstProducts.length ? (
+          {filteredWorstProducts.length ? (
             <div style={{ display: 'grid', gap: 10 }}>
-              {worstProducts.slice(0, 5).map((p: AnyObj, index: number) => (
+              {filteredWorstProducts.slice(0, 5).map((p: AnyObj, index: number) => (
                 <div
                   key={p.id ?? `${getProductName(p)}-${index}`}
                   style={{

@@ -26,13 +26,23 @@ function parseLimit(limit: any, fallback = 10) {
 function parseDateParam(value: any) {
   if (!value) return null;
 
-  const date = new Date(String(value));
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00.000Z`);
 
   if (Number.isNaN(date.getTime())) {
     return null;
   }
 
   return date;
+}
+
+function getStartDateQuery(req: Request) {
+  const { start, from, startDate } = req.query;
+  return start ?? from ?? startDate;
+}
+
+function getEndDateQuery(req: Request) {
+  const { end, to, endDate } = req.query;
+  return end ?? to ?? endDate;
 }
 
 export const productStatsController = {
@@ -76,15 +86,15 @@ export const productStatsController = {
 
   async getTopRange(req: Request, res: Response) {
     try {
-      const { start, end, from, to, limit = 10, unit } = req.query;
+      const { limit = 10, unit } = req.query;
 
-      const startDate = parseDateParam(start ?? from);
-      const endDate = parseDateParam(end ?? to);
+      const startDate = parseDateParam(getStartDateQuery(req));
+      const endDate = parseDateParam(getEndDateQuery(req));
 
       if (!startDate || !endDate) {
         return res.status(400).json({
           error: "Faltan fechas",
-          detail: "Usá start/end o from/to con formato YYYY-MM-DD",
+          detail: "Usá start/end, from/to o startDate/endDate con formato YYYY-MM-DD",
         });
       }
 
@@ -100,6 +110,37 @@ export const productStatsController = {
       console.error("Error getTopRange product-stats:", error);
       res.status(500).json({
         error: "Error al obtener productos en rango",
+        detail: error?.message,
+      });
+    }
+  },
+
+  async getWorstRange(req: Request, res: Response) {
+    try {
+      const { limit = 10, unit } = req.query;
+
+      const startDate = parseDateParam(getStartDateQuery(req));
+      const endDate = parseDateParam(getEndDateQuery(req));
+
+      if (!startDate || !endDate) {
+        return res.status(400).json({
+          error: "Faltan fechas",
+          detail: "Usá start/end, from/to o startDate/endDate con formato YYYY-MM-DD",
+        });
+      }
+
+      const stats = await productStatsService.getWorstProductsByRange(
+        startDate,
+        endDate,
+        parseLimit(limit, 10),
+        parseUnit(unit)
+      );
+
+      res.json(stats);
+    } catch (error: any) {
+      console.error("Error getWorstRange product-stats:", error);
+      res.status(500).json({
+        error: "Error al obtener productos con menor venta en rango",
         detail: error?.message,
       });
     }
@@ -177,15 +218,15 @@ export const productStatsController = {
 
   async getTotalsRange(req: Request, res: Response) {
     try {
-      const { start, end, from, to, unit } = req.query;
+      const { unit } = req.query;
 
-      const startDate = parseDateParam(start ?? from);
-      const endDate = parseDateParam(end ?? to);
+      const startDate = parseDateParam(getStartDateQuery(req));
+      const endDate = parseDateParam(getEndDateQuery(req));
 
       if (!startDate || !endDate) {
         return res.status(400).json({
           error: "Faltan fechas",
-          detail: "Usá start/end o from/to con formato YYYY-MM-DD",
+          detail: "Usá start/end, from/to o startDate/endDate con formato YYYY-MM-DD",
         });
       }
 

@@ -1,4 +1,5 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth';
@@ -14,10 +15,13 @@ interface AppLayoutProps {
   actions?: React.ReactNode;
 }
 
+const SIDEBAR_STORAGE_KEY = 'grupo-vj-sidebar-collapsed';
+
 export default function AppLayout({ children, title, subtitle, actions }: AppLayoutProps) {
   const { user, loading, me } = useAuthStore();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { toasts } = useToast();
 
   useEffect(() => {
@@ -28,13 +32,53 @@ export default function AppLayout({ children, title, subtitle, actions }: AppLay
     if (!loading && !user) router.replace('/login');
   }, [user, loading, router]);
 
+  useEffect(() => {
+    const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    setSidebarCollapsed(saved === 'true');
+
+    const handleSidebarChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ collapsed: boolean }>;
+      setSidebarCollapsed(customEvent.detail.collapsed);
+    };
+
+    window.addEventListener('sidebar-collapsed-change', handleSidebarChange);
+
+    return () => {
+      window.removeEventListener('sidebar-collapsed-change', handleSidebarChange);
+    };
+  }, []);
+
+  const desktopSidebarWidth = sidebarCollapsed ? 78 : 240;
+
   if (loading || !user) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg)',
+        }}
+      >
         <div style={{ textAlign: 'center' }}>
-          <svg width="48" height="48" viewBox="0 0 100 100" fill="none" style={{ margin: '0 auto 16px' }}>
-            <polygon points="10,15 50,85 90,15 75,15 50,60 25,15" fill="white" opacity="0.9"/>
-            <polygon points="60,15 90,15 90,55 75,55 75,30" fill="white" opacity="0.9"/>
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 100 100"
+            fill="none"
+            style={{ margin: '0 auto 16px' }}
+          >
+            <polygon
+              points="10,15 50,85 90,15 75,15 50,60 25,15"
+              fill="white"
+              opacity="0.9"
+            />
+            <polygon
+              points="60,15 90,15 90,55 75,55 75,30"
+              fill="white"
+              opacity="0.9"
+            />
           </svg>
           <div className="spinner" style={{ margin: '0 auto' }} />
         </div>
@@ -47,23 +91,95 @@ export default function AppLayout({ children, title, subtitle, actions }: AppLay
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       {/* Main */}
-      <div className="flex-1 flex flex-col" style={{ marginLeft: 0 }} id="main-content">
-        <style>{`@media (min-width: 768px) { #main-content { margin-left: 240px; } }`}</style>
+      <div
+        className="flex-1 flex flex-col"
+        id="main-content"
+        style={{
+          minHeight: '100vh',
+          width: '100%',
+          transition: 'margin-left 0.2s ease, width 0.2s ease',
+        }}
+      >
+        <style>{`
+          @media (min-width: 768px) {
+            #main-content {
+              margin-left: ${desktopSidebarWidth}px;
+              width: calc(100% - ${desktopSidebarWidth}px);
+            }
+          }
+
+          @media (max-width: 767px) {
+            #main-content {
+              margin-left: 0;
+              width: 100%;
+            }
+          }
+        `}</style>
 
         {/* Topbar */}
-        <header style={{ position: 'sticky', top: 0, zIndex: 30, background: 'rgba(9,9,11,0.85)', backdropFilter: 'blur(12px)', borderBottom: '1px solid var(--border)', padding: '0 20px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button className="md:hidden btn btn-ghost btn-sm" style={{ padding: 8 }} onClick={() => setSidebarOpen(true)}>
+        <header
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 30,
+            background: 'rgba(9,9,11,0.85)',
+            backdropFilter: 'blur(12px)',
+            borderBottom: '1px solid var(--border)',
+            padding: '0 20px',
+            height: 60,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+            <button
+              className="md:hidden btn btn-ghost btn-sm"
+              style={{ padding: 8 }}
+              onClick={() => setSidebarOpen(true)}
+            >
               <Menu size={18} />
             </button>
+
             {(title || subtitle) && (
-              <div>
-                {title && <h1 style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)', lineHeight: 1 }}>{title}</h1>}
-                {subtitle && <p style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--mono)', marginTop: 2 }}>{subtitle}</p>}
+              <div style={{ minWidth: 0 }}>
+                {title && (
+                  <h1
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 800,
+                      color: 'var(--text)',
+                      lineHeight: 1,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {title}
+                  </h1>
+                )}
+
+                {subtitle && (
+                  <p
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--text3)',
+                      fontFamily: 'var(--mono)',
+                      marginTop: 2,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {subtitle}
+                  </p>
+                )}
               </div>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {actions}
             <button className="btn btn-ghost btn-sm" style={{ padding: 8 }}>
               <Bell size={16} />
@@ -72,7 +188,17 @@ export default function AppLayout({ children, title, subtitle, actions }: AppLay
         </header>
 
         {/* Page content */}
-        <main style={{ flex: 1, padding: '24px 20px', maxWidth: 1400, width: '100%', margin: '0 auto' }} className="animate-fade">
+        <main
+          style={{
+            flex: 1,
+            padding: '24px 20px',
+            maxWidth: 1400,
+            width: '100%',
+            margin: '0 auto',
+            transition: 'all 0.2s ease',
+          }}
+          className="animate-fade"
+        >
           {children}
         </main>
       </div>

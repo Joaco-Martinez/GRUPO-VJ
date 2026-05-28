@@ -1139,7 +1139,7 @@ await productStatsService.createStatsFromSale(
     });
   },
 
-  async updatePayments(
+ async updatePayments(
     id: string,
     payments: {
       method: PaymentMethod;
@@ -1158,6 +1158,7 @@ await productStatsService.createStatsFromSale(
     });
 
     if (!sale) throw new Error("Venta no encontrada");
+
     if (sale.status === SaleStatus.CANCELLED) {
       throw new Error("No se pueden modificar pagos de una venta cancelada");
     }
@@ -1177,7 +1178,7 @@ await productStatsService.createStatsFromSale(
     const debtDelta = round2(newDebt - oldDebt);
     const primary = payments[0]?.method ?? sale.paymentMethod;
 
-    return prisma.$transaction(async (tx) => {
+    const updatedSale = await prisma.$transaction(async (tx) => {
       if (debtDelta !== 0 && sale.clientId) {
         const client = await tx.client.findUnique({
           where: { id: sale.clientId },
@@ -1190,6 +1191,7 @@ await productStatsService.createStatsFromSale(
         });
 
         if (!client) throw new Error("Cliente no encontrado");
+
         if (!client.isAccountEnabled && debtDelta > 0) {
           throw new Error("La cuenta corriente de este cliente está deshabilitada");
         }
@@ -1219,17 +1221,19 @@ await productStatsService.createStatsFromSale(
             clientId: sale.clientId,
             saleId: sale.id,
             userId: sale.userId ?? null,
-            type: debtDelta > 0
-              ? AccountMovementType.ADJUSTMENT_POSITIVE
-              : AccountMovementType.ADJUSTMENT_NEGATIVE,
+            type:
+              debtDelta > 0
+                ? AccountMovementType.ADJUSTMENT_POSITIVE
+                : AccountMovementType.ADJUSTMENT_NEGATIVE,
             amount: Math.abs(debtDelta),
             previousBalance,
             newBalance,
             paymentMethod: null,
             reference: sale.id,
-            description: debtDelta > 0
-              ? "Aumento de deuda por actualización de pagos"
-              : "Reducción de deuda por actualización de pagos",
+            description:
+              debtDelta > 0
+                ? "Aumento de deuda por actualización de pagos"
+                : "Reducción de deuda por actualización de pagos",
           },
         });
       }
@@ -1259,5 +1263,11 @@ await productStatsService.createStatsFromSale(
         },
       });
     });
+
+    if (updatedSale.status === SaleStatus.COMPLETED) {
+      await financeService.registerIncomeFromSale(id);
+    }
+
+    return updatedSale;
   },
 };

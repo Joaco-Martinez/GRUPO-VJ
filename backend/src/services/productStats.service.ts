@@ -1,48 +1,278 @@
-import { PrismaClient, SaleUnit } from "@prisma/client";
+import {
+  AccountMovementType,
+  CategoryFinance,
+  FinanceType,
+  PrismaClient,
+  SaleStatus,
+  SaleUnit,
+} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 type SaleItemStatInput = {
   productId: string;
-  quantity?: number;   // UNIT
-  quantityKg?: number; // KG
+  quantity?: number;
+  quantityKg?: number;
 };
 
-type ProductLite = { id: string; name: string; saleUnit: SaleUnit };
+type ProductLite = {
+  id: string;
+  name: string;
+  saleUnit: SaleUnit;
+};
 
 type GroupedRow = {
   productId: string;
-  _sum: { quantity: number | null; quantityKg: number | null };
+  _sum: {
+    quantity: number | null;
+    quantityKg: number | null;
+  };
+};
+
+type ReportProductStat = {
+  productId: string;
+  name: string;
+  saleUnit: SaleUnit;
+  unitsSold: number;
+  kgSold: number;
+  totalSold: number;
+  totalSoldLabel: string;
+
+  totalRevenue: number;
+  grossRevenue: number;
+  collectedRevenue: number;
+  pendingRevenue: number;
+
+  rankValue: number;
+  product: ProductLite | null;
+};
+
+type AccountDebtAllocation = {
+  remainingDebt: number;
+  accountPaid: number;
 };
 
 function toDateOnly(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function n0(v: number | null | undefined) {
+function startOfDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function n0(v: unknown) {
   const num = Number(v);
   return Number.isFinite(num) ? num : 0;
 }
 
+function round2(n: number) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Como los abonos actuales de cuenta corriente se guardan con saleId null,
+ * asignamos los pagos por cliente con criterio FIFO:
+ * el pago cancela primero la deuda más vieja.
+ */
+async function buildAccountDebtAllocationBySale(clientIds: string[]) {
+  const result = new Map<string, AccountDebtAllocation>();
+
+  if (!clientIds.length) return result;
+
+  const accountSales = await prisma.sale.findMany({
+    where: {
+      clientId: {
+        in: clientIds,
+      },
+      status: SaleStatus.COMPLETED,
+      isAccountSale: true,
+      accountDebtAmount: {
+        gt: 0,
+      },
+    },
+    select: {
+      id: true,
+      clientId: true,
+      accountDebtAmount: true,
+      createdAt: true,
+    },
+    orderBy: [
+      {
+        clientId: "asc",
+      },
+      {
+        createdAt: "asc",
+      },
+    ],
+  });
+
+const payments = await prisma.accountMovement.findMany({
+  where: {
+    clientId: {
+      in: clientIds,
+    },
+    type: AccountMovementType.PAYMENT,
+  },
+  select: {
+    clientId: true,
+    amount: true,
+    date: true,
+    createdAt: true,
+  },
+  orderBy: [
+    {
+      clientId: "asc",
+    },
+    {
+      date: "asc",
+    },
+  ],
+});
+
+  for (const clientId of clientIds) {
+    const clientSales = accountSales.filter((s) => s.clientId === clientId);
+    const clientPayments = payments.filter((p) => p.clientId === clientId);
+
+    const queue: {
+      saleId: string;
+      remainingDebt: number;
+      accountPaid: number;
+    }[] = [];
+
+    const events: {
+      kind: "DEBT" | "PAYMENT";
+      date: Date;
+      saleId?: string;
+      amount: number;
+    }[] = [];
+
+    for (const sale of clientSales) {
+      const amount = round2(n0(sale.accountDebtAmount));
+
+      if (amount <= 0) continue;
+
+      events.push({
+        kind: "DEBT",
+        date: sale.createdAt,
+        saleId: sale.id,
+        amount,
+      });
+
+      result.set(sale.id, {
+        remainingDebt: amount,
+        accountPaid: 0,
+      });
+    }
+
+    for (const payment of clientPayments) {
+      const amount = round2(n0(payment.amount));
+
+      if (amount <= 0) continue;
+
+      events.push({
+        kind: "PAYMENT",
+        date: payment.date ?? payment.createdAt,
+        amount,
+      });
+    }
+
+    events.sort((a, b) => {
+      const diff = a.date.getTime() - b.date.getTime();
+
+      if (diff !== 0) return diff;
+
+      // Si cae en el mismo momento, registramos primero la deuda y después el pago.
+      if (a.kind === "DEBT" && b.kind === "PAYMENT") return -1;
+      if (a.kind === "PAYMENT" && b.kind === "DEBT") return 1;
+
+      return 0;
+    });
+
+    for (const event of events) {
+      if (event.kind === "DEBT") {
+        if (!event.saleId) continue;
+
+        const row = {
+          saleId: event.saleId,
+          remainingDebt: round2(event.amount),
+          accountPaid: 0,
+        };
+
+        queue.push(row);
+
+        result.set(event.saleId, {
+          remainingDebt: row.remainingDebt,
+          accountPaid: row.accountPaid,
+        });
+
+        continue;
+      }
+
+      let availablePayment = round2(event.amount);
+
+      while (availablePayment > 0 && queue.length > 0) {
+        const firstDebt = queue[0];
+
+        const applied = round2(Math.min(firstDebt.remainingDebt, availablePayment));
+
+        firstDebt.remainingDebt = round2(firstDebt.remainingDebt - applied);
+        firstDebt.accountPaid = round2(firstDebt.accountPaid + applied);
+        availablePayment = round2(availablePayment - applied);
+
+        result.set(firstDebt.saleId, {
+          remainingDebt: firstDebt.remainingDebt,
+          accountPaid: firstDebt.accountPaid,
+        });
+
+        if (firstDebt.remainingDebt <= 0) {
+          queue.shift();
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 export const productStatsService = {
-  // ✅ Crear stats al completar una venta (100% compatible KG)
   async createStatsFromSale(items: SaleItemStatInput[]) {
     const dateOnly = toDateOnly(new Date());
 
     const products = await prisma.product.findMany({
-      where: { id: { in: items.map((i) => i.productId) } },
-      select: { id: true, saleUnit: true },
+      where: {
+        id: {
+          in: items.map((i) => i.productId),
+        },
+      },
+      select: {
+        id: true,
+        saleUnit: true,
+      },
     });
 
     const unitMap = new Map(products.map((p) => [p.id, p.saleUnit]));
 
     for (const item of items) {
       const saleUnit = unitMap.get(item.productId);
-      if (!saleUnit) throw new Error(`Producto no encontrado: ${item.productId}`);
 
-      if (saleUnit === "KG") {
+      if (!saleUnit) {
+        throw new Error(`Producto no encontrado: ${item.productId}`);
+      }
+
+      if (saleUnit === SaleUnit.KG) {
         const kg = n0(item.quantityKg);
-        if (kg <= 0) throw new Error(`quantityKg inválida para producto KG: ${item.productId}`);
+
+        if (kg <= 0) {
+          throw new Error(`quantityKg inválida para producto KG: ${item.productId}`);
+        }
 
         await prisma.productStats.create({
           data: {
@@ -54,7 +284,10 @@ export const productStatsService = {
         });
       } else {
         const qty = n0(item.quantity);
-        if (qty <= 0) throw new Error(`quantity inválida para producto UNIT: ${item.productId}`);
+
+        if (qty <= 0) {
+          throw new Error(`quantity inválida para producto UNIT: ${item.productId}`);
+        }
 
         await prisma.productStats.create({
           data: {
@@ -68,13 +301,20 @@ export const productStatsService = {
     }
   },
 
-  // ✅ Merge eficiente + rankValue correcto (sin mezclar)
   async attachProducts(grouped: GroupedRow[]) {
     if (!grouped.length) return [];
 
     const products = await prisma.product.findMany({
-      where: { id: { in: grouped.map((g) => g.productId) } },
-      select: { id: true, name: true, saleUnit: true },
+      where: {
+        id: {
+          in: grouped.map((g) => g.productId),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        saleUnit: true,
+      },
     });
 
     const productMap = new Map<string, ProductLite>(products.map((p) => [p.id, p]));
@@ -85,8 +325,8 @@ export const productStatsService = {
       const unitsSold = n0(g._sum.quantity);
       const kgSold = n0(g._sum.quantityKg);
 
-      const saleUnit = product?.saleUnit ?? "UNIT";
-      const rankValue = saleUnit === "KG" ? kgSold : unitsSold;
+      const saleUnit = product?.saleUnit ?? SaleUnit.UNIT;
+      const rankValue = saleUnit === SaleUnit.KG ? kgSold : unitsSold;
 
       return {
         productId: g.productId,
@@ -103,98 +343,346 @@ export const productStatsService = {
     return prisma.productStats.groupBy({
       by: ["productId"],
       where,
-      _sum: { quantity: true, quantityKg: true },
+      _sum: {
+        quantity: true,
+        quantityKg: true,
+      },
     });
   },
 
-  // ✅ TOP por tipo
+  async buildProductReport(params?: {
+    startDate?: Date;
+    endDate?: Date;
+    unit?: "UNIT" | "KG";
+  }): Promise<ReportProductStat[]> {
+    const where: any = {
+      sale: {
+        status: SaleStatus.COMPLETED,
+      },
+    };
+
+    if (params?.startDate || params?.endDate) {
+      where.sale.createdAt = {};
+
+      if (params.startDate) {
+        where.sale.createdAt.gte = startOfDay(params.startDate);
+      }
+
+      if (params.endDate) {
+        where.sale.createdAt.lte = endOfDay(params.endDate);
+      }
+    }
+
+    if (params?.unit) {
+      where.product = {
+        saleUnit: params.unit,
+      };
+    }
+
+    const items = await prisma.saleItem.findMany({
+      where,
+      select: {
+        id: true,
+        saleId: true,
+        productId: true,
+        quantity: true,
+        quantityKg: true,
+        price: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            saleUnit: true,
+          },
+        },
+        sale: {
+          select: {
+            id: true,
+            clientId: true,
+            total: true,
+            createdAt: true,
+            status: true,
+            isAccountSale: true,
+            accountDebtAmount: true,
+            payments: {
+              select: {
+                method: true,
+                amount: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const clientIds = Array.from(
+      new Set(
+        items
+          .map((item) => item.sale.clientId)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    const accountDebtBySale = await buildAccountDebtAllocationBySale(clientIds);
+
+    const map = new Map<string, ReportProductStat>();
+
+    for (const item of items) {
+      const product = item.product;
+      const sale = item.sale;
+      const saleUnit = product.saleUnit;
+
+      const unitsSold = saleUnit === SaleUnit.UNIT ? n0(item.quantity) : 0;
+      const kgSold = saleUnit === SaleUnit.KG ? n0(item.quantityKg) : 0;
+      const soldQty = saleUnit === SaleUnit.KG ? kgSold : unitsSold;
+
+      const grossRevenue = round2(n0(item.price) * soldQty);
+
+      const saleTotal = n0(sale.total);
+
+      const directCollected = (sale.payments ?? [])
+        .filter((payment) => payment.method !== "CUENTA_CORRIENTE")
+        .reduce((acc, payment) => acc + n0(payment.amount), 0);
+
+      const accountAllocation = accountDebtBySale.get(sale.id);
+
+      const accountCollected = accountAllocation?.accountPaid ?? 0;
+
+      const saleCollected = round2(directCollected + accountCollected);
+
+      const collectedRatio =
+        saleTotal > 0 ? Math.min(saleCollected / saleTotal, 1) : 0;
+
+      const collectedRevenue = round2(grossRevenue * collectedRatio);
+      const pendingRevenue = round2(Math.max(grossRevenue - collectedRevenue, 0));
+
+      const current = map.get(item.productId);
+
+      if (!current) {
+        map.set(item.productId, {
+          productId: item.productId,
+          name: product.name,
+          saleUnit,
+          unitsSold,
+          kgSold,
+          totalSold: soldQty,
+          totalSoldLabel: saleUnit === SaleUnit.KG ? `${kgSold} kg` : `${unitsSold} u.`,
+
+          totalRevenue: grossRevenue,
+          grossRevenue,
+          collectedRevenue,
+          pendingRevenue,
+
+          rankValue: soldQty,
+          product,
+        });
+      } else {
+        current.unitsSold = round2(current.unitsSold + unitsSold);
+        current.kgSold = round2(current.kgSold + kgSold);
+        current.totalSold = round2(current.totalSold + soldQty);
+
+        current.totalRevenue = round2(current.totalRevenue + grossRevenue);
+        current.grossRevenue = round2(current.grossRevenue + grossRevenue);
+        current.collectedRevenue = round2(current.collectedRevenue + collectedRevenue);
+        current.pendingRevenue = round2(current.pendingRevenue + pendingRevenue);
+
+        current.rankValue = current.totalSold;
+
+        current.totalSoldLabel =
+          current.saleUnit === SaleUnit.KG
+            ? `${current.kgSold} kg`
+            : `${current.unitsSold} u.`;
+      }
+    }
+
+    return Array.from(map.values());
+  },
+
   async getTopProducts(limit: number, unit?: "UNIT" | "KG") {
-    const grouped = await this.groupAll();
-    const merged = await this.attachProducts(grouped as any);
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+    const data = await this.buildProductReport({ unit });
 
-    return filtered.sort((a, b) => b.rankValue - a.rankValue).slice(0, limit);
+    return data.sort((a, b) => b.rankValue - a.rankValue).slice(0, limit);
   },
 
-  // ✅ WORST por tipo
   async getWorstProducts(limit: number, unit?: "UNIT" | "KG") {
-    const grouped = await this.groupAll();
-    const merged = await this.attachProducts(grouped as any);
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+    const data = await this.buildProductReport({ unit });
 
-    return filtered.sort((a, b) => a.rankValue - b.rankValue).slice(0, limit);
+    return data
+      .filter((p) => p.rankValue > 0)
+      .sort((a, b) => a.rankValue - b.rankValue)
+      .slice(0, limit);
   },
 
-  // ✅ TOP por rango
-  async getTopProductsByRange(startDate: Date, endDate: Date, limit: number, unit?: "UNIT" | "KG") {
-    const grouped = await this.groupAll({ date: { gte: startDate, lte: endDate } });
-    const merged = await this.attachProducts(grouped as any);
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+  async getTopProductsByRange(
+    startDate: Date,
+    endDate: Date,
+    limit: number,
+    unit?: "UNIT" | "KG"
+  ) {
+    const data = await this.buildProductReport({
+      startDate,
+      endDate,
+      unit,
+    });
 
-    return filtered.sort((a, b) => b.rankValue - a.rankValue).slice(0, limit);
+    return data.sort((a, b) => b.rankValue - a.rankValue).slice(0, limit);
   },
 
-  // ✅ BEST del mes
   async getBestProductByMonth(year: number, month: number, unit?: "UNIT" | "KG") {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
 
-    const grouped = await this.groupAll({ date: { gte: startDate, lte: endDate } });
-    const merged = await this.attachProducts(grouped as any);
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+    const data = await this.buildProductReport({
+      startDate,
+      endDate,
+      unit,
+    });
 
-    return filtered.sort((a, b) => b.rankValue - a.rankValue)[0] || null;
+    return data.sort((a, b) => b.rankValue - a.rankValue)[0] || null;
   },
 
-  // ✅ WORST del mes
   async getWorstProductByMonth(year: number, month: number, unit?: "UNIT" | "KG") {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
 
-    const grouped = await this.groupAll({ date: { gte: startDate, lte: endDate } });
-    const merged = await this.attachProducts(grouped as any);
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+    const data = await this.buildProductReport({
+      startDate,
+      endDate,
+      unit,
+    });
 
-    return filtered.sort((a, b) => a.rankValue - b.rankValue)[0] || null;
+    return (
+      data
+        .filter((p) => p.rankValue > 0)
+        .sort((a, b) => a.rankValue - b.rankValue)[0] || null
+    );
   },
 
-  // ✅ NUEVO: Totales globales (para la tabla del front)
-  async getTotals(limit = 50, unit?: "UNIT" | "KG") {
-    const grouped = await this.groupAll();
-    const merged = await this.attachProducts(grouped as any);
+  async getTotals(unit?: "UNIT" | "KG") {
+    const products = await this.buildProductReport({ unit });
 
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+    const salesWhere: any = {
+      status: SaleStatus.COMPLETED,
+    };
 
-    return filtered
-      .sort((a, b) => b.rankValue - a.rankValue)
-      .slice(0, limit)
-      .map((r) => ({
-        productId: r.productId,
-        product: r.product,
-        saleUnit: r.saleUnit,
-        unitsSold: r.unitsSold,
-        kgSold: r.kgSold,
-        rankValue: r.rankValue,
-      }));
+    const totalSales = await prisma.sale.count({
+      where: salesWhere,
+    });
+
+    const totalRevenueAgg = await prisma.sale.aggregate({
+      where: salesWhere,
+      _sum: {
+        total: true,
+      },
+    });
+
+    const financeIncomeAgg = await prisma.finance.aggregate({
+      where: {
+        type: FinanceType.INGRESO,
+        category: {
+          in: [CategoryFinance.VENTA, CategoryFinance.COBRANZA],
+        },
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+
+    const currentDebtAgg = await prisma.client.aggregate({
+      _sum: {
+        currentBalance: true,
+      },
+    });
+
+    const grossRevenue = round2(n0(totalRevenueAgg._sum.total));
+    const collectedRevenue = round2(n0(financeIncomeAgg._sum.amount));
+    const pendingRevenue = round2(n0(currentDebtAgg._sum.currentBalance));
+
+    const totalUnits = round2(products.reduce((acc, p) => acc + p.unitsSold, 0));
+    const totalKg = round2(products.reduce((acc, p) => acc + p.kgSold, 0));
+    const totalItems = round2(products.reduce((acc, p) => acc + p.totalSold, 0));
+
+    return {
+      totalRevenue: grossRevenue,
+
+      grossRevenue,
+      collectedRevenue,
+      pendingRevenue,
+
+      totalSales,
+      totalItems,
+      totalUnits,
+      totalKg,
+      productsCount: products.length,
+      topProducts: products.sort((a, b) => b.rankValue - a.rankValue).slice(0, 10),
+    };
   },
 
-  // ✅ NUEVO: Totales por rango (si querés usarlo también)
-  async getTotalsByRange(startDate: Date, endDate: Date, limit = 50, unit?: "UNIT" | "KG") {
-    const grouped = await this.groupAll({ date: { gte: startDate, lte: endDate } });
-    const merged = await this.attachProducts(grouped as any);
+  async getTotalsByRange(startDate: Date, endDate: Date, unit?: "UNIT" | "KG") {
+    const products = await this.buildProductReport({
+      startDate,
+      endDate,
+      unit,
+    });
 
-    const filtered = unit ? merged.filter((m) => m.saleUnit === unit) : merged;
+    const salesWhere: any = {
+      status: SaleStatus.COMPLETED,
+      createdAt: {
+        gte: startOfDay(startDate),
+        lte: endOfDay(endDate),
+      },
+    };
 
-    return filtered
-      .sort((a, b) => b.rankValue - a.rankValue)
-      .slice(0, limit)
-      .map((r) => ({
-        productId: r.productId,
-        product: r.product,
-        saleUnit: r.saleUnit,
-        unitsSold: r.unitsSold,
-        kgSold: r.kgSold,
-        rankValue: r.rankValue,
-      }));
+    const totalSales = await prisma.sale.count({
+      where: salesWhere,
+    });
+
+    const totalRevenueAgg = await prisma.sale.aggregate({
+      where: salesWhere,
+      _sum: {
+        total: true,
+      },
+    });
+
+    const financeIncomeAgg = await prisma.finance.aggregate({
+      where: {
+        type: FinanceType.INGRESO,
+        category: {
+          in: [CategoryFinance.VENTA, CategoryFinance.COBRANZA],
+        },
+        date: {
+          gte: startOfDay(startDate),
+          lte: endOfDay(endDate),
+        },
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+
+    const grossRevenue = round2(n0(totalRevenueAgg._sum.total));
+    const collectedRevenue = round2(n0(financeIncomeAgg._sum.amount));
+    const pendingRevenue = round2(
+      products.reduce((acc, p) => acc + n0(p.pendingRevenue), 0)
+    );
+
+    const totalUnits = round2(products.reduce((acc, p) => acc + p.unitsSold, 0));
+    const totalKg = round2(products.reduce((acc, p) => acc + p.kgSold, 0));
+    const totalItems = round2(products.reduce((acc, p) => acc + p.totalSold, 0));
+
+    return {
+      totalRevenue: grossRevenue,
+
+      grossRevenue,
+      collectedRevenue,
+      pendingRevenue,
+
+      totalSales,
+      totalItems,
+      totalUnits,
+      totalKg,
+      productsCount: products.length,
+      topProducts: products.sort((a, b) => b.rankValue - a.rankValue).slice(0, 10),
+    };
   },
 };

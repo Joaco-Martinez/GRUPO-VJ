@@ -73,8 +73,8 @@ async registerIncomeFromSale(saleId: string) {
   if (!sale) throw new Error("Venta no encontrada");
   if (sale.status !== "COMPLETED") return null;
 
-  // Evita ingresos duplicados aunque updateStatus(COMPLETED) se llame más de una vez.
   const marker = `[sale:${sale.id}]`;
+
   const existing = await prisma.finance.findFirst({
     where: {
       type: "INGRESO",
@@ -83,17 +83,36 @@ async registerIncomeFromSale(saleId: string) {
     },
   });
 
-  if (existing) return existing;
-
   const paidAmount = sale.payments?.length
-    ? sale.payments.reduce((acc, payment) => acc + payment.amount, 0)
+    ? sale.payments
+        .filter((payment) => payment.method !== "CUENTA_CORRIENTE")
+        .reduce((acc, payment) => acc + Number(payment.amount || 0), 0)
     : sale.paymentMethod === "CUENTA_CORRIENTE"
       ? 0
-      : sale.total;
+      : Number(sale.total || 0);
 
   const amount = Number(paidAmount.toFixed(2));
 
-  // Una venta 100% cuenta corriente no genera ingreso financiero hasta que se cobre.
+  // Si ya existía un ingreso de esta venta, lo sincronizamos.
+  // Esto evita que quede mal si después cambian los pagos.
+  if (existing) {
+    if (amount <= 0) {
+      return prisma.finance.delete({
+        where: { id: existing.id },
+      });
+    }
+
+    return prisma.finance.update({
+      where: { id: existing.id },
+      data: {
+        amount,
+        paymentMethod: sale.payments?.length ? sale.payments[0].method : sale.paymentMethod,
+        date: existing.date,
+      },
+    });
+  }
+
+  // Venta 100% cuenta corriente: no genera ingreso hasta que se cobre.
   if (amount <= 0) return null;
 
   const itemsDesc = sale.items.map((i) => {
@@ -104,6 +123,7 @@ async registerIncomeFromSale(saleId: string) {
         const kg = (i as any).quantityKg ?? 0;
         return `${i.product.name} x${fmtKgAR(kg)} kg`;
       }
+
       return `${i.product.name} x${i.quantity}`;
     }
 
@@ -111,6 +131,7 @@ async registerIncomeFromSale(saleId: string) {
       const boxItems = i.boxContents
         .map((b) => `${b.product.name} x${b.quantity ?? b.quantityKg ?? 0}`)
         .join(", ");
+
       return `Caja (${boxItems}) x${i.quantity}`;
     }
 

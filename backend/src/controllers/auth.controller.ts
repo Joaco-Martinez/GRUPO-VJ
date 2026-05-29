@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { authService } from "../services/auth.service";
-
+import { getParamAsString } from "../utils/params";
 export const authController = {
   async register(req: Request, res: Response, next: NextFunction) {
     try {
@@ -68,7 +68,7 @@ export const authController = {
   async deleteUser(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const result = await authService.deleteUser(id);
+      const result = await authService.deleteUser(getParamAsString(id, "id"));
 
       res.json({
         ok: true,

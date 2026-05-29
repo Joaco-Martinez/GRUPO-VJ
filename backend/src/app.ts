@@ -21,6 +21,7 @@ import categoryRoutes from "./routes/category.routes";
 import clientRouter from "./routes/client.routes";
 import financeRoutes from "./routes/finance.routes";
 import productStatsRoutes from "./routes/productStats.routes";
+import catalogRoutes from "./routes/catalog.routes";
 import { iniciarRenovacionAutomatica } from "./cron/afipRenovador";
 dotenv.config();
 
@@ -64,12 +65,25 @@ app.use((req, res, next) => {
 app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
+    const envOrigins = [
+      process.env.FRONTEND_URL,
+      process.env.STOREFRONT_URL,
+      process.env.ADMIN_FRONTEND_URL,
+      process.env.CORS_ORIGINS,
+    ]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(","))
+      .map((value) => value.trim())
+      .filter(Boolean);
+
     const allowedOrigins = [
       "http://localhost:3000",
+      "http://localhost:3001",
       "http://localhost:3002",
       "http://localhost:4000",
       "https://von-konig.vercel.app",
-      "https://www.vonkonigerp.com.ar"
+      "https://www.vonkonigerp.com.ar",
+      ...envOrigins,
     ];
 
     // Permitir requests sin Origin (Postman, mobile apps, bots internos)
@@ -109,6 +123,7 @@ app.get("/", async (_req, res, next) => {
 app.use("/factura-pdf", facturaPdfRoutes);
 app.use("/auth", authRoutes);
 app.use("/products", productRoutes);
+app.use("/catalog", catalogRoutes);
 app.use("/users", authMiddleware, requireRole("ADMIN"), userRoutes);
 app.use("/sales", saleRoutes);
 app.use("/accounts", accountRoutes);

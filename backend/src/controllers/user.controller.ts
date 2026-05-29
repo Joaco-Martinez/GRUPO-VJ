@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { userService } from "../services/user.service";
-
+import { getParamAsString } from "../utils/params";
 function toNumberOrNull(value: any) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
@@ -27,7 +27,7 @@ export const userController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const user = await userService.getById(req.params.id);
+      const user = await userService.getById(getParamAsString(req.params.id, "id"));
 
       if (!user) {
         return res.status(404).json({
@@ -64,7 +64,7 @@ export const userController = {
         body.isActive = toBoolean(body.isActive);
       }
 
-      const updated = await userService.update(req.params.id, body);
+      const updated = await userService.update(getParamAsString(req.params.id, "id"), body);
 
       res.json(updated);
     } catch (err) {
@@ -74,7 +74,7 @@ export const userController = {
 
   async delete(req: Request, res: Response, next: NextFunction) {
     try {
-      await userService.delete(req.params.id);
+      await userService.delete(getParamAsString(req.params.id, "id"));
 
       res.json({
         message: "Usuario eliminado",

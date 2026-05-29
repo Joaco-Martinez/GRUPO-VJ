@@ -3,33 +3,79 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
-// Middleware para validar que el usuario esté autenticado
+type JwtPayload = {
+  userId: string;
+  role: string;
+};
+
+function readToken(req: Request) {
+  const cookieToken = req.cookies?.token;
+  const authorization = req.headers.authorization;
+
+  if (cookieToken) return cookieToken;
+
+  if (authorization?.startsWith("Bearer ")) {
+    return authorization.replace("Bearer ", "").trim();
+  }
+
+  return null;
+}
+
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  const token = req.cookies?.token; // 🔑 solo confiamos en la cookie "token"
+  const token = readToken(req);
+
   if (!token) {
     return res.status(401).json({ message: "Token requerido" });
   }
 
   try {
-    // 👇 depende de cómo hayas firmado el JWT en login
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; role: string };
-    console.log("decoded",decoded);
-    // Guardamos el user en la request
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
     (req as any).user = { id: decoded.userId, role: decoded.role };
-
     next();
-  } catch (err) {
+  } catch (_err) {
     return res.status(401).json({ message: "Token inválido" });
   }
 }
 
-// Middleware extra para verificar roles
+export function optionalAuthMiddleware(req: Request, _res: Response, next: NextFunction) {
+  const token = readToken(req);
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    (req as any).user = { id: decoded.userId, role: decoded.role };
+  } catch (_err) {
+    // En rutas públicas no bloqueamos por token vencido/incorrecto.
+    // Simplemente se responde como visitante y el frontend puede pedir login al checkout.
+    (req as any).user = undefined;
+  }
+
+  next();
+}
+
 export function requireRole(role: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
+
     if (!user || user.role !== role) {
       return res.status(403).json({ message: "No autorizado" });
     }
+
+    next();
+  };
+}
+
+export function requireAnyRole(roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+
+    if (!user || !roles.includes(user.role)) {
+      return res.status(403).json({ message: "No autorizado" });
+    }
+
     next();
   };
 }

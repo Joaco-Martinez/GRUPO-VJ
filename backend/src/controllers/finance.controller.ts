@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { financeService } from "../services/finance.service";
 import { parseISO, startOfDay, endOfDay } from "date-fns";
-
+import { getParamAsString } from "../utils/params";
 export const financeController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
@@ -21,7 +21,7 @@ export const financeController = {
         body.date = parseISO(body.date);
       }
 
-      const updated = await financeService.update(id, body);
+      const updated = await financeService.update(getParamAsString(id, "id"), body);
       res.json(updated);
     } catch (error: any) {
       // Prisma: registro no encontrado => P2025
@@ -36,7 +36,7 @@ export const financeController = {
     try {
       const { id } = req.params;
 
-      const deleted = await financeService.remove(id);
+      const deleted = await financeService.remove(getParamAsString(id, "id"));
       res.json({ ok: true, deleted });
     } catch (error: any) {
       if (error?.code === "P2025") {

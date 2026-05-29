@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { saleService } from "../services/sale.service";
 import { PaymentMethod, SaleStatus } from "@prisma/client";
-
+import { getParamAsString } from "../utils/params";
 const toNumber = (v: any) =>
   v === undefined || v === null || v === "" ? undefined : Number(v);
 
@@ -26,7 +26,7 @@ export const saleController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const sale = await saleService.getById(req.params.id);
+      const sale = await saleService.getById(getParamAsString(req.params.id, "id"));
 
       if (!sale) {
         return res.status(404).json({
@@ -114,7 +114,7 @@ export const saleController = {
         });
       }
 
-      const updated = await saleService.updateStatus(req.params.id, status);
+      const updated = await saleService.updateStatus(getParamAsString(req.params.id, "id"), status);
 
       res.json(updated);
     } catch (err) {
@@ -135,7 +135,7 @@ export const saleController = {
         });
       }
 
-      const updated = await saleService.updatePaymentMethod(id, paymentMethod);
+      const updated = await saleService.updatePaymentMethod(getParamAsString(id, "id"), paymentMethod);
 
       res.json(updated);
     } catch (err) {
@@ -170,7 +170,7 @@ export const saleController = {
       }));
 
       const updated = await saleService.updatePayments(
-        id,
+        getParamAsString(req.params.id, "id"),
         normalizedPayments,
         !!setAsPrimary
       );
@@ -184,7 +184,7 @@ export const saleController = {
   async generarNotaPedido(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const result = await saleService.generarNotaPedido(id);
+      const result = await saleService.generarNotaPedido(getParamAsString(id, "id"));
 
       res.json({
         ok: true,

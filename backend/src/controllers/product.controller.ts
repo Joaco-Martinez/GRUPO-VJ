@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { productService } from "../services/product.service";
 import multer from "multer";
 import path from "path";
-
+import { getParamAsString } from "../utils/params";
 const upload = multer({
   dest: "uploads/",
   limits: {
@@ -66,7 +66,7 @@ export const productController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const product = await productService.getById(req.params.id);
+      const product = await productService.getById(getParamAsString(req.params.id, "id"));
 
       if (!product) {
         return res.status(404).json({ message: "Producto no encontrado" });
@@ -211,7 +211,7 @@ export const productController = {
         cleanBody.minStockKg = toNumberOrUndefined(body.minStockKg);
       }
 
-      const updated = await productService.update(req.params.id, cleanBody);
+      const updated = await productService.update(getParamAsString(req.params.id, "id"), cleanBody);
 
       res.json(updated);
     } catch (err) {
@@ -221,7 +221,7 @@ export const productController = {
 
   async delete(req: Request, res: Response, next: NextFunction) {
     try {
-      await productService.delete(req.params.id);
+      await productService.delete(getParamAsString(req.params.id, "id"));
       res.json({ message: "Producto eliminado" });
     } catch (err) {
       next(err);
@@ -284,7 +284,7 @@ export const productController = {
       }
 
       const updated = await productService.transferStockKg(
-        id,
+        getParamAsString(id, "id"),
         from,
         Number(quantityKg),
         userId
@@ -308,7 +308,7 @@ export const productController = {
       }
 
       const updated = await productService.addStockKg(
-        id,
+        getParamAsString(id, "id"),
         to,
         Number(quantityKg),
         userId
@@ -334,7 +334,7 @@ export const productController = {
         });
       }
 
-      const result = await productService.updateComponents(id, components);
+      const result = await productService.updateComponents(getParamAsString(id, "id"), components);
 
       res.json(result);
     } catch (err) {
@@ -350,7 +350,7 @@ export const productController = {
         return res.status(400).json({ message: "SKU requerido" });
       }
 
-      const product = await productService.getBySku(sku);
+      const product = await productService.getBySku(getParamAsString(sku, "sku"));
 
       if (!product) {
         return res.status(404).json({ message: "Producto no encontrado" });
@@ -395,7 +395,7 @@ export const productController = {
         }
 
         const updatedProduct = await productService.updateImage(
-          req.params.id,
+          getParamAsString(req.params.id, "id"),
           req.file
         );
 

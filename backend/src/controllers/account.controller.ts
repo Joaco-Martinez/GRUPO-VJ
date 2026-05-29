@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { AccountMovementType, PaymentMethod } from "@prisma/client";
 import { accountService } from "../services/account.service";
-
+import { getParamAsString } from "../utils/params";
 function toNumber(value: any) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
@@ -21,7 +21,7 @@ export const accountController = {
     try {
       const { clientId } = req.params;
 
-      const result = await accountService.getClientAccount(clientId);
+      const result = await accountService.getClientAccount(getParamAsString(clientId, "clientId"));
 
       res.json(result);
     } catch (err) {
@@ -80,7 +80,7 @@ export const accountController = {
       }
 
       const result = await accountService.registerPayment({
-        clientId,
+        clientId: getParamAsString(req.params.clientId, "clientId"),
         amount,
         method: req.body.method as PaymentMethod,
         userId,
@@ -114,7 +114,7 @@ export const accountController = {
       }
 
       const result = await accountService.createAdjustment({
-        clientId,
+        clientId: getParamAsString(req.params.clientId, "clientId"),
         type: req.body.type,
         amount,
         userId,
@@ -136,7 +136,7 @@ export const accountController = {
     try {
       const { clientId } = req.params;
 
-      const result = await accountService.updateClientAccountConfig(clientId, {
+      const result = await accountService.updateClientAccountConfig(getParamAsString(clientId, "clientId"), {
         creditLimit:
           req.body.creditLimit === null
             ? null

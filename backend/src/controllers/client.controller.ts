@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { clientService } from "../services/client.service";
-
+import { getParamAsString } from "../utils/params";
 function toNumberOrNull(value: any) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
@@ -50,7 +50,7 @@ export const clientController = {
   async getOne(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const client = await clientService.getClientById(id);
+      const client = await clientService.getClientById(getParamAsString(id, "id"));
 
       if (!client) {
         return res.status(404).json({
@@ -89,7 +89,7 @@ export const clientController = {
         body.unlinkUser = toBoolean(body.unlinkUser);
       }
 
-      const client = await clientService.updateClient(id, body);
+      const client = await clientService.updateClient(getParamAsString(id, "id"), body);
 
       res.json({
         ok: true,
@@ -103,7 +103,7 @@ export const clientController = {
   async remove(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      await clientService.deleteClient(id);
+      await clientService.deleteClient(getParamAsString(id, "id"));
 
       res.json({
         ok: true,

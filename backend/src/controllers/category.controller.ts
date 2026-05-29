@@ -1,7 +1,7 @@
 
 import { Request, Response, NextFunction } from "express";
 import { categoryService } from "../services/category.service";
-
+import { getParamAsString } from "../utils/params";
 function normalizeBoolean(value: any): boolean | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "boolean") return value;
@@ -38,7 +38,7 @@ export const categoryController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const category = await categoryService.getById(req.params.id);
+      const category = await categoryService.getById(getParamAsString(req.params.id, "id"));
 
       if (!category) {
         return res.status(404).json({
@@ -54,7 +54,7 @@ export const categoryController = {
 
   async getBySlug(req: Request, res: Response, next: NextFunction) {
     try {
-      const category = await categoryService.getBySlug(req.params.slug);
+      const category = await categoryService.getBySlug(getParamAsString(req.params.slug, "slug"));
 
       if (!category) {
         return res.status(404).json({
@@ -84,7 +84,7 @@ export const categoryController = {
 
   async update(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await categoryService.update(req.params.id, {
+      const result = await categoryService.update(getParamAsString(req.params.id, "id"), {
         name: req.body.name,
         description: req.body.description,
         isActive: normalizeBoolean(req.body.isActive),
@@ -98,7 +98,7 @@ export const categoryController = {
 
   async delete(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await categoryService.delete(req.params.id);
+      const result = await categoryService.delete(getParamAsString(req.params.id, "id"));
 
       return sendServiceResponse(res, result);
     } catch (err) {
@@ -108,7 +108,7 @@ export const categoryController = {
 
   async restore(req: Request, res: Response, next: NextFunction) {
     try {
-      const result = await categoryService.restore(req.params.id);
+      const result = await categoryService.restore(getParamAsString(req.params.id, "id"));
 
       return sendServiceResponse(res, result);
     } catch (err) {

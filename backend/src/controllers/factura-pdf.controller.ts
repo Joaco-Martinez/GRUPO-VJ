@@ -4,7 +4,7 @@ import {
   obtenerFacturaPDFPathService,
   obtenerTodasLasFacturasService,
 } from "../services/factura-pdf.service";
-
+import { getParamAsString } from "../utils/params";
 export async function regenerarFacturaPDFController(
   req: Request,
   res: Response
@@ -14,7 +14,7 @@ export async function regenerarFacturaPDFController(
     const uploadToCloudinary = req.query.cloudinary === "true";
 
     const result = await regenerarFacturaPDFService(
-      saleId,
+      getParamAsString(saleId, "saleId"),
       uploadToCloudinary
     );
 
@@ -58,7 +58,7 @@ export async function descargarFacturaPDFController(
   try {
     const { saleId } = req.params;
 
-    const { filePath, fileName } = await obtenerFacturaPDFPathService(saleId);
+    const { filePath, fileName } = await obtenerFacturaPDFPathService(getParamAsString(saleId, "saleId"));
 
     return res.download(filePath, fileName, (err) => {
       if (err) {

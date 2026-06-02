@@ -6,7 +6,7 @@ export async function emitirFacturaCConsumidorFinal({
   importe,
 }: {
   saleId: string;
-  cuit: string;
+  cuit?: string;
   importe: number;
 }) {
   return emitirFacturaAFIPBase({
@@ -29,7 +29,7 @@ export async function emitirFacturaCACliente({
   condicionIVAReceptor = 5,
 }: {
   saleId: string;
-  cuit: string;
+  cuit?: string;
   tipoDoc: number;
   nroDoc: number;
   importe: number;

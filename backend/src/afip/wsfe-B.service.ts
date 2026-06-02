@@ -9,7 +9,7 @@ export async function emitirFacturaB({
   condicionIVAReceptor = 5,
 }: {
   saleId: string;
-  cuit: string;
+  cuit?: string;
   tipoDoc: number;
   nroDoc: number;
   importe: number;

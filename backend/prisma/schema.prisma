@@ -155,13 +155,133 @@ model ProductComponent {
   @@index([componentId])
 }
 
+model ArcaConfig {
+  id String @id @default(uuid())
+
+  // Configuracion fiscal unica para Grupo VJ.
+  // No es multi-tenant: este ERP/POS pertenece a Grupo VJ.
+  scope String @unique @default("GRUPO_VJ")
+
+  businessName  String
+  cuit          String
+  ivaCondition  String?
+  fiscalAddress String?
+  iibb          String?
+  activityStart DateTime?
+
+  environment ArcaEnvironment   @default(HOMOLOGACION)
+  status      ArcaConfigStatus @default(INACTIVE)
+
+  defaultPointOfSale Int?
+  defaultCurrencyId  String @default("PES")
+  defaultConcept     Int    @default(1)
+
+  certEncrypted String?
+  keyEncrypted  String?
+  certAlias     String?
+  certExpiresAt DateTime?
+
+  lastTokenAt DateTime?
+  lastCheckAt DateTime?
+  lastError   String?
+  lastSuccessAt DateTime?
+
+  isActive Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tokens        AfipToken[]
+  pointsOfSale  ArcaPointOfSale[]
+  remitoCais    RemitoCaiConfig[]
+  auditLogs     ArcaAuditLog[]
+
+  @@index([cuit])
+  @@index([isActive])
+  @@index([environment])
+  @@index([status])
+}
+
 model AfipToken {
-  id         String   @id @default(uuid())
-  token      String
-  sign       String
-  expiration DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id String @id @default(uuid())
+
+  arcaConfigId String
+  arcaConfig   ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
+
+  service String @default("wsfe")
+  tokenEncrypted String
+  signEncrypted  String
+  expiration     DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([arcaConfigId, service])
+  @@index([expiration])
+}
+
+model ArcaPointOfSale {
+  id String @id @default(uuid())
+
+  arcaConfigId String
+  arcaConfig   ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
+
+  number      Int
+  description String?
+  enabled     Boolean @default(true)
+  isDefault   Boolean @default(false)
+
+  // Tipos AFIP habilitados, por ejemplo [1, 6, 11, 3, 8, 13].
+  enabledCbteTypes Int[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([arcaConfigId, number])
+  @@index([number])
+  @@index([enabled])
+}
+
+model RemitoCaiConfig {
+  id String @id @default(uuid())
+
+  arcaConfigId String
+  arcaConfig   ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
+
+  mode RemitoMode @default(PREPRINTED_FORM)
+  pointOfSale Int
+  cai         String
+  expiresAt   DateTime
+  rangeFrom   Int?
+  rangeTo     Int?
+  nextNumber  Int?
+  enabled     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pointOfSale])
+  @@index([enabled])
+  @@index([expiresAt])
+}
+
+model ArcaAuditLog {
+  id String @id @default(uuid())
+
+  arcaConfigId String?
+  arcaConfig   ArcaConfig? @relation(fields: [arcaConfigId], references: [id], onDelete: SetNull)
+
+  userId String?
+  action ArcaAuditAction
+  detail String?
+  ip     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([arcaConfigId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
 }
 
 model CbteCounter {
@@ -427,6 +547,20 @@ enum Role {
   ADMIN
   EMPLEADO
   CLIENTE
+  CONTADOR
+}
+
+enum ArcaEnvironment {
+  HOMOLOGACION
+  PRODUCCION
+}
+
+enum ArcaConfigStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  INCOMPLETE
+  CERT_EXPIRED
 }
 
 enum CategoryClient {
@@ -524,4 +658,22 @@ enum CategoryFinance {
   Eenvios
   Publicidad
   Otro
+}
+
+enum RemitoMode {
+  DIGITAL_FULL
+  PREPRINTED_FORM
+}
+
+enum ArcaAuditAction {
+  CREATE_CONFIG
+  UPDATE_CONFIG
+  UPLOAD_CERTIFICATE
+  DELETE_CERTIFICATE
+  TEST_WSAA
+  TEST_WSFE_DUMMY
+  UPSERT_POINT_OF_SALE
+  DELETE_POINT_OF_SALE
+  UPSERT_REMITO_CAI
+  DELETE_REMITO_CAI
 }

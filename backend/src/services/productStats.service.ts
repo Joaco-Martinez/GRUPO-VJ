@@ -409,11 +409,11 @@ export const productStatsService = {
       },
     });
 
-    const clientIds = Array.from(
+    const clientIds: string[] = Array.from(
       new Set(
         items
-          .map((item) => item.sale.clientId)
-          .filter((id): id is string => Boolean(id))
+          .map((item: any) => item.sale.clientId)
+          .filter((id: any): id is string => Boolean(id))
       )
     );
 

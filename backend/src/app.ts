@@ -23,6 +23,7 @@ import financeRoutes from "./routes/finance.routes";
 import productStatsRoutes from "./routes/productStats.routes";
 import catalogRoutes from "./routes/catalog.routes";
 import { iniciarRenovacionAutomatica } from "./cron/afipRenovador";
+import arcaConfigRoutes from "./routes/arcaConfig.routes";
 dotenv.config();
 
 const app = express();
@@ -131,6 +132,8 @@ app.use("/categories", categoryRoutes);
 app.use("/finance", financeRoutes);
 app.use("/clients", clientRouter);
 app.use("/cash-close", cashClosePrintRouter);
+app.use("/arca-config", arcaConfigRoutes);
+app.use("/afip/configuracion", arcaConfigRoutes);
 app.use("/alerts", alertRoutes);
 app.use("/product-stats", authMiddleware, productStatsRoutes);
 app.use("/afip", afipRoutes);

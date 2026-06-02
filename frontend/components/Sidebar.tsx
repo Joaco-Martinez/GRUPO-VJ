@@ -21,6 +21,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   FolderTree,
+  ShieldCheck
 } from 'lucide-react';
 
 const NAV = [
@@ -105,6 +106,11 @@ const ADMIN_NAV = [
     label: 'Cuentas Corrientes',
     color: '#fbbf24',
   },
+  {
+  href: "/configuracion/arca",
+  icon: ShieldCheck,
+  label: "ARCA",
+}
 ];
 
 interface SidebarProps {

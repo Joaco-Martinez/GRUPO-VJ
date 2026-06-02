@@ -267,7 +267,7 @@ router.post("/facturar", async (req, res) => {
         const products =
           req.body.products && Array.isArray(req.body.products)
             ? req.body.products
-            : sale.items.map((item) => {
+            : sale.items.map((item: any) => {
                 const isKg = item.product?.saleUnit === "KG";
                 const quantity = isKg
                   ? Number((item as any).quantityKg ?? 0)
@@ -459,7 +459,7 @@ router.post("/nota-credito", async (req, res) => {
         caeVto: notaCredito.caeVto || new Date(),
         cuit: notaCredito.cuit,
         qrBase64: notaCredito.qrBase64 || null,
-        products: facturaOriginal.sale?.items.map((i) => ({
+        products: facturaOriginal.sale?.items.map((i: any) => ({
           name: i.product.name,
           quantity: i.quantity,
           price: i.price,

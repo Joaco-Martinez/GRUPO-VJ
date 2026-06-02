@@ -8,7 +8,7 @@ export async function emitirFacturaA({
   condicionIVAReceptor = 1,
 }: {
   saleId: string;
-  cuit: string;
+  cuit?: string;
   nroDoc: number;
   importe: number;
   condicionIVAReceptor?: number;
@@ -17,7 +17,7 @@ export async function emitirFacturaA({
     saleId,
     cuit,
     tipoComprobante: 1,
-    tipoDoc: 80, // CUIT
+    tipoDoc: 80,
     nroDoc,
     importe,
     condicionIVAReceptor,

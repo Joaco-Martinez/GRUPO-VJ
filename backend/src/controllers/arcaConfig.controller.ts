@@ -22,6 +22,13 @@ function pickCertificateFiles(req: Request) {
   };
 }
 
+function pickOnlyCertificate(req: Request) {
+  const files = getFiles(req);
+  const certFile = files?.cert?.[0] || files?.certificate?.[0] || files?.certPem?.[0];
+
+  return fileText(certFile) || req.body.certPem || req.body.certificate;
+}
+
 export const arcaConfigController = {
   async list(_req: Request, res: Response, next: NextFunction) {
     try {
@@ -50,6 +57,34 @@ export const arcaConfigController = {
     }
   },
 
+  async generateCsr(req: Request, res: Response, next: NextFunction) {
+    try {
+      const config = await arcaConfigService.generateCsr(req.body);
+
+      res.status(201).json({
+        ok: true,
+        content: config,
+        message:
+          "CSR generado correctamente. Descargalo y subilo en ARCA para obtener el certificado .crt.",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async downloadCsr(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = req.params.id ? getParamAsString(req.params.id, "id") : undefined;
+      const csr = await arcaConfigService.downloadCsr(id);
+
+      res.setHeader("Content-Type", "application/pkcs10");
+      res.setHeader("Content-Disposition", `attachment; filename="${csr.filename}"`);
+      res.send(csr.content);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const { certPem, keyPem } = pickCertificateFiles(req);
@@ -67,14 +102,36 @@ export const arcaConfigController = {
     }
   },
 
+  async uploadCertificate(req: Request, res: Response, next: NextFunction) {
+    try {
+      const certPem = pickOnlyCertificate(req);
+
+      if (!certPem) {
+        return res.status(400).json({
+          ok: false,
+          error: "Tenés que subir el certificado .crt que devuelve ARCA.",
+        });
+      }
+
+      const config = await arcaConfigService.uploadCertificate({
+        certPem,
+        certExpiresAt: req.body.certExpiresAt,
+      });
+
+      res.json({ ok: true, content: config });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async uploadCertificates(req: Request, res: Response, next: NextFunction) {
     try {
       const { certPem, keyPem } = pickCertificateFiles(req);
 
-      if (!certPem || !keyPem) {
+      if (!certPem) {
         return res.status(400).json({
           ok: false,
-          error: "Tenés que subir el certificado y la private key.",
+          error: "Tenés que subir el certificado .crt.",
         });
       }
 
@@ -109,21 +166,57 @@ export const arcaConfigController = {
     }
   },
 
-  async test(req: Request, res: Response) {
-    try {
-      const id = req.params.id ? getParamAsString(req.params.id, "id") : undefined;
-      await arcaConfigService.activate(id);
-      const token = await generarTokenAFIP();
+async test(req: Request, res: Response) {
+  try {
+    const id = req.params.id
+      ? getParamAsString(req.params.id, "id")
+      : undefined;
 
-      res.json({
-        ok: true,
-        message: "Conexión con ARCA correcta. Token generado.",
-        expiration: token.expiration,
+    console.log("🧪 Probando conexión ARCA...");
+    console.log("🆔 Config ID:", id);
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        error: "Falta el ID de configuración ARCA.",
       });
-    } catch (error: any) {
-      res.status(500).json({ ok: false, error: error.message });
     }
-  },
+
+    const activatedConfig = await arcaConfigService.activate(id);
+
+    console.log("✅ Configuración activada antes del test:", {
+      id,
+      activatedConfig,
+    });
+
+    const token = await generarTokenAFIP();
+
+    console.log("✅ Token ARCA generado correctamente:", {
+      expiration: token.expiration,
+    });
+
+    return res.json({
+      ok: true,
+      message: "Conexión con ARCA correcta. Token generado.",
+      expiration: token.expiration,
+    });
+  } catch (error: any) {
+    console.error("❌ Error probando conexión ARCA");
+    console.error("MESSAGE:", error?.message);
+    console.error("CODE:", error?.code);
+    console.error("STATUS:", error?.response?.status);
+    console.error("DATA:", error?.response?.data);
+    console.error("STACK:", error?.stack);
+
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Error probando conexión con ARCA.",
+      detail: error?.response?.data || null,
+      code: error?.code || null,
+      status: error?.response?.status || null,
+    });
+  }
+},  
 
   async testWsaa(_req: Request, res: Response) {
     try {
@@ -140,7 +233,6 @@ export const arcaConfigController = {
 
   async testWsfeDummy(_req: Request, res: Response) {
     try {
-      // FEDummy real puede agregarse luego; esta prueba valida que la config activa y WSAA estén OK.
       const token = await generarTokenAFIP();
       res.json({
         ok: true,

@@ -1,3 +1,4 @@
+import forge from "node-forge";
 import prisma from "../prisma";
 import { arcaCryptoService } from "./arcaCrypto.service";
 
@@ -21,6 +22,10 @@ type UpdateArcaConfigInput = {
   certPem?: string | null;
   keyPem?: string | null;
   certExpiresAt?: string | Date | null;
+};
+
+type GenerateCsrInput = UpdateArcaConfigInput & {
+  certAlias?: string | null;
 };
 
 type PointOfSaleInput = {
@@ -92,6 +97,42 @@ function parseEnabledCbteTypes(value: PointOfSaleInput["enabledCbteTypes"]) {
   }
 
   return [];
+}
+
+function assertValidCuit(cuit: string) {
+  if (!/^\d{11}$/.test(cuit)) {
+    throw new Error("El CUIT debe tener 11 dígitos, sin guiones.");
+  }
+}
+
+function getCertExpiration(certPem: string) {
+  try {
+    const cert = forge.pki.certificateFromPem(certPem);
+    return cert.validity.notAfter;
+  } catch {
+    throw new Error("El certificado .crt no es válido.");
+  }
+}
+
+function validatePrivateKey(keyPem: string) {
+  try {
+    forge.pki.privateKeyFromPem(keyPem);
+  } catch {
+    throw new Error("La clave privada .key no es válida.");
+  }
+}
+
+function buildCsrSubject(params: {
+  businessName: string;
+  cuit: string;
+  certAlias?: string | null;
+}) {
+  return [
+    { name: "countryName", value: "AR" },
+    { name: "organizationName", value: params.businessName },
+    { name: "commonName", value: params.certAlias || "COMARPOS" },
+    { name: "serialNumber", value: `CUIT ${params.cuit}` },
+  ];
 }
 
 async function getLatestConfig() {
@@ -170,6 +211,8 @@ export const arcaConfigService = {
     const defaultPointOfSale = toNullableNumber(data.defaultPointOfSale ?? data.pointOfSale);
     const defaultConcept = toNullableNumber(data.defaultConcept);
 
+    if (cuit !== undefined && cuit !== "") assertValidCuit(cuit);
+
     const payload = cleanObject({
       businessName: data.businessName,
       cuit,
@@ -229,23 +272,151 @@ export const arcaConfigService = {
     });
   },
 
-  async uploadCertificates(params: {
+  async generateCsr(data: GenerateCsrInput) {
+    const cuit = normalizeCuit(data.cuit);
+    assertValidCuit(cuit);
+
+    if (!data.businessName?.trim()) {
+      throw new Error("La razón social es obligatoria para generar el CSR.");
+    }
+
+    const point = toNullableNumber(data.defaultPointOfSale ?? data.pointOfSale);
+    if (!point || point <= 0) {
+      throw new Error("El punto de venta es obligatorio para configurar ARCA.");
+    }
+
+    const config = await this.upsertConfig({
+      ...data,
+      cuit,
+      defaultPointOfSale: point,
+      status: "INCOMPLETE",
+    });
+
+    if (!config) {
+      throw new Error("No se pudo crear la configuración ARCA.");
+    }
+
+    const keyPair = forge.pki.rsa.generateKeyPair({ bits: 2048, e: 0x10001 });
+
+    const csr = forge.pki.createCertificationRequest();
+    csr.publicKey = keyPair.publicKey;
+    csr.setSubject(
+      buildCsrSubject({
+        businessName: data.businessName.trim(),
+        cuit,
+        certAlias: data.certAlias || "COMARPOS",
+      })
+    );
+    csr.sign(keyPair.privateKey, forge.md.sha256.create());
+
+    if (!csr.verify()) {
+      throw new Error("No se pudo generar correctamente el pedido CSR.");
+    }
+
+    const privateKeyPem = forge.pki.privateKeyToPem(keyPair.privateKey);
+    const csrPem = forge.pki.certificationRequestToPem(csr);
+
+    await prisma.afipToken.deleteMany({ where: { arcaConfigId: config.id } });
+
+    return prisma.arcaConfig.update({
+      where: { id: config.id },
+      data: {
+        keyEncrypted: arcaCryptoService.encrypt(privateKeyPem),
+        csrEncrypted: arcaCryptoService.encrypt(csrPem),
+        csrGeneratedAt: new Date(),
+        certEncrypted: null,
+        certExpiresAt: null,
+        certAlias: data.certAlias || "COMARPOS",
+        status: "INCOMPLETE",
+        isActive: false,
+        lastError: null,
+        lastTokenAt: null,
+        lastCheckAt: null,
+        lastSuccessAt: null,
+      },
+      include: { pointsOfSale: true, tokens: true, remitoCais: true },
+    });
+  },
+
+  async downloadCsr(configId?: string) {
+    const config = configId
+      ? await prisma.arcaConfig.findUnique({ where: { id: configId } })
+      : await prisma.arcaConfig.findFirst({ orderBy: { createdAt: "desc" } });
+
+    if (!config) throw new Error("No hay configuración ARCA creada.");
+    if (!config.csrEncrypted) {
+      throw new Error("Todavía no se generó el pedido CSR.");
+    }
+
+    return {
+      filename: `pedido-arca-${config.cuit || "sin-cuit"}.csr`,
+      content: arcaCryptoService.decrypt(config.csrEncrypted),
+    };
+  },
+
+  async uploadCertificate(params: {
     certPem: string;
-    keyPem: string;
     certExpiresAt?: string | Date | null;
   }) {
     const config = await this.getConfig();
     if (!config) throw new Error("Primero tenés que crear la configuración ARCA.");
+    if (!config.keyEncrypted) {
+      throw new Error("Primero generá el pedido CSR desde el sistema.");
+    }
+
+    const certExpiresAt = params.certExpiresAt
+      ? toNullableDate(params.certExpiresAt)
+      : getCertExpiration(params.certPem);
+
+    await prisma.afipToken.deleteMany({ where: { arcaConfigId: config.id } });
 
     return prisma.arcaConfig.update({
       where: { id: config.id },
       data: {
         certEncrypted: arcaCryptoService.encrypt(params.certPem),
-        keyEncrypted: arcaCryptoService.encrypt(params.keyPem),
-        certExpiresAt: toNullableDate(params.certExpiresAt),
+        certExpiresAt,
         status: "INCOMPLETE",
+        isActive: false,
         lastError: null,
+        lastTokenAt: null,
       },
+      include: { pointsOfSale: true, tokens: true, remitoCais: true },
+    });
+  },
+
+  async uploadCertificates(params: {
+    certPem: string;
+    keyPem?: string;
+    certExpiresAt?: string | Date | null;
+  }) {
+    const config = await this.getConfig();
+    if (!config) throw new Error("Primero tenés que crear la configuración ARCA.");
+
+    const certExpiresAt = params.certExpiresAt
+      ? toNullableDate(params.certExpiresAt)
+      : getCertExpiration(params.certPem);
+
+    const data: any = {
+      certEncrypted: arcaCryptoService.encrypt(params.certPem),
+      certExpiresAt,
+      status: "INCOMPLETE",
+      isActive: false,
+      lastError: null,
+      lastTokenAt: null,
+    };
+
+    if (params.keyPem) {
+      validatePrivateKey(params.keyPem);
+      data.keyEncrypted = arcaCryptoService.encrypt(params.keyPem);
+    } else if (!config.keyEncrypted) {
+      throw new Error("Falta la private key. Usá primero 'Generar CSR' o subí la .key.");
+    }
+
+    await prisma.afipToken.deleteMany({ where: { arcaConfigId: config.id } });
+
+    return prisma.arcaConfig.update({
+      where: { id: config.id },
+      data,
       include: { pointsOfSale: true, tokens: true, remitoCais: true },
     });
   },
@@ -261,6 +432,8 @@ export const arcaConfigService = {
       data: {
         certEncrypted: null,
         keyEncrypted: null,
+        csrEncrypted: null,
+        csrGeneratedAt: null,
         certExpiresAt: null,
         lastTokenAt: null,
         status: "INCOMPLETE",
@@ -277,8 +450,8 @@ export const arcaConfigService = {
 
     if (!config) throw new Error("No hay configuración ARCA para activar.");
     if (!config.cuit) throw new Error("Falta configurar el CUIT.");
-    if (!config.certEncrypted) throw new Error("Falta cargar el certificado.");
-    if (!config.keyEncrypted) throw new Error("Falta cargar la private key.");
+    if (!config.certEncrypted) throw new Error("Falta cargar el certificado .crt que devuelve ARCA.");
+    if (!config.keyEncrypted) throw new Error("Falta la private key. Generá el CSR desde el sistema.");
 
     const pointsCount = await prisma.arcaPointOfSale.count({
       where: { arcaConfigId: config.id, enabled: true },

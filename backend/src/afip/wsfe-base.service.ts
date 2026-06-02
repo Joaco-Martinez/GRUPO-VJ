@@ -1,4 +1,6 @@
 import axios from "axios";
+import https from "https";
+import crypto from "crypto";
 import xml2js from "xml2js";
 import prisma from "../prisma";
 import { getValidToken } from "./wsaa.service";
@@ -14,6 +16,20 @@ function getWsfeUrl(environment: "HOMOLOGACION" | "PRODUCCION") {
     : process.env.ARCA_WSFE_PROD_URL ||
         "https://servicios1.afip.gov.ar/wsfev1/service.asmx";
 }
+
+/**
+ * AFIP / ARCA usa servicios SOAP viejos.
+ * En algunas versiones modernas de Node/OpenSSL puede fallar con:
+ * "dh key too small".
+ *
+ * Este agent baja el security level SOLO para la conexión contra WSFE.
+ */
+const arcaHttpsAgent = new https.Agent({
+  keepAlive: true,
+  rejectUnauthorized: true,
+  ciphers: "DEFAULT@SECLEVEL=0",
+  secureOptions: crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
+});
 
 type EmitirFacturaBaseParams = {
   saleId: string;
@@ -37,7 +53,9 @@ type ArcaConfigWithPoints = {
   }[];
 };
 
-const toArray = (x: any) => (x ? (Array.isArray(x) ? x : [x]) : []);
+const toArray = (x: any) => {
+  return x ? (Array.isArray(x) ? x : [x]) : [];
+};
 
 function resolvePuntoVenta(
   arcaConfig: ArcaConfigWithPoints,
@@ -47,7 +65,9 @@ function resolvePuntoVenta(
     return Number(puntoVenta);
   }
 
-  const enabledPoints = arcaConfig.pointsOfSale.filter((p) => p.enabled !== false);
+  const enabledPoints = arcaConfig.pointsOfSale.filter(
+    (p) => p.enabled !== false
+  );
 
   const defaultPoint =
     enabledPoints.find((p) => p.isDefault)?.number ||
@@ -123,7 +143,7 @@ function parseSoapBody(parsed: any) {
     envelope?.["S:Body"];
 
   if (!body) {
-    throw new Error("Respuesta SOAP inválida (sin Body)");
+    throw new Error("Respuesta SOAP inválida: no se encontró Body.");
   }
 
   const fault =
@@ -134,7 +154,9 @@ function parseSoapBody(parsed: any) {
 
   if (fault) {
     throw new Error(
-      `SOAP Fault: ${fault?.faultstring || fault?.Reason?.Text || "sin faultstring"}`
+      `SOAP Fault: ${
+        fault?.faultstring || fault?.Reason?.Text || "sin faultstring"
+      }`
     );
   }
 
@@ -174,6 +196,18 @@ function calcularImportes(tipoComprobante: number, importe: number) {
   };
 }
 
+function parseCaeVto(vto: string | null) {
+  if (!vto) return null;
+
+  const value = String(vto);
+
+  if (value.length !== 8) return null;
+
+  return new Date(
+    `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+  );
+}
+
 export async function obtenerUltimoComprobanteAFIPBase({
   cuit,
   puntoVenta,
@@ -206,14 +240,18 @@ export async function obtenerUltimoComprobanteAFIPBase({
   </soapenv:Envelope>`;
 
   const { data } = await axios.post(wsfeUrl, soapEnvelope, {
+    httpsAgent: arcaHttpsAgent,
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
       SOAPAction: "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado",
     },
-    timeout: 15000,
+    timeout: 30000,
   });
 
-  const parsed = await xml2js.parseStringPromise(data, { explicitArray: false });
+  const parsed = await xml2js.parseStringPromise(data, {
+    explicitArray: false,
+  });
+
   const body = parseSoapBody(parsed);
 
   const result =
@@ -223,7 +261,7 @@ export async function obtenerUltimoComprobanteAFIPBase({
     ];
 
   if (!result) {
-    throw new Error("No se encontró FECompUltimoAutorizadoResult");
+    throw new Error("No se encontró FECompUltimoAutorizadoResult.");
   }
 
   const errs = toArray(result?.Errors?.Err);
@@ -273,11 +311,11 @@ export async function emitirFacturaAFIPBase({
   });
 
   if (!sale) {
-    throw new Error("Venta no encontrada");
+    throw new Error("Venta no encontrada.");
   }
 
   if (sale.isInvoiced) {
-    throw new Error("⚠️ Esta venta ya fue facturada y no puede repetirse");
+    throw new Error("Esta venta ya fue facturada y no puede repetirse.");
   }
 
   const ultimoAfip = await obtenerUltimoComprobanteAFIPBase({
@@ -301,12 +339,10 @@ export async function emitirFacturaAFIPBase({
   const { token, sign } = await getValidToken();
   const fecha = afipFechaAR();
 
-  const { neto, iva, impTotConc, impOpEx, impTrib, ivaXml } = calcularImportes(
-    tipoComprobante,
-    importe
-  );
+  const { neto, iva, impTotConc, impOpEx, impTrib, ivaXml } =
+    calcularImportes(tipoComprobante, importe);
 
-  const incluirCondicionIVA = `
+  const condicionIVAReceptorXml = `
     <ar:CondicionIVAReceptorId>${condicionIVAReceptor}</ar:CondicionIVAReceptorId>
   `;
 
@@ -342,7 +378,7 @@ export async function emitirFacturaAFIPBase({
               <ar:ImpIVA>${iva.toFixed(2)}</ar:ImpIVA>
               <ar:MonId>PES</ar:MonId>
               <ar:MonCotiz>1.00</ar:MonCotiz>
-              ${incluirCondicionIVA}
+              ${condicionIVAReceptorXml}
               ${ivaXml}
             </ar:FECAEDetRequest>
           </ar:FeDetReq>
@@ -352,14 +388,18 @@ export async function emitirFacturaAFIPBase({
   </soapenv:Envelope>`;
 
   const { data } = await axios.post(wsfeUrl, soapEnvelope, {
+    httpsAgent: arcaHttpsAgent,
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
       SOAPAction: "http://ar.gov.afip.dif.FEV1/FECAESolicitar",
     },
-    timeout: 15000,
+    timeout: 30000,
   });
 
-  const parsed = await xml2js.parseStringPromise(data, { explicitArray: false });
+  const parsed = await xml2js.parseStringPromise(data, {
+    explicitArray: false,
+  });
+
   const soapBody = parseSoapBody(parsed);
 
   const result =
@@ -367,7 +407,7 @@ export async function emitirFacturaAFIPBase({
     soapBody["ns1:FECAESolicitarResponse"]?.["FECAESolicitarResult"];
 
   if (!result) {
-    throw new Error("No se encontró FECAESolicitarResult");
+    throw new Error("No se encontró FECAESolicitarResult.");
   }
 
   const allAfipMessages = logAfipFull(result);
@@ -391,8 +431,6 @@ export async function emitirFacturaAFIPBase({
     where: { saleId },
   });
 
-  let factura;
-
   const invoiceData = {
     cuit: cuitFinal,
     puntoVenta: puntoVentaFinal,
@@ -403,13 +441,7 @@ export async function emitirFacturaAFIPBase({
     fechaEmision: new Date(),
     resultado: resultado ?? "R",
     cae,
-    caeVto: vto
-      ? new Date(
-          `${String(vto).slice(0, 4)}-${String(vto).slice(4, 6)}-${String(
-            vto
-          ).slice(6, 8)}`
-        )
-      : null,
+    caeVto: parseCaeVto(vto),
     total: importe,
     neto,
     iva,
@@ -417,6 +449,8 @@ export async function emitirFacturaAFIPBase({
     urlQR: qr.urlQR,
     qrBase64: qr.qrDataURL,
   };
+
+  let factura;
 
   if (existingBySale) {
     factura = await prisma.invoiceAfip.update({
@@ -444,6 +478,7 @@ export async function emitirFacturaAFIPBase({
       data: {
         isInvoiced: true,
         invoiceStatus: "INVOICED",
+        afipLastError: null,
       },
     });
 

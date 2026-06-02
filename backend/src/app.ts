@@ -30,28 +30,29 @@ const app = express();
 
 
 app.use((req, res, next) => {
-  const forbidden = [
-    ".env",
-    ".git",
-    "config",
-    "storage",
-    "logs",
-    "debug.log",
-    "error.log",
-    "phpinfo",
-    "info.php",
-    ".aws",
-    "database.yml",
-    "settings.py"
-  ];
-
   const url = req.url.toLowerCase();
 
-  for (const item of forbidden) {
-    if (url.includes(item)) {
-      console.warn(`🚨 Bloqueado intento de acceso indebido a: ${req.url}`);
-      return res.status(404).send("Not found");
-    }
+  const forbiddenPatterns = [
+    "/.env",
+    "/.git",
+    "/.aws",
+    "/storage",
+    "/logs",
+    "/debug.log",
+    "/error.log",
+    "/phpinfo",
+    "/info.php",
+    "/database.yml",
+    "/settings.py",
+  ];
+
+  const isForbidden = forbiddenPatterns.some((item) => {
+    return url === item || url.startsWith(`${item}/`);
+  });
+
+  if (isForbidden) {
+    console.warn(`🚨 Bloqueado intento de acceso indebido a: ${req.url}`);
+    return res.status(404).send("Not found");
   }
 
   next();

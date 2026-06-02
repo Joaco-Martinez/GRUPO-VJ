@@ -169,6 +169,9 @@ model ArcaConfig {
   iibb          String?
   activityStart DateTime?
 
+csrEncrypted   String?
+csrGeneratedAt DateTime?
+
   environment ArcaEnvironment   @default(HOMOLOGACION)
   status      ArcaConfigStatus @default(INACTIVE)
 

@@ -26,11 +26,26 @@ router.get("/", arcaConfigController.get);
 router.get("/all", arcaConfigController.list);
 router.get("/config", arcaConfigController.get);
 router.put("/config", arcaConfigController.upsert);
+
+/**
+ * Flujo fácil:
+ * 1) POST /arca-config/generate-csr
+ * 2) GET  /arca-config/:id/download-csr
+ * 3) POST /arca-config/:id/upload-cert
+ */
+router.post("/generate-csr", arcaConfigController.generateCsr);
+router.get("/:id/download-csr", arcaConfigController.downloadCsr);
+router.get("/download-csr", arcaConfigController.downloadCsr);
+router.post("/:id/upload-cert", certificateUpload, arcaConfigController.uploadCertificate);
+router.post("/upload-cert", certificateUpload, arcaConfigController.uploadCertificate);
+
+// Flujo viejo compatible: subir .crt + .key manualmente.
 router.post("/", certificateUpload, arcaConfigController.create);
 router.post("/certificados", certificateUpload, arcaConfigController.uploadCertificates);
 router.post("/certificates", certificateUpload, arcaConfigController.uploadCertificates);
 router.delete("/certificados", arcaConfigController.deleteCertificates);
 router.delete("/certificates", arcaConfigController.deleteCertificates);
+
 router.patch("/:id/activate", arcaConfigController.activate);
 router.patch("/activate", arcaConfigController.activate);
 router.post("/:id/test", arcaConfigController.test);

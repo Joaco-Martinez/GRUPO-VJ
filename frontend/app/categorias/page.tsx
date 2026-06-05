@@ -18,6 +18,8 @@ import {
   Power,
   PowerOff,
   Package,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 
 type Modal = 'create' | 'edit' | null;
@@ -27,6 +29,19 @@ type CategoryForm = {
   description: string;
   isActive: boolean;
 };
+
+type ToastState = {
+  type: 'success' | 'error';
+  message: string;
+} | null;
+
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+} | null;
 
 const emptyForm: CategoryForm = {
   name: '',
@@ -61,6 +76,18 @@ export default function CategoriasPage() {
 
   const [form, setForm] = useState<CategoryForm>(emptyForm);
 
+  const [toast, setToast] = useState<ToastState>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+
+    window.setTimeout(() => {
+      setToast(null);
+    }, 3200);
+  };
+
   const load = async () => {
     setLoading(true);
 
@@ -69,7 +96,7 @@ export default function CategoriasPage() {
       setCategories(normalizeArray<ProductCategory>(res.data));
     } catch (e) {
       console.error(e);
-      alert('Error al cargar categorías');
+      showToast('error', 'Error al cargar categorías');
     } finally {
       setLoading(false);
     }
@@ -151,10 +178,12 @@ export default function CategoriasPage() {
 
       if (modal === 'create') {
         await api.post('/categories', payload);
+        showToast('success', 'Categoría creada correctamente');
       }
 
       if (modal === 'edit' && editing) {
         await api.put(`/categories/${editing.id}`, payload);
+        showToast('success', 'Categoría actualizada correctamente');
       }
 
       closeModal();
@@ -163,9 +192,9 @@ export default function CategoriasPage() {
       const error = e as { response?: { status?: number; data?: { message?: string } } };
 
       if (error?.response?.status === 409) {
-        alert('Ya existe una categoría con ese nombre');
+        showToast('error', 'Ya existe una categoría con ese nombre');
       } else {
-        alert(error?.response?.data?.message ?? 'Error al guardar categoría');
+        showToast('error', error?.response?.data?.message ?? 'Error al guardar categoría');
       }
     } finally {
       setSaving(false);
@@ -180,24 +209,51 @@ export default function CategoriasPage() {
         ? `La categoría "${category.name}" tiene ${count} producto/s asociados. Se va a desactivar, no eliminar definitivamente. ¿Continuar?`
         : `¿Eliminar definitivamente la categoría "${category.name}"?`;
 
-    if (!confirm(message)) return;
+    setConfirmModal({
+      title: count > 0 ? 'Desactivar categoría' : 'Eliminar categoría',
+      message,
+      confirmText: count > 0 ? 'Desactivar' : 'Eliminar',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/categories/${category.id}`);
+          await load();
 
-    try {
-      await api.delete(`/categories/${category.id}`);
-      await load();
-    } catch (e: unknown) {
-      const error = e as { response?: { data?: { message?: string } } };
-      alert(error?.response?.data?.message ?? 'Error al eliminar categoría');
-    }
+          showToast(
+            'success',
+            count > 0
+              ? 'Categoría desactivada correctamente'
+              : 'Categoría eliminada correctamente'
+          );
+        } catch (e: unknown) {
+          const error = e as { response?: { data?: { message?: string } } };
+          showToast('error', error?.response?.data?.message ?? 'Error al eliminar categoría');
+        }
+      },
+    });
   };
 
   const restoreCategory = async (category: ProductCategory) => {
     try {
       await api.patch(`/categories/${category.id}/restore`);
       await load();
+      showToast('success', 'Categoría restaurada correctamente');
     } catch (e: unknown) {
       const error = e as { response?: { data?: { message?: string } } };
-      alert(error?.response?.data?.message ?? 'Error al restaurar categoría');
+      showToast('error', error?.response?.data?.message ?? 'Error al restaurar categoría');
+    }
+  };
+
+  const confirmAction = async () => {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
+
+    try {
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
     }
   };
 
@@ -219,6 +275,58 @@ export default function CategoriasPage() {
         </div>
       }
     >
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 18,
+            right: 18,
+            zIndex: 9999,
+            minWidth: 280,
+            maxWidth: 420,
+            borderRadius: 14,
+            border:
+              toast.type === 'success'
+                ? '1px solid rgba(34,197,94,0.35)'
+                : '1px solid rgba(239,68,68,0.35)',
+            background: 'rgba(15,23,42,0.96)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+            padding: '14px 16px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+          }}
+        >
+          {toast.type === 'success' ? (
+            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
+          ) : (
+            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
+          )}
+
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
+              {toast.type === 'success' ? 'Listo' : 'Atención'}
+            </div>
+            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
+              {toast.message}
+            </div>
+          </div>
+
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              border: 0,
+              background: 'transparent',
+              color: 'var(--text3)',
+              cursor: 'pointer',
+              padding: 2,
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
       <div
         style={{
           display: 'grid',
@@ -530,6 +638,83 @@ export default function CategoriasPage() {
                 disabled={saving || !form.name.trim()}
               >
                 {saving ? <span className="spinner" /> : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 12,
+                  alignItems: 'flex-start',
+                }}
+              >
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? 'rgba(239,68,68,0.12)'
+                      : 'var(--surface2)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+
+                <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.55, margin: 0 }}>
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
               </button>
             </div>
           </div>

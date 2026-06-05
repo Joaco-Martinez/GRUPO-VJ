@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { saleService } from "../services/sale.service";
 import { PaymentMethod, SaleStatus } from "@prisma/client";
 import { getParamAsString } from "../utils/params";
+
 const toNumber = (v: any) =>
   v === undefined || v === null || v === "" ? undefined : Number(v);
 
@@ -26,7 +27,9 @@ export const saleController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const sale = await saleService.getById(getParamAsString(req.params.id, "id"));
+      const sale = await saleService.getById(
+        getParamAsString(req.params.id, "id")
+      );
 
       if (!sale) {
         return res.status(404).json({
@@ -39,6 +42,27 @@ export const saleController = {
       next(err);
     }
   },
+
+async generarCotizacion(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+
+    const result = await saleService.generarCotizacion(
+      getParamAsString(id, "id")
+    );
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`
+    );
+    res.setHeader("Content-Length", result.buffer.length);
+
+    return res.send(result.buffer);
+  } catch (err) {
+    next(err);
+  }
+},
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
@@ -61,8 +85,20 @@ export const saleController = {
           }))
         : [];
 
-      const payload = {
+      // Acepta stockLocation o stockSource por si el frontend lo manda con otro nombre.
+      // Si no se manda nada, descuenta del LOCAL.
+      const stockLocation = body.stockLocation ?? body.stockSource ?? "LOCAL";
+
+        if (!["LOCAL", "DEPOSITO"].includes(stockLocation)) {
+        return res.status(400).json({
+          message: "Depósito/origen de stock inválido. Usá LOCAL o DEPOSITO",
+        });
+      }
+
+       const payload = {
         ...body,
+        stockLocation,
+        quotationHours: toNumber(body.quotationHours),
         discountValue: toNumber(body.discountValue),
         items,
         payments: Array.isArray(body.payments)
@@ -114,7 +150,10 @@ export const saleController = {
         });
       }
 
-      const updated = await saleService.updateStatus(getParamAsString(req.params.id, "id"), status);
+      const updated = await saleService.updateStatus(
+        getParamAsString(req.params.id, "id"),
+        status
+      );
 
       res.json(updated);
     } catch (err) {
@@ -135,7 +174,10 @@ export const saleController = {
         });
       }
 
-      const updated = await saleService.updatePaymentMethod(getParamAsString(id, "id"), paymentMethod);
+      const updated = await saleService.updatePaymentMethod(
+        getParamAsString(id, "id"),
+        paymentMethod
+      );
 
       res.json(updated);
     } catch (err) {
@@ -145,7 +187,6 @@ export const saleController = {
 
   async updatePayments(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id } = req.params;
       const { payments, setAsPrimary } = req.body as {
         payments: {
           method: PaymentMethod;
@@ -184,7 +225,9 @@ export const saleController = {
   async generarNotaPedido(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const result = await saleService.generarNotaPedido(getParamAsString(id, "id"));
+      const result = await saleService.generarNotaPedido(
+        getParamAsString(id, "id")
+      );
 
       res.json({
         ok: true,

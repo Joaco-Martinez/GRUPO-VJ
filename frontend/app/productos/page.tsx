@@ -24,10 +24,25 @@ import {
   Tags,
   RefreshCcw,
   ImagePlus,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 
 type Modal = 'product-create' | 'product-edit' | 'category' | null;
 type ComponentForm = { componentId: string; quantity: string; quantityKg: string };
+
+type ToastState = {
+  type: 'success' | 'error';
+  message: string;
+} | null;
+
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+} | null;
 
 const emptyProductForm = {
   name: '',
@@ -66,6 +81,18 @@ export default function ProductosPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
 
+  const [toast, setToast] = useState<ToastState>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+
+    window.setTimeout(() => {
+      setToast(null);
+    }, 3200);
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -76,6 +103,9 @@ export default function ProductosPage() {
 
       setProducts(normalizeArray<Product>(pRes.data));
       setCategories(normalizeArray<ProductCategory>(cRes.data));
+    } catch (e) {
+      console.error(e);
+      showToast('error', 'Error al cargar productos');
     } finally {
       setLoading(false);
     }
@@ -163,7 +193,7 @@ export default function ProductosPage() {
     }
 
     if (!file.type.startsWith('image/')) {
-      alert('El archivo debe ser una imagen');
+      showToast('error', 'El archivo debe ser una imagen');
       return;
     }
 
@@ -267,11 +297,19 @@ export default function ProductosPage() {
         }
       }
 
+      showToast(
+        'success',
+        modal === 'product-create'
+          ? 'Producto creado correctamente'
+          : 'Producto actualizado correctamente'
+      );
+
       setModal(null);
       resetImage();
       await load();
     } catch (e: unknown) {
-      alert(
+      showToast(
+        'error',
         (e as { response?: { data?: { message?: string } } })?.response?.data
           ?.message ?? 'Error al guardar producto'
       );
@@ -289,9 +327,11 @@ export default function ProductosPage() {
       await api.post('/categories', categoryForm);
       setCategoryForm({ name: '', description: '' });
       setModal(null);
+      showToast('success', 'Categoría creada correctamente');
       await load();
     } catch (e: unknown) {
-      alert(
+      showToast(
+        'error',
         (e as { response?: { data?: { message?: string } } })?.response?.data
           ?.message ?? 'Error al crear categoría'
       );
@@ -301,10 +341,38 @@ export default function ProductosPage() {
   };
 
   const deleteProduct = async (product: Product) => {
-    if (!confirm(`¿Eliminar ${product.name}?`)) return;
+    setConfirmModal({
+      title: 'Eliminar producto',
+      message: `¿Eliminar ${product.name}?`,
+      confirmText: 'Eliminar',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/products/${product.id}`);
+          await load();
+          showToast('success', 'Producto eliminado correctamente');
+        } catch (e: unknown) {
+          showToast(
+            'error',
+            (e as { response?: { data?: { message?: string } } })?.response?.data
+              ?.message ?? 'Error al eliminar producto'
+          );
+        }
+      },
+    });
+  };
 
-    await api.delete(`/products/${product.id}`);
-    await load();
+  const confirmAction = async () => {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
+
+    try {
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
   const addComponent = () =>
@@ -341,6 +409,59 @@ export default function ProductosPage() {
         </div>
       }
     >
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 18,
+            right: 18,
+            zIndex: 9999,
+            minWidth: 280,
+            maxWidth: 420,
+            borderRadius: 14,
+            border:
+              toast.type === 'success'
+                ? '1px solid rgba(34,197,94,0.35)'
+                : '1px solid rgba(239,68,68,0.35)',
+            background: 'rgba(15,23,42,0.96)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+            padding: '14px 16px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+          }}
+        >
+          {toast.type === 'success' ? (
+            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
+          ) : (
+            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
+          )}
+
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
+              {toast.type === 'success' ? 'Listo' : 'Atención'}
+            </div>
+
+            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
+              {toast.message}
+            </div>
+          </div>
+
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              border: 0,
+              background: 'transparent',
+              color: 'var(--text3)',
+              cursor: 'pointer',
+              padding: 2,
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
       <div
         style={{
           display: 'grid',
@@ -1040,6 +1161,77 @@ export default function ProductosPage() {
                 disabled={saving || !categoryForm.name}
               >
                 {saving ? <span className="spinner" /> : 'Crear'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? 'rgba(239,68,68,0.12)'
+                      : 'var(--surface2)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+
+                <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.55, margin: 0 }}>
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
               </button>
             </div>
           </div>

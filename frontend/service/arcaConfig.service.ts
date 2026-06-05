@@ -55,7 +55,7 @@ export type GenerateCsrPayload = {
   certAlias?: string;
 };
 
-export const arcaConfigService = {
+export const arcaConfigApi = {
   async get() {
     const { data } = await api.get("/arca-config");
     return data.content as ArcaConfig | null;

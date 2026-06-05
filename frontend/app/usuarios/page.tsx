@@ -13,6 +13,8 @@ import {
   Shield,
   Search,
   RefreshCcw,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
 
@@ -31,6 +33,19 @@ const emptyForm = {
   creditLimit: '',
   isAccountEnabled: 'false',
 };
+
+type ToastState = {
+  type: 'success' | 'error';
+  message: string;
+} | null;
+
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+} | null;
 
 function normalizeArray<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];
@@ -69,6 +84,18 @@ export default function UsuariosPage() {
   const [search, setSearch] = useState('');
   const [form, setForm] = useState<Record<string, string>>(emptyForm);
 
+  const [toast, setToast] = useState<ToastState>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+
+    window.setTimeout(() => {
+      setToast(null);
+    }, 3200);
+  };
+
   const load = () => {
     setLoading(true);
 
@@ -77,7 +104,7 @@ export default function UsuariosPage() {
       .then((r) => setUsers(normalizeArray<User>(r.data)))
       .catch((e) => {
         console.error(e);
-        alert('Error al cargar usuarios');
+        showToast('error', 'Error al cargar usuarios');
       })
       .finally(() => setLoading(false));
   };
@@ -120,6 +147,14 @@ export default function UsuariosPage() {
     });
 
     setModal('edit');
+  };
+
+  const closeModal = () => {
+    if (saving) return;
+
+    setModal(null);
+    setEditing(null);
+    setForm(emptyForm);
   };
 
   const field = (key: string, value: string) => {
@@ -172,6 +207,7 @@ export default function UsuariosPage() {
         }
 
         await api.post('/users', payload);
+        showToast('success', 'Usuario creado correctamente');
       }
 
       if (modal === 'edit' && editing) {
@@ -187,12 +223,14 @@ export default function UsuariosPage() {
         }
 
         await api.put(`/users/${editing.id}`, payload);
+        showToast('success', 'Usuario actualizado correctamente');
       }
 
-      setModal(null);
+      closeModal();
       load();
     } catch (error: unknown) {
-      alert(
+      showToast(
+        'error',
         (error as { response?: { data?: { message?: string } } })?.response?.data
           ?.message ?? 'Error al guardar usuario'
       );
@@ -203,20 +241,41 @@ export default function UsuariosPage() {
 
   const handleDelete = async (u: User) => {
     if (u.id === me?.id) {
-      alert('No podés eliminarte a vos mismo');
+      showToast('error', 'No podés eliminarte a vos mismo');
       return;
     }
 
-    if (!confirm(`¿Eliminar usuario "${u.name}"?`)) return;
+    setConfirmModal({
+      title: 'Eliminar usuario',
+      message: `¿Eliminar usuario "${u.name}"?`,
+      confirmText: 'Eliminar',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await api.delete(`/users/${u.id}`);
+          load();
+          showToast('success', 'Usuario eliminado correctamente');
+        } catch (error: unknown) {
+          showToast(
+            'error',
+            (error as { response?: { data?: { message?: string } } })?.response?.data
+              ?.message ?? 'No se pudo eliminar el usuario'
+          );
+        }
+      },
+    });
+  };
+
+  const confirmAction = async () => {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
 
     try {
-      await api.delete(`/users/${u.id}`);
-      load();
-    } catch (error: unknown) {
-      alert(
-        (error as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? 'No se pudo eliminar el usuario'
-      );
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
     }
   };
 
@@ -263,6 +322,59 @@ export default function UsuariosPage() {
         </div>
       }
     >
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 18,
+            right: 18,
+            zIndex: 9999,
+            minWidth: 280,
+            maxWidth: 420,
+            borderRadius: 14,
+            border:
+              toast.type === 'success'
+                ? '1px solid rgba(34,197,94,0.35)'
+                : '1px solid rgba(239,68,68,0.35)',
+            background: 'rgba(15,23,42,0.96)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+            padding: '14px 16px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
+          }}
+        >
+          {toast.type === 'success' ? (
+            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
+          ) : (
+            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
+          )}
+
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
+              {toast.type === 'success' ? 'Listo' : 'Atención'}
+            </div>
+
+            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
+              {toast.message}
+            </div>
+          </div>
+
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              border: 0,
+              background: 'transparent',
+              color: 'var(--text3)',
+              cursor: 'pointer',
+              padding: 2,
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
       <div
         style={{
           display: 'grid',
@@ -481,7 +593,7 @@ export default function UsuariosPage() {
       {modal && (
         <div
           className="modal-overlay"
-          onClick={(e) => e.target === e.currentTarget && setModal(null)}
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
         >
           <div className="modal" style={{ maxWidth: 760 }}>
             <div className="modal-header">
@@ -491,7 +603,7 @@ export default function UsuariosPage() {
 
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => setModal(null)}
+                onClick={closeModal}
                 style={{ padding: 6 }}
               >
                 <X size={16} />
@@ -645,7 +757,7 @@ export default function UsuariosPage() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setModal(null)}>
+              <button className="btn btn-secondary" onClick={closeModal}>
                 Cancelar
               </button>
 
@@ -663,6 +775,77 @@ export default function UsuariosPage() {
                 }
               >
                 {saving ? <span className="spinner" /> : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? 'rgba(239,68,68,0.12)'
+                      : 'var(--surface2)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+
+                <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.55, margin: 0 }}>
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
               </button>
             </div>
           </div>

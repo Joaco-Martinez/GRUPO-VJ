@@ -149,6 +149,14 @@ function getSalePaymentLabel(sale: Sale) {
   return saleAny.paymentMethod;
 }
 
+function getQuotationExpirationLabel(sale: Sale) {
+  const saleAny = sale as any;
+
+  if (!saleAny.quotationExpiresAt) return null;
+
+  return fmtDate(saleAny.quotationExpiresAt);
+}
+
 export default function VentasPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,6 +170,7 @@ export default function VentasPage() {
 
   const [invoiceModal, setInvoiceModal] = useState<InvoiceModalState | null>(null);
   const [invoicingId, setInvoicingId] = useState<string | null>(null);
+  const [quotationLoadingId, setQuotationLoadingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -200,6 +209,74 @@ export default function VentasPage() {
     await api.patch(`/sales/${s.id}/status`, { status: next });
     await load();
   };
+
+const downloadQuotation = async (sale: Sale) => {
+  if (sale.status !== 'PENDING') {
+    alert('Solo se puede descargar cotización de una venta pendiente.');
+    return;
+  }
+
+  try {
+    setQuotationLoadingId(sale.id);
+
+    const response = await api.get(`/sales/${sale.id}/cotizacion-pdf`, {
+      responseType: 'blob',
+    });
+
+    const contentType = response.headers['content-type'];
+
+    if (!contentType?.includes('application/pdf')) {
+      const errorText = await response.data.text();
+
+      try {
+        const parsed = JSON.parse(errorText);
+        throw new Error(parsed.message || parsed.error || 'El backend no devolvió un PDF');
+      } catch {
+        throw new Error(errorText || 'El backend no devolvió un PDF válido');
+      }
+    }
+
+    const blob = new Blob([response.data], {
+      type: 'application/pdf',
+    });
+
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `cotizacion-${sale.id}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+
+    link.remove();
+    window.URL.revokeObjectURL(url);
+
+    await load();
+  } catch (error: any) {
+    let message = 'No se pudo descargar la cotización.';
+
+    if (error?.response?.data instanceof Blob) {
+      const text = await error.response.data.text();
+
+      try {
+        const parsed = JSON.parse(text);
+        message = parsed.message || parsed.error || message;
+      } catch {
+        message = text || message;
+      }
+    } else {
+      message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        message;
+    }
+
+    alert(message);
+  } finally {
+    setQuotationLoadingId(null);
+  }
+};
 
   const openPayments = (s: Sale) => {
     setPayEdit(s);
@@ -251,7 +328,6 @@ export default function VentasPage() {
 
     const { sale, tipoComprobante, receiverDoc, condicionIVAReceptor } = invoiceModal;
     const detectedDoc = detectDocType(receiverDoc);
-    const saleAny = sale as any;
 
     if (sale.status === 'CANCELLED') {
       alert('No se puede facturar una venta cancelada.');
@@ -398,7 +474,11 @@ export default function VentasPage() {
           />
         </div>
 
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 180 }}>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          style={{ width: 180 }}
+        >
           <option value="">Todos</option>
           <option value="PENDING">Pendientes</option>
           <option value="COMPLETED">Completadas</option>
@@ -431,6 +511,7 @@ export default function VentasPage() {
               <tbody>
                 {filtered.map((s) => {
                   const invoiceStatus = getSaleInvoiceStatus(s);
+                  const quotationExpirationLabel = getQuotationExpirationLabel(s);
 
                   return (
                     <tr
@@ -473,7 +554,15 @@ export default function VentasPage() {
                       </td>
 
                       <td>
-                        <span className={`badge ${badge(s.status)}`}>{s.status}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <span className={`badge ${badge(s.status)}`}>{s.status}</span>
+
+                          {s.status === 'PENDING' && quotationExpirationLabel && (
+                            <small style={{ color: 'var(--text3)' }}>
+                              Vence: {quotationExpirationLabel}
+                            </small>
+                          )}
+                        </div>
                       </td>
 
                       <td>
@@ -502,9 +591,28 @@ export default function VentasPage() {
                             </button>
                           )}
 
-                          <button className="btn btn-secondary btn-sm" onClick={() => openPayments(s)}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openPayments(s)}
+                          >
                             Pagos
                           </button>
+
+                          {s.status === 'PENDING' && (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              disabled={quotationLoadingId === s.id}
+                              onClick={() => downloadQuotation(s)}
+                              title="Descargar cotización PDF"
+                            >
+                              {quotationLoadingId === s.id ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <FileText size={13} />
+                              )}
+                              Cotización
+                            </button>
+                          )}
 
                           {!isSaleInvoiced(s) && s.status !== 'CANCELLED' && (
                             <button
@@ -522,15 +630,20 @@ export default function VentasPage() {
                             </button>
                           )}
 
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() =>
-                              window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank')
-                            }
-                            title="Descargar comprobante PDF"
-                          >
-                            <FileText size={13} />
-                          </button>
+                          {isSaleInvoiced(s) && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() =>
+                                window.open(
+                                  `${API_URL}/factura-pdf/${s.id}/descargar`,
+                                  '_blank'
+                                )
+                              }
+                              title="Descargar comprobante PDF"
+                            >
+                              <FileText size={13} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -587,6 +700,41 @@ export default function VentasPage() {
                   <b style={{ display: 'block' }}>{detail.status}</b>
                 </div>
               </div>
+
+              {(detail as any).quotationExpiresAt && detail.status === 'PENDING' && (
+                <div
+                  style={{
+                    border: '1px solid var(--border)',
+                    borderRadius: 14,
+                    padding: 12,
+                    marginBottom: 16,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <small>Cotización válida hasta</small>
+                    <b style={{ display: 'block' }}>
+                      {fmtDate((detail as any).quotationExpiresAt)}
+                    </b>
+                  </div>
+
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={quotationLoadingId === detail.id}
+                    onClick={() => downloadQuotation(detail)}
+                  >
+                    {quotationLoadingId === detail.id ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <FileText size={13} />
+                    )}
+                    Descargar cotización
+                  </button>
+                </div>
+              )}
 
               <div className="card">
                 <table>
@@ -699,8 +847,8 @@ export default function VentasPage() {
                 />
 
                 <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
-                  Factura A requiere CUIT. Factura B requiere DNI, CUIL o CUIT. Factura C
-                  puede salir como consumidor final.
+                  Factura A requiere CUIT. Factura B requiere DNI, CUIL o CUIT.
+                  Factura C puede salir como consumidor final.
                 </div>
               </div>
 

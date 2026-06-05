@@ -1,1158 +1,1539 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { toast } from "sonner";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ElementType, ReactNode } from 'react';
+import AppLayout from '@/components/AppLayout';
 import {
-  BadgeCheck,
+  AlertCircle,
+  AlertTriangle,
+  ArrowLeft,
+  BookOpen,
+  Building2,
   CheckCircle2,
   ChevronRight,
-  Copy,
+  Clock,
   Download,
-  ExternalLink,
-  FileCheck2,
-  FileKey2,
+  FileText,
   HelpCircle,
-  KeyRound,
+  Info,
   Loader2,
-  MapPin,
-  PlayCircle,
-  PlugZap,
-  RefreshCw,
-  ShieldCheck,
-  Store,
-  UploadCloud,
-  Video,
+  Lock,
+  Play,
+  RefreshCcw,
+  Save,
+  Shield,
+  Upload,
+  Wifi,
+  WifiOff,
   XCircle,
-  type LucideIcon,
-} from "lucide-react";
+  Zap,
+} from 'lucide-react';
+import {
+  arcaConfigApi,
+  type ArcaConfig,
+  type ArcaEnvironment,
+} from '../../../service/arcaConfig.service';
 
-// Types
-type ArcaEnvironment = "PRODUCCION" | "HOMOLOGACION";
 
-type ArcaConfig = {
-  id: string;
-  businessName: string;
-  cuit: string;
-  ivaCondition: string;
-  fiscalAddress?: string;
-  iibb?: string;
-  activityStart?: string;
-  environment: ArcaEnvironment;
-  defaultPointOfSale?: number;
-  certAlias?: string;
-  csrGeneratedAt?: string;
-  certExpiresAt?: string;
-  lastTokenAt?: string;
-  lastCheckAt?: string;
-  lastError?: string;
-  isActive: boolean;
-  status: string;
-  pointsOfSale?: { number: number; isDefault: boolean }[];
-};
+type UIConnectionStatus =
+  | 'unconfigured'
+  | 'incomplete'
+  | 'error'
+  | 'homologation'
+  | 'production'
+  | 'expired';
 
-type FormState = {
-  businessName: string;
-  cuit: string;
-  ivaCondition: string;
-  fiscalAddress: string;
-  iibb: string;
-  activityStart: string;
-  environment: ArcaEnvironment;
-  defaultPointOfSale: string;
-  certAlias: string;
-};
+type CardStatus = 'complete' | 'incomplete' | 'pending';
 
-const initialForm: FormState = {
-  businessName: "",
-  cuit: "",
-  ivaCondition: "RESPONSABLE_INSCRIPTO",
-  fiscalAddress: "",
-  iibb: "",
-  activityStart: "",
-  environment: "PRODUCCION",
-  defaultPointOfSale: "",
-  certAlias: "COMARPOS",
-};
-
-// Mock service for demo - replace with your actual arcaConfigService
-const arcaConfigService = {
-  get: async (): Promise<ArcaConfig | null> => {
-    await new Promise((r) => setTimeout(r, 800));
-    return null;
-  },
-  generateCsr: async (data: FormState): Promise<ArcaConfig> => {
-    await new Promise((r) => setTimeout(r, 1200));
-    return {
-      id: "1",
-      businessName: data.businessName,
-      cuit: data.cuit,
-      ivaCondition: data.ivaCondition,
-      environment: data.environment,
-      defaultPointOfSale: Number(data.defaultPointOfSale),
-      certAlias: data.certAlias,
-      csrGeneratedAt: new Date().toISOString(),
-      isActive: false,
-      status: "PENDIENTE_CERTIFICADO",
-    };
-  },
-  downloadCsr: async (_id: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 500));
-    // In real implementation, this would trigger a file download
-  },
-  uploadCertificate: async (_id: string, _file: File): Promise<ArcaConfig> => {
-    await new Promise((r) => setTimeout(r, 1500));
-    return {
-      id: "1",
-      businessName: "Demo Empresa",
-      cuit: "30123456789",
-      ivaCondition: "RESPONSABLE_INSCRIPTO",
-      environment: "PRODUCCION",
-      defaultPointOfSale: 7,
-      certAlias: "COMARPOS",
-      csrGeneratedAt: new Date().toISOString(),
-      certExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-      isActive: false,
-      status: "PENDIENTE_ACTIVACION",
-    };
-  },
-  test: async (_id: string): Promise<{ message: string }> => {
-    await new Promise((r) => setTimeout(r, 2000));
-    return { message: "Conexión exitosa con ARCA" };
-  },
-  activate: async (_id: string): Promise<ArcaConfig> => {
-    await new Promise((r) => setTimeout(r, 1000));
-    return {
-      id: "1",
-      businessName: "Demo Empresa",
-      cuit: "30123456789",
-      ivaCondition: "RESPONSABLE_INSCRIPTO",
-      environment: "PRODUCCION",
-      defaultPointOfSale: 7,
-      certAlias: "COMARPOS",
-      csrGeneratedAt: new Date().toISOString(),
-      certExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-      lastTokenAt: new Date().toISOString(),
-      lastCheckAt: new Date().toISOString(),
-      isActive: true,
-      status: "ACTIVO",
-    };
-  },
-};
-
-// Utility functions
-function cleanCuit(value: string) {
-  return value.replace(/\D/g, "");
+function getErrorMessage(error: unknown, fallback: string) {
+  const e = error as { response?: { data?: { message?: string } } };
+  return e?.response?.data?.message ?? fallback;
 }
 
-function formatCuit(value: string) {
-  const onlyNumbers = cleanCuit(value);
-  if (onlyNumbers.length <= 2) return onlyNumbers;
-  if (onlyNumbers.length <= 10) {
-    return `${onlyNumbers.slice(0, 2)}-${onlyNumbers.slice(2)}`;
+function deriveUIStatus(config: ArcaConfig | null): UIConnectionStatus {
+  if (!config) return 'unconfigured';
+  if (config.status === 'CERT_EXPIRED') return 'expired';
+  if (config.status === 'ERROR') return 'error';
+  if (config.status === 'ACTIVE') {
+    return config.environment === 'PRODUCCION' ? 'production' : 'homologation';
   }
-  return `${onlyNumbers.slice(0, 2)}-${onlyNumbers.slice(2, 10)}-${onlyNumbers.slice(10, 11)}`;
+  return 'incomplete';
+}
+
+function deriveCurrentStep(config: ArcaConfig | null): number {
+  if (!config) return 1;
+
+  const hasFiscal = Boolean(config.businessName && config.cuit && config.ivaCondition);
+  const hasEnvironment = Boolean(config.environment && config.defaultPointOfSale);
+  const hasCertificate = Boolean(config.certAlias && config.certExpiresAt);
+  const hasTest = Boolean(config.lastSuccessAt);
+
+  if (!hasFiscal) return 1;
+  if (!hasEnvironment) return 2;
+  if (!hasCertificate) return 3;
+  if (!hasTest) return 4;
+
+  return 5;
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "Sin datos";
-  return new Intl.DateTimeFormat("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
+  if (!value) return '—';
+
+  return new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
   }).format(new Date(value));
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "Sin datos";
-  return new Intl.DateTimeFormat("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+  if (!value) return '—';
+
+  return new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   }).format(new Date(value));
 }
 
-function getStep(config: ArcaConfig | null) {
-  if (!config) return 1;
-  if (!config.csrGeneratedAt) return 1;
-  if (!config.certExpiresAt) return 2;
-  if (!config.isActive) return 3;
-  return 4;
+function isCertExpiringSoon(value?: string | null) {
+  if (!value) return false;
+
+  const diff = new Date(value).getTime() - Date.now();
+  return diff > 0 && diff < 30 * 24 * 60 * 60 * 1000;
 }
 
-// Components
-function StepIndicator({
+function statusLabel(status: UIConnectionStatus) {
+  const map: Record<UIConnectionStatus, { label: string; badge: string }> = {
+    unconfigured: { label: 'SIN CONFIGURAR', badge: 'badge-gray' },
+    incomplete: { label: 'EN REVISIÓN', badge: 'badge-yellow' },
+    error: { label: 'ERROR', badge: 'badge-red' },
+    homologation: { label: 'HOMOLOGACIÓN', badge: 'badge-blue' },
+    production: { label: 'PRODUCCIÓN', badge: 'badge-green' },
+    expired: { label: 'CERTIFICADO VENCIDO', badge: 'badge-red' },
+  };
+
+  return map[status];
+}
+
+function toDateInput(value?: string | null) {
+  if (!value) return '';
+  return String(value).slice(0, 10);
+}
+
+function FieldHelp({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: 6 }}>
+      <Info size={13} style={{ color: 'var(--text3)', marginTop: 1, flexShrink: 0 }} />
+      <p style={{ color: 'var(--text3)', fontSize: 12, lineHeight: 1.45 }}>{children}</p>
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  subtitle,
+  icon: Icon,
+  status,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ElementType;
+  status: CardStatus;
+  children: ReactNode;
+}) {
+  const badgeClass =
+    status === 'complete' ? 'badge-green' : status === 'incomplete' ? 'badge-yellow' : 'badge-gray';
+
+  const badgeText =
+    status === 'complete' ? 'COMPLETO' : status === 'incomplete' ? 'FALTA INFO' : 'PENDIENTE';
+
+  return (
+    <section
+      className="card"
+      style={{
+        padding: 22,
+        borderColor:
+          status === 'complete'
+            ? 'rgba(0,229,160,0.32)'
+            : status === 'incomplete'
+              ? 'rgba(251,191,36,0.32)'
+              : undefined,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 16,
+          alignItems: 'flex-start',
+          marginBottom: 22,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <span
+            style={{
+              width: 42,
+              height: 42,
+              borderRadius: 12,
+              background: 'var(--surface2)',
+              border: '1px solid var(--border)',
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={19} />
+          </span>
+
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 900 }}>{title}</h3>
+            <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 3 }}>{subtitle}</p>
+          </div>
+        </div>
+
+        <span className={`badge ${badgeClass}`}>{badgeText}</span>
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function InputField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  help,
+  type = 'text',
+  optional = false,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  help?: ReactNode;
+  type?: string;
+  optional?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="form-group">
+      <label className="form-label">
+        {label}
+        {optional && (
+          <span style={{ marginLeft: 5, color: 'var(--text3)', fontWeight: 500 }}>
+            opcional
+          </span>
+        )}
+      </label>
+
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+      />
+
+      {help && <FieldHelp>{help}</FieldHelp>}
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon: Icon,
+  ok,
+}: {
+  label: string;
+  value: string;
+  icon: ElementType;
+  ok?: boolean;
+}) {
+  return (
+    <div
+      className="stat-card"
+      style={{
+        padding: 15,
+        minHeight: 92,
+        borderColor: ok ? 'rgba(0,229,160,0.28)' : undefined,
+      }}
+    >
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+        <Icon size={15} style={{ color: ok ? 'var(--accent)' : 'var(--text3)' }} />
+        <div style={{ color: 'var(--text2)', fontSize: 12, fontWeight: 700 }}>{label}</div>
+      </div>
+
+      <div
+        style={{
+          fontFamily: 'var(--mono)',
+          fontSize: 13,
+          color: ok ? 'var(--accent)' : 'var(--text)',
+          fontWeight: 900,
+          lineHeight: 1.35,
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function StepSidebar({ currentStep }: { currentStep: number }) {
+  const steps = [
+    {
+      id: 1,
+      title: 'Datos fiscales',
+      subtitle: 'Razón social, CUIT y condición IVA',
+    },
+    {
+      id: 2,
+      title: 'Ambiente y punto de venta',
+      subtitle: 'Producción u homologación',
+    },
+    {
+      id: 3,
+      title: 'Certificado',
+      subtitle: 'CSR y certificado ARCA',
+    },
+    {
+      id: 4,
+      title: 'Validación',
+      subtitle: 'Probar conexión',
+    },
+    {
+      id: 5,
+      title: 'Activación',
+      subtitle: 'Listo para facturar',
+    },
+  ];
+
+  return (
+    <aside className="card" style={{ padding: 14, position: 'sticky', top: 18 }}>
+      <div
+        style={{
+          color: 'var(--text2)',
+          fontFamily: 'var(--mono)',
+          fontSize: 11,
+          letterSpacing: 1,
+          marginBottom: 12,
+          textTransform: 'uppercase',
+        }}
+      >
+        Configuración paso a paso
+      </div>
+
+      <div style={{ display: 'grid', gap: 8 }}>
+        {steps.map((step) => {
+          const done = step.id < currentStep;
+          const active = step.id === currentStep;
+
+          return (
+            <div
+              key={step.id}
+              style={{
+                display: 'flex',
+                gap: 10,
+                padding: 10,
+                borderRadius: 12,
+                border: active ? '1px solid rgba(79,142,255,0.35)' : '1px solid transparent',
+                background: active
+                  ? 'rgba(79,142,255,0.12)'
+                  : done
+                    ? 'rgba(0,229,160,0.08)'
+                    : 'transparent',
+              }}
+            >
+              <span
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 999,
+                  display: 'grid',
+                  placeItems: 'center',
+                  flexShrink: 0,
+                  background: done
+                    ? 'var(--accent)'
+                    : active
+                      ? 'var(--accent2)'
+                      : 'var(--surface2)',
+                  color: done || active ? '#000' : 'var(--text2)',
+                  fontSize: 11,
+                  fontWeight: 900,
+                }}
+              >
+                {done ? <CheckCircle2 size={14} /> : step.id}
+              </span>
+
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 900,
+                    color: active ? 'var(--accent2)' : done ? 'var(--accent)' : 'var(--text2)',
+                  }}
+                >
+                  {step.title}
+                </div>
+
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                  {step.subtitle}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function EnvironmentOption({
+  selected,
+  title,
+  description,
+  icon: Icon,
+  tone,
+  onClick,
+}: {
+  selected: boolean;
+  title: string;
+  description: string;
+  icon: ElementType;
+  tone: 'blue' | 'orange';
+  onClick: () => void;
+}) {
+  const selectedColor = tone === 'orange' ? 'var(--accent3)' : 'var(--accent2)';
+  const selectedBg = tone === 'orange' ? 'rgba(255,107,53,0.1)' : 'rgba(79,142,255,0.1)';
+  const selectedBorder =
+    tone === 'orange' ? 'rgba(255,107,53,0.45)' : 'rgba(79,142,255,0.45)';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="card"
+      style={{
+        padding: 16,
+        textAlign: 'left',
+        borderColor: selected ? selectedBorder : undefined,
+        background: selected ? selectedBg : undefined,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 7 }}>
+        <Icon size={17} style={{ color: selected ? selectedColor : 'var(--text3)' }} />
+
+        <strong style={{ color: selected ? selectedColor : 'var(--text)' }}>{title}</strong>
+
+        {selected && (
+          <span className={tone === 'orange' ? 'badge badge-orange' : 'badge badge-blue'}>
+            Seleccionado
+          </span>
+        )}
+      </div>
+
+      <p style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>{description}</p>
+    </button>
+  );
+}
+
+function TutorialCard({
   number,
   title,
   description,
-  active,
-  done,
 }: {
   number: number;
   title: string;
   description: string;
-  active: boolean;
-  done: boolean;
 }) {
   return (
-    <div
-      className={`relative flex items-start gap-4 rounded-2xl border p-4 transition-all duration-300 ${
-        active
-          ? "border-primary/40 bg-primary/10 shadow-lg shadow-primary/5"
-          : done
-          ? "border-primary/20 bg-primary/5"
-          : "border-border bg-card/50"
-      }`}
-    >
+    <div className="card" style={{ overflow: 'hidden' }}>
       <div
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold transition-all ${
-          done
-            ? "bg-primary text-primary-foreground"
-            : active
-            ? "bg-primary/20 text-primary"
-            : "bg-muted text-muted-foreground"
-        }`}
+        style={{
+          height: 108,
+          background:
+            'linear-gradient(135deg, rgba(79,142,255,0.16), rgba(0,229,160,0.11), rgba(255,107,53,0.12))',
+          borderBottom: '1px solid var(--border)',
+          display: 'grid',
+          placeItems: 'center',
+          position: 'relative',
+        }}
       >
-        {done ? <CheckCircle2 size={18} /> : number}
-      </div>
-      <div className="flex-1">
-        <h3
-          className={`font-semibold ${
-            active || done ? "text-foreground" : "text-muted-foreground"
-          }`}
+        <span
+          style={{
+            position: 'absolute',
+            top: 12,
+            left: 12,
+            fontFamily: 'var(--mono)',
+            color: 'var(--text3)',
+            fontSize: 11,
+            fontWeight: 800,
+          }}
         >
-          {title}
-        </h3>
-        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+          VIDEO {number}
+        </span>
+
+        <span
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 999,
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid var(--border2)',
+            display: 'grid',
+            placeItems: 'center',
+          }}
+        >
+          <Play size={18} />
+        </span>
       </div>
-      {active && (
-        <div className="absolute -right-1 top-1/2 -translate-y-1/2">
-          <ChevronRight className="text-primary" size={20} />
-        </div>
-      )}
-    </div>
-  );
-}
 
-function HelpCard({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: LucideIcon;
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="group rounded-2xl border border-border bg-card/50 p-5 transition-all hover:border-primary/30 hover:bg-card">
-      <div className="mb-3 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/20">
-          <Icon size={20} />
-        </div>
-        <h4 className="font-semibold text-foreground">{title}</h4>
+      <div style={{ padding: 15 }}>
+        <strong style={{ fontSize: 13 }}>{title}</strong>
+        <p style={{ color: 'var(--text2)', fontSize: 12, marginTop: 5, lineHeight: 1.45 }}>
+          {description}
+        </p>
+
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 10, paddingLeft: 0 }}>
+          Ver tutorial
+          <ChevronRight size={13} />
+        </button>
       </div>
-      <p className="text-sm leading-relaxed text-muted-foreground">{children}</p>
-    </div>
-  );
-}
-
-function VideoTutorialCard({
-  title,
-  description,
-  duration,
-  stepNumber,
-}: {
-  title: string;
-  description: string;
-  duration: string;
-  stepNumber: number;
-}) {
-  return (
-    <div className="group relative overflow-hidden rounded-2xl border border-border bg-card/50 transition-all hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5">
-      {/* Video Placeholder */}
-      <div className="relative aspect-video bg-gradient-to-br from-muted to-muted/50">
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/20 backdrop-blur-sm transition-transform group-hover:scale-110">
-            <PlayCircle className="text-primary" size={32} />
-          </div>
-        </div>
-        <div className="absolute bottom-3 right-3 rounded-lg bg-background/80 px-2 py-1 text-xs font-medium backdrop-blur-sm">
-          {duration}
-        </div>
-        <div className="absolute left-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
-          {stepNumber}
-        </div>
-      </div>
-      <div className="p-4">
-        <h4 className="font-semibold text-foreground">{title}</h4>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-      </div>
-    </div>
-  );
-}
-
-function FormField({
-  label,
-  hint,
-  children,
-  required,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-  required?: boolean;
-}) {
-  return (
-    <div className="space-y-2">
-      <label className="flex items-center gap-1 text-sm font-medium text-foreground">
-        {label}
-        {required && <span className="text-destructive">*</span>}
-      </label>
-      {children}
-      {hint && <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}
-
-function StatusBadge({ isActive, status }: { isActive: boolean; status: string }) {
-  if (isActive) {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/15 px-3 py-1 text-xs font-medium text-primary">
-        <CheckCircle2 size={14} />
-        Activa
-      </span>
-    );
-  }
-  if (status === "ERROR") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/15 px-3 py-1 text-xs font-medium text-destructive">
-        <XCircle size={14} />
-        Error
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-400">
-      <ShieldCheck size={14} />
-      {status.replace(/_/g, " ")}
-    </span>
-  );
-}
-
-function ActionCard({
-  icon: Icon,
-  title,
-  description,
-  children,
-  color = "emerald",
-}: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-  children: ReactNode;
-  color?: "emerald" | "sky" | "violet";
-}) {
-  const colorClasses = {
-    emerald: "bg-primary/10 text-primary",
-    sky: "bg-sky-400/10 text-sky-400",
-    violet: "bg-violet-400/10 text-violet-400",
-  };
-
-  return (
-    <div className="flex flex-col rounded-2xl border border-border bg-card/50 p-5">
-      <div
-        className={`mb-4 flex h-12 w-12 items-center justify-center rounded-xl ${colorClasses[color]}`}
-      >
-        <Icon size={24} />
-      </div>
-      <h4 className="mb-2 font-semibold text-foreground">{title}</h4>
-      <p className="mb-4 flex-1 text-sm leading-relaxed text-muted-foreground">{description}</p>
-      <div className="mt-auto">{children}</div>
     </div>
   );
 }
 
 export default function ArcaConfigPage() {
   const [config, setConfig] = useState<ArcaConfig | null>(null);
-  const [form, setForm] = useState<FormState>(initialForm);
-  const [certificate, setCertificate] = useState<File | null>(null);
-
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [activating, setActivating] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const currentStep = useMemo(() => getStep(config), [config]);
+  const [businessName, setBusinessName] = useState('');
+  const [cuit, setCuit] = useState('');
+  const [ivaCondition, setIvaCondition] = useState('Responsable Inscripto');
+  const [fiscalAddress, setFiscalAddress] = useState('');
+  const [iibb, setIibb] = useState('');
+  const [activityStart, setActivityStart] = useState('');
+  const [environment, setEnvironment] = useState<ArcaEnvironment>('HOMOLOGACION');
+  const [pointOfSale, setPointOfSale] = useState('');
+  const [certAlias, setCertAlias] = useState('');
+  const [certFile, setCertFile] = useState<File | null>(null);
 
-  const loadConfig = async () => {
+  const [testState, setTestState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [testError, setTestError] = useState<string | null>(null);
+
+  const [csrLoading, setCsrLoading] = useState(false);
+  const [downloadLoading, setDownloadLoading] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [activateLoading, setActivateLoading] = useState(false);
+
+  const [globalError, setGlobalError] = useState<string | null>(null);
+  const [globalSuccess, setGlobalSuccess] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const applyConfig = useCallback((data: ArcaConfig | null) => {
+    setConfig(data);
+
+    if (!data) return;
+
+    setBusinessName(data.businessName ?? '');
+    setCuit(data.cuit ?? '');
+    setIvaCondition(data.ivaCondition ?? 'Responsable Inscripto');
+    setFiscalAddress(data.fiscalAddress ?? '');
+    setIibb(data.iibb ?? '');
+    setActivityStart(toDateInput(data.activityStart));
+    setEnvironment(data.environment ?? 'HOMOLOGACION');
+    setPointOfSale(data.defaultPointOfSale ? String(data.defaultPointOfSale) : '');
+    setCertAlias(data.certAlias ?? '');
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+
     try {
-      setLoading(true);
-      const data = await arcaConfigService.get();
-      setConfig(data);
-
-      if (data) {
-        setForm({
-          businessName: data.businessName || "",
-          cuit: data.cuit || "",
-          ivaCondition: data.ivaCondition || "RESPONSABLE_INSCRIPTO",
-          fiscalAddress: data.fiscalAddress || "",
-          iibb: data.iibb || "",
-          activityStart: data.activityStart ? data.activityStart.slice(0, 10) : "",
-          environment: data.environment || "PRODUCCION",
-          defaultPointOfSale: String(
-            data.defaultPointOfSale ||
-              data.pointsOfSale?.find((point) => point.isDefault)?.number ||
-              ""
-          ),
-          certAlias: data.certAlias || "COMARPOS",
-        });
-      }
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err?.response?.data?.error || "No se pudo cargar la configuración de ARCA");
+      const data = await arcaConfigApi.get();
+      applyConfig(data);
+    } catch {
+      setLoadError('No se pudo cargar la configuración ARCA.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [applyConfig]);
 
   useEffect(() => {
-    loadConfig();
+    load();
+  }, [load]);
+
+  const showSuccess = useCallback((message: string) => {
+    setGlobalSuccess(message);
+    window.setTimeout(() => setGlobalSuccess(null), 4200);
   }, []);
 
-  const setField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  };
+  const showError = useCallback((message: string) => {
+    setGlobalError(message);
+    window.setTimeout(() => setGlobalError(null), 6500);
+  }, []);
 
-  const validateFiscalData = () => {
-    if (!form.businessName.trim()) return "Ingresá la razón social.";
-    if (cleanCuit(form.cuit).length !== 11) return "El CUIT debe tener 11 dígitos.";
-    if (!form.defaultPointOfSale || Number(form.defaultPointOfSale) <= 0)
-      return "Ingresá un punto de venta válido.";
-    return null;
-  };
+  const uiStatus = deriveUIStatus(config);
+  const status = statusLabel(uiStatus);
+  const currentStep = deriveCurrentStep(config);
+  const isProduction = environment === 'PRODUCCION';
+
+  const fiscalCardStatus: CardStatus =
+    businessName && cuit && ivaCondition ? 'complete' : 'incomplete';
+
+  const environmentCardStatus: CardStatus = pointOfSale ? 'complete' : 'incomplete';
+
+  const certCardStatus: CardStatus = config?.certExpiresAt
+    ? 'complete'
+    : config?.csrGeneratedAt
+      ? 'incomplete'
+      : 'pending';
+
+  const validationOk = testState === 'success' || Boolean(config?.lastSuccessAt);
+  const canActivate = validationOk || config?.status === 'ACTIVE';
+
+  const stats = useMemo(
+    () => [
+      {
+        label: 'Ambiente',
+        value:
+          config?.environment === 'PRODUCCION'
+            ? 'Producción'
+            : config?.environment === 'HOMOLOGACION'
+              ? 'Homologación'
+              : '—',
+        icon: config?.environment === 'PRODUCCION' ? AlertTriangle : Lock,
+        ok: Boolean(config?.environment),
+      },
+      {
+        label: 'CUIT',
+        value: config?.cuit ?? '—',
+        icon: FileText,
+        ok: Boolean(config?.cuit),
+      },
+      {
+        label: 'Punto de venta',
+        value: config?.defaultPointOfSale
+          ? String(config.defaultPointOfSale).padStart(4, '0')
+          : '—',
+        icon: Building2,
+        ok: Boolean(config?.defaultPointOfSale),
+      },
+      {
+        label: 'Certificado',
+        value: config?.certExpiresAt
+          ? `Vence ${formatDate(config.certExpiresAt)}`
+          : config?.csrGeneratedAt
+            ? 'CSR generado'
+            : 'Pendiente',
+        icon: Shield,
+        ok: Boolean(config?.certExpiresAt),
+      },
+      {
+        label: 'Conexión ARCA',
+        value:
+          config?.status === 'ACTIVE'
+            ? 'Validada'
+            : config?.status === 'ERROR'
+              ? 'Error'
+              : 'Sin probar',
+        icon: config?.status === 'ACTIVE' ? Wifi : WifiOff,
+        ok: config?.status === 'ACTIVE',
+      },
+      {
+        label: 'Última validación',
+        value: config?.lastSuccessAt ? formatDateTime(config.lastSuccessAt) : '—',
+        icon: Clock,
+        ok: Boolean(config?.lastSuccessAt),
+      },
+    ],
+    [config]
+  );
 
   const handleGenerateCsr = async () => {
-    const error = validateFiscalData();
-    if (error) {
-      toast.error(error);
+    if (!businessName.trim() || !cuit.trim() || !environment || !pointOfSale.trim()) {
+      showError('Completá razón social, CUIT, ambiente y punto de venta antes de generar el CSR.');
       return;
     }
 
+    setCsrLoading(true);
+
     try {
-      setGenerating(true);
-      const next = await arcaConfigService.generateCsr({
-        ...form,
-        cuit: cleanCuit(form.cuit),
+      const updated = await arcaConfigApi.generateCsr({
+        businessName: businessName.trim(),
+        cuit: cuit.trim(),
+        ivaCondition,
+        fiscalAddress: fiscalAddress.trim(),
+        iibb: iibb.trim(),
+        activityStart,
+        environment,
+        defaultPointOfSale: pointOfSale.trim(),
+        certAlias: certAlias.trim(),
       });
-      setConfig(next);
-      toast.success("CSR generado correctamente", {
-        description: "Descargalo y mandáselo al contador para que lo suba a ARCA.",
-      });
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string; message?: string } } };
-      toast.error(err?.response?.data?.error || err?.response?.data?.message || "No se pudo generar el CSR");
+
+      applyConfig(updated);
+      showSuccess('CSR generado correctamente. Ahora podés descargarlo.');
+    } catch (error) {
+      showError(getErrorMessage(error, 'Error al generar el CSR.'));
     } finally {
-      setGenerating(false);
+      setCsrLoading(false);
     }
   };
 
   const handleDownloadCsr = async () => {
-    if (!config) return;
+    if (!config?.id) return;
+
+    setDownloadLoading(true);
+
     try {
-      setDownloading(true);
-      await arcaConfigService.downloadCsr(config.id);
-      toast.success("CSR descargado", {
-        description: "Enviá este archivo a tu contador para generar el certificado en ARCA.",
-      });
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err?.response?.data?.error || "No se pudo descargar el CSR");
+      await arcaConfigApi.downloadCsr(config.id);
+    } catch {
+      showError('No se pudo descargar el CSR.');
     } finally {
-      setDownloading(false);
+      setDownloadLoading(false);
     }
   };
 
-  const handleUploadCertificate = async () => {
-    if (!config) return;
-    if (!certificate) {
-      toast.error("Seleccioná el archivo .crt que te devuelve ARCA");
-      return;
-    }
-    if (!certificate.name.toLowerCase().endsWith(".crt")) {
-      toast.error("El archivo debe tener extensión .crt");
+  const handleUploadCert = async (file: File) => {
+    if (!config?.id) {
+      showError('Primero generá el CSR para poder subir el certificado.');
       return;
     }
 
+    setCertFile(file);
+    setUploadLoading(true);
+
     try {
-      setUploading(true);
-      const next = await arcaConfigService.uploadCertificate(config.id, certificate);
-      setConfig(next);
-      setCertificate(null);
-      toast.success("Certificado cargado correctamente", {
-        description: "Ahora podés probar la conexión y activar ARCA.",
-      });
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string; message?: string } } };
-      toast.error(err?.response?.data?.error || err?.response?.data?.message || "No se pudo subir el certificado");
+      const updated = await arcaConfigApi.uploadCertificate(config.id, file);
+      applyConfig(updated);
+      showSuccess('Certificado cargado correctamente.');
+    } catch (error) {
+      setCertFile(null);
+      showError(getErrorMessage(error, 'Error al subir el certificado.'));
     } finally {
-      setUploading(false);
+      setUploadLoading(false);
     }
   };
 
-  const handleTest = async () => {
-    if (!config) return;
+  const handleTestConnection = async () => {
+    if (!config?.id) {
+      showError('Primero generá el CSR y cargá el certificado.');
+      return;
+    }
+
+    setTestState('loading');
+    setTestError(null);
+
     try {
-      setTesting(true);
-      const result = await arcaConfigService.test(config.id);
-      toast.success("Conexión exitosa", {
-        description: result?.message || "La conexión con ARCA funciona correctamente.",
-      });
-      await loadConfig();
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err?.response?.data?.error || "No se pudo conectar con ARCA");
-    } finally {
-      setTesting(false);
+      await arcaConfigApi.test(config.id);
+      const updated = await arcaConfigApi.get();
+
+      applyConfig(updated);
+      setTestState('success');
+      showSuccess('Conexión validada correctamente.');
+    } catch (error) {
+      const message = getErrorMessage(error, 'No se pudo conectar con ARCA.');
+      setTestError(message);
+      setTestState('error');
+      showError(message);
     }
   };
 
   const handleActivate = async () => {
-    if (!config) return;
+    if (!config?.id) return;
+
+    setActivateLoading(true);
+
     try {
-      setActivating(true);
-      const next = await arcaConfigService.activate(config.id);
-      setConfig(next);
-      toast.success("ARCA activado correctamente", {
-        description: "Ya podés emitir facturas electrónicas.",
-      });
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { error?: string } } };
-      toast.error(err?.response?.data?.error || "No se pudo activar ARCA");
+      const updated = await arcaConfigApi.activate(config.id);
+      applyConfig(updated);
+      showSuccess('Configuración activada. Ya podés emitir comprobantes.');
+    } catch (error) {
+      showError(getErrorMessage(error, 'Error al activar la configuración.'));
     } finally {
-      setActivating(false);
+      setActivateLoading(false);
     }
   };
 
-  const handleCopyAccountantMessage = async () => {
-    const message = `Hola, necesito configurar la facturación electrónica del sistema.
+  if (loading) {
+    return (
+      <AppLayout title="Configuración ARCA" subtitle="Conexión fiscal para facturación electrónica">
+        <div className="card" style={{ padding: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text2)' }}>
+            <span className="spinner" />
+            Cargando configuración ARCA...
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
 
-No necesito compartir usuario ni clave fiscal de ARCA.
+  if (loadError) {
+    return (
+      <AppLayout title="Configuración ARCA" subtitle="Conexión fiscal para facturación electrónica">
+        <div className="empty-state card">
+          <XCircle size={38} />
+          <p>{loadError}</p>
 
-El sistema ya generó el archivo CSR. Necesito que por favor:
-
-1. Ingreses a ARCA con clave fiscal.
-2. Generes el certificado digital usando el archivo CSR.
-3. Autorices el servicio WSFE / Facturación Electrónica para ese certificado.
-4. Me devuelvas el archivo certificado .crt.
-5. Me confirmes el punto de venta habilitado para facturación electrónica.
-
-Gracias.`;
-
-    try {
-      await navigator.clipboard.writeText(message);
-      toast.success("Mensaje copiado", {
-        description: "Pegalo en un email o WhatsApp para enviárselo a tu contador.",
-      });
-    } catch {
-      toast.error("No se pudo copiar. Copialo manualmente desde la guía.");
-    }
-  };
+          <button className="btn btn-primary" onClick={load} style={{ marginTop: 14 }}>
+            <RefreshCcw size={14} />
+            Reintentar
+          </button>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
-    <main className="min-h-screen bg-background px-4 py-8 text-foreground sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-8">
-        {/* Header */}
-        <header className="rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-6 shadow-xl shadow-black/10 lg:p-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+    <AppLayout
+      title="Configuración ARCA"
+      subtitle="Completá los datos fiscales y validá la conexión para emitir comprobantes desde Grupo VJ"
+      actions={
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => window.history.back()}>
+            <ArrowLeft size={14} />
+            Volver
+          </button>
+
+          <button className="btn btn-secondary btn-sm">
+            <BookOpen size={14} />
+            Ver guía
+          </button>
+
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleTestConnection}
+            disabled={!config?.id || testState === 'loading'}
+          >
+            {testState === 'loading' ? <span className="spinner" /> : <RefreshCcw size={14} />}
+            Probar conexión
+          </button>
+        </div>
+      }
+    >
+      {globalSuccess && (
+        <div className="toast toast-success">
+          <CheckCircle2 size={18} />
+          {globalSuccess}
+        </div>
+      )}
+
+      {globalError && (
+        <div className="toast toast-error">
+          <AlertCircle size={18} />
+          {globalError}
+        </div>
+      )}
+
+      {isProduction && (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            marginBottom: 18,
+            borderColor: 'rgba(255,107,53,0.42)',
+            background: 'rgba(255,107,53,0.1)',
+            color: 'var(--accent3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontWeight: 800,
+          }}
+        >
+          <AlertTriangle size={18} />
+          Atención: estás en modo Producción. Los comprobantes emitidos son reales y quedan
+          informados ante ARCA.
+        </div>
+      )}
+
+      {isCertExpiringSoon(config?.certExpiresAt) && (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            marginBottom: 18,
+            borderColor: 'rgba(251,191,36,0.42)',
+            background: 'rgba(251,191,36,0.1)',
+            color: 'var(--warn)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            fontWeight: 800,
+          }}
+        >
+          <AlertTriangle size={18} />
+          El certificado vence el {formatDate(config?.certExpiresAt)}. Renovalo para evitar cortes
+          de facturación.
+        </div>
+      )}
+
+      <div
+        className="card"
+        style={{
+          padding: 16,
+          marginBottom: 18,
+          borderColor: 'rgba(79,142,255,0.3)',
+          background: 'rgba(79,142,255,0.08)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
+              <strong>Antes de empezar</strong>
+              <span className={`badge ${status.badge}`}>{status.label}</span>
+            </div>
+
+            <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.5 }}>
+              Esta configuración conecta Grupo VJ con ARCA para emitir comprobantes electrónicos.
+              Si no tenés algún dato, pedíselo a tu contador antes de activar Producción.
+            </p>
+          </div>
+
+          <span className="badge badge-blue">Facturación electrónica</span>
+        </div>
+      </div>
+
+      {config?.lastError && config.status === 'ERROR' && (
+        <div
+          className="card"
+          style={{
+            padding: 16,
+            marginBottom: 18,
+            borderColor: 'rgba(239,68,68,0.35)',
+            background: 'rgba(239,68,68,0.09)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <AlertCircle size={18} style={{ color: 'var(--danger)', flexShrink: 0 }} />
             <div>
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
-                <ShieldCheck size={16} />
-                Asistente de Configuración ARCA
-              </div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl lg:text-4xl">
-                Facturación Electrónica
-              </h1>
-              <p className="mt-3 max-w-2xl text-base leading-relaxed text-muted-foreground">
-                Conectá tu sistema con ARCA en 4 pasos simples. No necesitás compartir usuario
-                ni clave fiscal. El asistente genera los archivos necesarios de forma segura.
-              </p>
-            </div>
-            <button
-              onClick={loadConfig}
-              disabled={loading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-secondary px-5 py-2.5 text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80 disabled:opacity-60"
-            >
-              <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-              Actualizar
-            </button>
-          </div>
-        </header>
-
-        {/* Steps Progress */}
-        <section className="grid gap-3 md:grid-cols-4">
-          <StepIndicator
-            number={1}
-            title="Datos Fiscales"
-            description="Completá la información de tu empresa"
-            active={currentStep === 1}
-            done={currentStep > 1}
-          />
-          <StepIndicator
-            number={2}
-            title="Descargar CSR"
-            description="Enviá el archivo a tu contador"
-            active={currentStep === 2}
-            done={currentStep > 2}
-          />
-          <StepIndicator
-            number={3}
-            title="Subir Certificado"
-            description="Cargá el .crt que recibiste"
-            active={currentStep === 3}
-            done={currentStep > 3}
-          />
-          <StepIndicator
-            number={4}
-            title="Activar"
-            description="Probá y habilitá la conexión"
-            active={currentStep === 4}
-            done={currentStep === 4 && config?.isActive}
-          />
-        </section>
-
-        {/* Video Tutorials Section */}
-        <section className="rounded-3xl border border-border bg-card/50 p-6 lg:p-8">
-          <div className="mb-6 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-              <Video size={22} />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">Tutoriales en Video</h2>
-              <p className="text-sm text-muted-foreground">
-                Guías paso a paso para completar cada etapa
-              </p>
+              <strong style={{ color: 'var(--danger)' }}>Último error de conexión</strong>
+              <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 4 }}>{config.lastError}</p>
             </div>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            <VideoTutorialCard
-              stepNumber={1}
-              title="Cómo crear un Punto de Venta"
-              description="Aprende a habilitar un punto de venta para Web Service en ARCA."
-              duration="3:45"
-            />
-            <VideoTutorialCard
-              stepNumber={2}
-              title="Cómo generar el Certificado"
-              description="Subí el CSR a ARCA y descargá el certificado .crt."
-              duration="2:30"
-            />
-            <VideoTutorialCard
-              stepNumber={3}
-              title="Autorizar WSFE"
-              description="Habilitá el servicio de facturación electrónica para tu certificado."
-              duration="1:50"
-            />
-          </div>
-        </section>
+        </div>
+      )}
 
-        {/* Main Content Grid */}
-        <div className="grid gap-8 xl:grid-cols-[480px_1fr]">
-          {/* Form Section */}
-          <section className="rounded-3xl border border-border bg-card p-6 shadow-xl shadow-black/10">
-            <div className="mb-6 flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                <FileKey2 size={22} />
-              </div>
-              <div>
-                <h2 className="text-lg font-semibold text-foreground">Datos Fiscales</h2>
-                <p className="text-sm text-muted-foreground">
-                  Información necesaria para generar el CSR
-                </p>
-              </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+          gap: 12,
+          marginBottom: 18,
+        }}
+      >
+        {stats.map((item) => (
+          <StatCard
+            key={item.label}
+            label={item.label}
+            value={item.value}
+            icon={item.icon}
+            ok={item.ok}
+          />
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '280px minmax(0, 1fr)',
+          gap: 18,
+          alignItems: 'start',
+        }}
+      >
+        <StepSidebar currentStep={currentStep} />
+
+        <div style={{ display: 'grid', gap: 18 }}>
+          <SectionCard
+            title="Datos fiscales"
+            subtitle="Información de la empresa que emitirá los comprobantes"
+            icon={FileText}
+            status={fiscalCardStatus}
+          >
+            <div className="form-group">
+              <label className="form-label">Razón social *</label>
+              <input
+                value={businessName}
+                onChange={(e) => setBusinessName(e.target.value)}
+                placeholder="Ej: LEDESEMA MARIA PAULA"
+              />
+              <FieldHelp>
+                Es el nombre fiscal de la empresa o persona que va a emitir las facturas.
+              </FieldHelp>
             </div>
 
-            <div className="flex flex-col gap-5">
-              <FormField
-                label="Razón Social"
-                hint="Es el nombre fiscal de la empresa o persona que va a emitir las facturas."
-                required
-              >
-                <input
-                  value={form.businessName}
-                  onChange={(e) => setField("businessName", e.target.value)}
-                  placeholder="Ej: Grupo VJ SRL"
-                  className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </FormField>
+            <div className="form-row">
+              <InputField
+                label="CUIT *"
+                value={cuit}
+                onChange={setCuit}
+                placeholder="20-12345678-9"
+                help="Lo encontrás en la constancia de inscripción de ARCA."
+              />
 
-              <FormField
-                label="CUIT"
-                hint="Lo encontrás en la constancia de inscripción de ARCA."
-                required
-              >
-                <input
-                  value={formatCuit(form.cuit)}
-                  onChange={(e) => setField("cuit", e.target.value)}
-                  placeholder="30-12345678-9"
-                  className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </FormField>
-
-              <FormField label="Condición IVA" hint="También sale de la constancia de inscripción.">
-                <select
-                  value={form.ivaCondition}
-                  onChange={(e) => setField("ivaCondition", e.target.value)}
-                  className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary"
-                >
-                  <option value="RESPONSABLE_INSCRIPTO">Responsable Inscripto</option>
-                  <option value="MONOTRIBUTO">Monotributo</option>
-                  <option value="EXENTO">Exento</option>
+              <div className="form-group">
+                <label className="form-label">Condición IVA *</label>
+                <select value={ivaCondition} onChange={(e) => setIvaCondition(e.target.value)}>
+                  <option value="Responsable Inscripto">Responsable Inscripto</option>
+                  <option value="Monotributista">Monotributista</option>
+                  <option value="Exento">Exento</option>
+                  <option value="No Responsable">No Responsable</option>
                 </select>
-              </FormField>
-
-              <FormField
-                label="Domicilio Fiscal"
-                hint="Campo opcional. Sirve para tener los datos fiscales completos dentro del sistema."
-              >
-                <input
-                  value={form.fiscalAddress}
-                  onChange={(e) => setField("fiscalAddress", e.target.value)}
-                  placeholder="Opcional"
-                  className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </FormField>
-
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  label="Ambiente"
-                  hint="Producción emite comprobantes reales. Homologación es para pruebas."
-                >
-                  <select
-                    value={form.environment}
-                    onChange={(e) => setField("environment", e.target.value as ArcaEnvironment)}
-                    className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary"
-                  >
-                    <option value="PRODUCCION">Producción</option>
-                    <option value="HOMOLOGACION">Homologación</option>
-                  </select>
-                </FormField>
-
-                <FormField
-                  label="Punto de Venta"
-                  hint="Debe estar habilitado para Web Service."
-                  required
-                >
-                  <input
-                    type="number"
-                    value={form.defaultPointOfSale}
-                    onChange={(e) => setField("defaultPointOfSale", e.target.value)}
-                    placeholder="Ej: 7"
-                    className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-                  />
-                </FormField>
+                <FieldHelp>También sale de la constancia de inscripción de ARCA.</FieldHelp>
               </div>
-
-              <FormField
-                label="Alias del Certificado"
-                hint="Es un nombre interno para identificar el certificado. Puede ser el nombre del sistema."
-              >
-                <input
-                  value={form.certAlias}
-                  onChange={(e) => setField("certAlias", e.target.value)}
-                  placeholder="COMARPOS"
-                  className="w-full rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-1 focus:ring-primary"
-                />
-              </FormField>
-
-              <button
-                onClick={handleGenerateCsr}
-                disabled={generating}
-                className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
-              >
-                {generating ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : (
-                  <FileKey2 size={18} />
-                )}
-                Generar pedido CSR
-              </button>
             </div>
-          </section>
 
-          {/* Config Status Section */}
-          <section className="rounded-3xl border border-border bg-card p-6 shadow-xl shadow-black/10">
-            {loading ? (
-              <div className="flex min-h-[500px] items-center justify-center text-muted-foreground">
-                <Loader2 className="mr-3 animate-spin" size={24} />
-                Cargando configuración...
+            <InputField
+              label="Domicilio fiscal"
+              value={fiscalAddress}
+              onChange={setFiscalAddress}
+              placeholder="Ej: Pública 0 Dpto:13 M:15"
+              optional
+              help="Campo opcional. Sirve para tener los datos fiscales completos dentro del sistema."
+            />
+
+            <div className="form-row">
+              <InputField
+                label="IIBB"
+                value={iibb}
+                onChange={setIibb}
+                placeholder="123456789"
+                optional
+                help="Número de Ingresos Brutos. Opcional, según tu actividad."
+              />
+
+              <InputField
+                label="Inicio de actividades"
+                value={activityStart}
+                onChange={setActivityStart}
+                type="date"
+                optional
+                help="Fecha de inicio de actividades según ARCA."
+              />
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Ambiente y punto de venta"
+            subtitle="Configurá si emitís comprobantes reales o de prueba"
+            icon={Building2}
+            status={environmentCardStatus}
+          >
+            <div className="form-group">
+              <label className="form-label">Ambiente *</label>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: 12,
+                }}
+              >
+                <EnvironmentOption
+                  selected={environment === 'HOMOLOGACION'}
+                  title="Homologación"
+                  description="Modo de prueba. Los comprobantes no son reales."
+                  icon={Lock}
+                  tone="blue"
+                  onClick={() => setEnvironment('HOMOLOGACION')}
+                />
+
+                <EnvironmentOption
+                  selected={environment === 'PRODUCCION'}
+                  title="Producción"
+                  description="Comprobantes reales informados ante ARCA."
+                  icon={AlertTriangle}
+                  tone="orange"
+                  onClick={() => setEnvironment('PRODUCCION')}
+                />
               </div>
-            ) : !config ? (
-              <div className="flex min-h-[500px] flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-muted/30 p-8 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-                  <FileKey2 size={32} />
+
+              {isProduction && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    borderRadius: 12,
+                    border: '1px solid rgba(255,107,53,0.35)',
+                    background: 'rgba(255,107,53,0.08)',
+                    color: 'var(--accent3)',
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                    display: 'flex',
+                    gap: 8,
+                  }}
+                >
+                  <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                  <span>
+                    <strong>Atención:</strong> En Producción se emiten comprobantes reales.
+                    Asegurate de tener todo configurado correctamente antes de activar.
+                  </span>
                 </div>
-                <h3 className="text-lg font-semibold text-foreground">
-                  Todavía no generaste la configuración
-                </h3>
-                <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-                  Completá los datos fiscales en el formulario de la izquierda y generá el pedido
-                  CSR para comenzar.
-                </p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-6">
-                {/* Business Info Card */}
-                <div className="rounded-2xl border border-border bg-secondary/30 p-5">
-                  <div className="mb-4 flex flex-wrap items-center gap-2">
-                    <StatusBadge isActive={config.isActive} status={config.status} />
-                    <span className="rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground">
-                      {config.environment === "PRODUCCION" ? "Producción" : "Homologación"}
-                    </span>
-                  </div>
-                  <h3 className="text-xl font-semibold text-foreground">{config.businessName}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    CUIT {formatCuit(config.cuit)} · PV {config.defaultPointOfSale || "sin definir"}
-                  </p>
+              )}
+            </div>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    {[
-                      { label: "CSR generado", value: formatDateTime(config.csrGeneratedAt) },
-                      { label: "Vence certificado", value: formatDate(config.certExpiresAt) },
-                      { label: "Último token", value: formatDateTime(config.lastTokenAt) },
-                      { label: "Última prueba", value: formatDateTime(config.lastCheckAt) },
-                    ].map((item) => (
-                      <div key={item.label} className="rounded-xl border border-border bg-muted/50 p-3">
-                        <p className="text-xs text-muted-foreground">{item.label}</p>
-                        <p className="mt-1 font-medium text-foreground">{item.value}</p>
-                      </div>
-                    ))}
-                  </div>
+            <InputField
+              label="Punto de venta *"
+              value={pointOfSale}
+              onChange={setPointOfSale}
+              placeholder="0001"
+              help="Te lo confirma el contador. Debe estar habilitado para facturación electrónica / Web Service."
+            />
 
-                  {config.lastError && (
-                    <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-                      {config.lastError}
-                    </div>
-                  )}
-                </div>
+            {config?.pointsOfSale && config.pointsOfSale.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <label className="form-label">Puntos de venta detectados</label>
 
-                {/* Action Cards */}
-                <div className="grid gap-4 lg:grid-cols-3">
-                  <ActionCard
-                    icon={Download}
-                    title="1. Descargar CSR"
-                    description="Este archivo se sube en ARCA para generar el certificado. Descargalo y mandáselo al contador."
-                    color="emerald"
-                  >
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {config.pointsOfSale.map((pos) => (
                     <button
-                      onClick={handleDownloadCsr}
-                      disabled={!config.csrGeneratedAt || downloading}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                      key={pos.id}
+                      type="button"
+                      className="card"
+                      onClick={() => setPointOfSale(String(pos.number))}
+                      style={{
+                        padding: 12,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        alignItems: 'center',
+                        textAlign: 'left',
+                        borderColor:
+                          String(pos.number) === pointOfSale
+                            ? 'rgba(79,142,255,0.45)'
+                            : undefined,
+                        background:
+                          String(pos.number) === pointOfSale ? 'rgba(79,142,255,0.08)' : undefined,
+                      }}
                     >
-                      {downloading ? (
-                        <Loader2 className="animate-spin" size={18} />
-                      ) : (
-                        <Download size={18} />
-                      )}
-                      Descargar CSR
-                    </button>
-                  </ActionCard>
+                      <strong style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>
+                        PV {String(pos.number).padStart(4, '0')}
+                      </strong>
 
-                  <ActionCard
-                    icon={UploadCloud}
-                    title="2. Subir certificado .crt"
-                    description="Cuando ARCA o el contador devuelva el certificado, cargalo acá."
-                    color="sky"
-                  >
-                    <div className="space-y-3">
-                      <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 px-4 py-4 text-center transition-colors hover:border-sky-400/50 hover:bg-sky-400/5">
-                        <UploadCloud className="mb-2 text-sky-400" size={24} />
-                        <span className="text-sm text-muted-foreground">
-                          {certificate ? certificate.name : "Seleccionar .crt"}
+                      <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {pos.description && (
+                          <span style={{ color: 'var(--text2)', fontSize: 12 }}>
+                            {pos.description}
+                          </span>
+                        )}
+
+                        {pos.isDefault && <span className="badge badge-blue">Default</span>}
+
+                        <span className={`badge ${pos.enabled ? 'badge-green' : 'badge-red'}`}>
+                          {pos.enabled ? 'Habilitado' : 'Deshabilitado'}
                         </span>
-                        <input
-                          type="file"
-                          accept=".crt"
-                          className="hidden"
-                          onChange={(e) => setCertificate(e.target.files?.[0] || null)}
-                        />
-                      </label>
-                      <button
-                        onClick={handleUploadCertificate}
-                        disabled={uploading || !certificate}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-400/30 bg-sky-400/10 px-4 py-3 text-sm font-medium text-sky-400 transition-colors hover:bg-sky-400/20 disabled:opacity-50"
-                      >
-                        {uploading ? (
-                          <Loader2 className="animate-spin" size={18} />
-                        ) : (
-                          <FileCheck2 size={18} />
-                        )}
-                        Subir certificado
-                      </button>
-                    </div>
-                  </ActionCard>
-
-                  <ActionCard
-                    icon={PlugZap}
-                    title="3. Probar y activar"
-                    description="Validá WSAA, generá token y dejá ARCA listo para emitir facturas."
-                    color="violet"
-                  >
-                    <div className="flex flex-col gap-3">
-                      <button
-                        onClick={handleTest}
-                        disabled={testing || !config.certExpiresAt}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-400/30 bg-violet-400/10 px-4 py-3 text-sm font-medium text-violet-400 transition-colors hover:bg-violet-400/20 disabled:opacity-50"
-                      >
-                        {testing ? (
-                          <Loader2 className="animate-spin" size={18} />
-                        ) : (
-                          <PlugZap size={18} />
-                        )}
-                        Probar conexión
-                      </button>
-                      <button
-                        onClick={handleActivate}
-                        disabled={activating || !config.certExpiresAt}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                      >
-                        {activating ? (
-                          <Loader2 className="animate-spin" size={18} />
-                        ) : (
-                          <BadgeCheck size={18} />
-                        )}
-                        Activar ARCA
-                      </button>
-                    </div>
-                  </ActionCard>
-                </div>
-
-                {/* Message for accountant */}
-                <div className="flex items-center gap-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
-                  <div className="flex-1 text-sm leading-relaxed text-amber-200">
-                    <strong className="text-amber-100">Mensaje para el contador:</strong>{" "}
-                    {'"Te paso el archivo CSR generado por el sistema. Por favor generá el certificado digital en ARCA, autorizá WSFE / Facturación Electrónica y devolveme el archivo .crt."'}
-                  </div>
-                  <button
-                    onClick={handleCopyAccountantMessage}
-                    className="shrink-0 rounded-xl border border-amber-500/30 bg-amber-500/20 p-2.5 text-amber-200 transition-colors hover:bg-amber-500/30"
-                  >
-                    <Copy size={18} />
-                  </button>
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
-          </section>
-        </div>
+          </SectionCard>
 
-        {/* Help Guide Section */}
-        <section className="rounded-3xl border border-border bg-card p-6 shadow-xl shadow-black/10 lg:p-8">
-          <div className="mb-6 flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-              <HelpCircle size={24} />
+          <SectionCard
+            title="Certificado ARCA"
+            subtitle="Autorización para conectar Grupo VJ con los servicios de ARCA"
+            icon={Shield}
+            status={certCardStatus}
+          >
+            <InputField
+              label="Alias del certificado"
+              value={certAlias}
+              onChange={setCertAlias}
+              placeholder="grupo-vj-arca"
+              help="Nombre interno para identificar el certificado dentro del sistema."
+            />
+
+            <div
+              className="card"
+              style={{
+                padding: 16,
+                marginBottom: 14,
+                background: 'var(--surface2)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <div>
+                  <strong style={{ fontSize: 13 }}>Paso 1 — Generar solicitud CSR</strong>
+                  <p style={{ color: 'var(--text2)', fontSize: 12, marginTop: 5, lineHeight: 1.45 }}>
+                    Se genera un archivo CSR con tus datos. Ese archivo se sube al portal de ARCA
+                    para obtener el certificado.
+                  </p>
+                </div>
+
+                {config?.csrGeneratedAt && (
+                  <span className="badge badge-green">
+                    Generado {formatDate(config.csrGeneratedAt)}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleGenerateCsr}
+                  disabled={csrLoading}
+                >
+                  {csrLoading ? <span className="spinner" /> : <Save size={14} />}
+                  {config?.csrGeneratedAt ? 'Regenerar CSR' : 'Generar CSR'}
+                </button>
+
+                {config?.csrGeneratedAt && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleDownloadCsr}
+                    disabled={downloadLoading}
+                  >
+                    {downloadLoading ? <span className="spinner" /> : <Download size={14} />}
+                    Descargar CSR
+                  </button>
+                )}
+              </div>
             </div>
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">¿Cómo consigo cada cosa?</h2>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Esta guía está pensada para un usuario normal. La idea es que puedas conectar ARCA
-                sin entender de certificados y sin entregar usuario ni clave fiscal.
+
+            <div
+              className="card"
+              style={{
+                padding: 16,
+                background: 'var(--surface2)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <div>
+                  <strong style={{ fontSize: 13 }}>Paso 2 — Subir certificado</strong>
+                  <p style={{ color: 'var(--text2)', fontSize: 12, marginTop: 5, lineHeight: 1.45 }}>
+                    Cuando ARCA emita el certificado, subí el archivo .crt, .pem o .cer para
+                    autorizar la conexión.
+                  </p>
+                </div>
+
+                {config?.certExpiresAt && (
+                  <span
+                    className={`badge ${
+                      isCertExpiringSoon(config.certExpiresAt) ? 'badge-yellow' : 'badge-green'
+                    }`}
+                  >
+                    Vence {formatDate(config.certExpiresAt)}
+                  </span>
+                )}
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".crt,.pem,.cer"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleUploadCert(file);
+                }}
+              />
+
+              <button
+                type="button"
+                className="card"
+                onClick={() => {
+                  if (!config?.id) {
+                    showError('Primero generá el CSR para poder subir el certificado.');
+                    return;
+                  }
+
+                  fileInputRef.current?.click();
+                }}
+                disabled={uploadLoading}
+                style={{
+                  width: '100%',
+                  marginTop: 14,
+                  padding: 20,
+                  borderStyle: 'dashed',
+                  textAlign: 'center',
+                  background: 'var(--surface)',
+                  opacity: !config?.id ? 0.55 : 1,
+                }}
+              >
+                {uploadLoading ? (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      color: 'var(--text2)',
+                    }}
+                  >
+                    <span className="spinner" />
+                    Subiendo certificado...
+                  </span>
+                ) : (
+                  <>
+                    <Upload size={22} style={{ margin: '0 auto 8px', color: 'var(--text3)' }} />
+                    <strong style={{ fontSize: 13 }}>
+                      {certFile
+                        ? certFile.name
+                        : config?.certExpiresAt
+                          ? 'Reemplazar certificado'
+                          : 'Seleccionar archivo del certificado'}
+                    </strong>
+                    <p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 4 }}>
+                      Formatos aceptados: .crt, .pem, .cer
+                    </p>
+                  </>
+                )}
+              </button>
+            </div>
+          </SectionCard>
+
+          <div>
+            <div
+              style={{
+                color: 'var(--text2)',
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+                letterSpacing: 1,
+                marginBottom: 12,
+                textTransform: 'uppercase',
+              }}
+            >
+              Tutoriales
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                gap: 12,
+              }}
+            >
+              <TutorialCard
+                number={1}
+                title="Cómo completar los datos fiscales"
+                description="Dónde encontrar razón social, CUIT, condición IVA y domicilio fiscal."
+              />
+
+              <TutorialCard
+                number={2}
+                title="Cómo activar el punto de venta"
+                description="Qué pedirle al contador y qué significa el punto de venta fiscal."
+              />
+
+              <TutorialCard
+                number={3}
+                title="Cómo validar la conexión"
+                description="Qué revisar si falla la conexión y cuándo contactar soporte."
+              />
+            </div>
+          </div>
+
+          <section
+            className="card"
+            style={{
+              padding: 22,
+              borderColor:
+                testState === 'error'
+                  ? 'rgba(239,68,68,0.35)'
+                  : validationOk
+                    ? 'rgba(0,229,160,0.32)'
+                    : 'rgba(79,142,255,0.32)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 16,
+                alignItems: 'flex-start',
+                marginBottom: 18,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 12,
+                    background: 'var(--surface2)',
+                    border: '1px solid var(--border)',
+                    display: 'grid',
+                    placeItems: 'center',
+                  }}
+                >
+                  <Wifi size={19} />
+                </span>
+
+                <div>
+                  <h3 style={{ fontSize: 15, fontWeight: 900 }}>Validación de conexión</h3>
+                  <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 3 }}>
+                    Probá que ARCA responde correctamente antes de activar
+                  </p>
+                </div>
+              </div>
+
+              {validationOk && <span className="badge badge-green">CONEXIÓN VALIDADA</span>}
+            </div>
+
+            {testState === 'idle' && !validationOk && (
+              <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
+                Una vez que cargues el certificado, probá la conexión para confirmar que el CUIT,
+                el punto de venta, el ambiente y el certificado correspondan entre sí.
               </p>
-            </div>
-          </div>
+            )}
 
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <HelpCard icon={ShieldCheck} title="CUIT, razón social y condición IVA">
-              Estos datos salen de la constancia de inscripción de ARCA. Normalmente los tiene el
-              cliente o el contador. El CUIT se puede escribir con o sin guiones.
-            </HelpCard>
+            {testState === 'loading' && (
+              <div
+                style={{
+                  padding: 14,
+                  display: 'flex',
+                  gap: 10,
+                  alignItems: 'center',
+                  color: 'var(--text2)',
+                  marginBottom: 16,
+                }}
+              >
+                <span className="spinner" />
+                Conectando con los servidores de ARCA...
+              </div>
+            )}
 
-            <HelpCard icon={Store} title="Punto de venta">
-              Es el número habilitado para facturación electrónica. Si el cliente ya factura
-              electrónicamente, el contador puede confirmar cuál usar. Si no tiene uno, el contador
-              debe dar de alta un punto de venta para Web Service en ARCA.
-            </HelpCard>
+            {validationOk && (
+              <div
+                style={{
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '1px solid rgba(0,229,160,0.28)',
+                  background: 'rgba(0,229,160,0.08)',
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <CheckCircle2 size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  <div>
+                    <strong style={{ color: 'var(--accent)' }}>
+                      Conexión validada correctamente
+                    </strong>
+                    <p style={{ color: 'var(--text2)', fontSize: 12, marginTop: 4 }}>
+                      La configuración está lista para ser activada.
+                      {config?.lastSuccessAt && ` Última prueba: ${formatDateTime(config.lastSuccessAt)}`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
-            <HelpCard icon={KeyRound} title="CSR y clave privada">
-              El sistema genera automáticamente la clave privada y el archivo CSR. La clave privada
-              queda guardada encriptada en el backend. El usuario solo descarga el CSR y se lo manda
-              al contador.
-            </HelpCard>
+            {testState === 'error' && (
+              <div
+                style={{
+                  padding: 14,
+                  borderRadius: 12,
+                  border: '1px solid rgba(239,68,68,0.32)',
+                  background: 'rgba(239,68,68,0.08)',
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+                  <AlertCircle size={18} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+                  <div>
+                    <strong style={{ color: 'var(--danger)' }}>No se pudo conectar con ARCA</strong>
+                    <p style={{ color: 'var(--text2)', fontSize: 12, marginTop: 4 }}>
+                      {testError ??
+                        'Revisá que el CUIT, el punto de venta, el ambiente y el certificado correspondan entre sí.'}
+                    </p>
+                  </div>
+                </div>
 
-            <HelpCard icon={FileCheck2} title="Certificado .crt">
-              El contador entra a ARCA, sube el archivo CSR, genera el certificado digital y
-              devuelve un archivo .crt. Ese .crt es lo único que después se sube al sistema.
-            </HelpCard>
+                <div style={{ display: 'grid', gap: 7 }}>
+                  {[
+                    'Verificar CUIT correcto',
+                    'Confirmar punto de venta con el contador',
+                    'Verificar que el ambiente coincida',
+                    'Revisar certificado vigente',
+                  ].map((item) => (
+                    <div
+                      key={item}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        color: 'var(--text2)',
+                        fontSize: 12,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 4,
+                          border: '1px solid rgba(239,68,68,0.35)',
+                          background: 'var(--surface)',
+                        }}
+                      />
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-            <HelpCard icon={PlugZap} title="Autorizar WSFE">
-              Además de generar el certificado, el contador debe autorizar el servicio WSFE /
-              Facturación Electrónica para ese certificado. Si esto no se hace, la prueba de
-              conexión puede fallar.
-            </HelpCard>
-
-            <HelpCard icon={UploadCloud} title="Qué archivos se manejan">
-              El sistema genera el CSR. El contador devuelve el .crt. No se pide clave fiscal. No se
-              pide usuario de ARCA. No se sube manualmente una .key porque la clave privada ya la
-              generó el sistema.
-            </HelpCard>
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm leading-relaxed text-amber-100">
-            <strong className="text-amber-50">Importante:</strong> nunca pidas ni guardes la clave
-            fiscal de ARCA. La configuración correcta se hace con certificado digital, clave privada
-            encriptada y token de Web Service.
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
-              onClick={handleCopyAccountantMessage}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-5 py-3 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+              className="btn btn-primary"
+              onClick={handleTestConnection}
+              disabled={!config?.id || testState === 'loading'}
             >
-              <Copy size={17} />
-              Copiar mensaje para el contador
+              {testState === 'loading' ? <span className="spinner" /> : <RefreshCcw size={16} />}
+              {testState === 'error' ? 'Reintentar conexión' : 'Probar conexión'}
             </button>
+          </section>
 
-            <a
-              href="https://www.arca.gob.ar/ws/documentacion/wsaa.asp"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-secondary px-5 py-3 text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80"
-            >
-              <ExternalLink size={17} />
-              Documentación ARCA
-            </a>
-          </div>
-        </section>
-
-        {/* How to create POS Step by Step */}
-        <section className="rounded-3xl border border-border bg-card p-6 shadow-xl shadow-black/10 lg:p-8">
-          <div className="mb-6 flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sky-400/10 text-sky-400">
-              <MapPin size={24} />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">
-                Cómo crear un Punto de Venta en ARCA
-              </h2>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Guía paso a paso para habilitar un punto de venta para facturación electrónica
+          <div
+            className="card"
+            style={{
+              padding: 16,
+              position: 'sticky',
+              bottom: 0,
+              zIndex: 8,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 14,
+              boxShadow: '0 -12px 40px rgba(0,0,0,0.25)',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <HelpCircle size={18} style={{ color: 'var(--text3)' }} />
+              <p style={{ color: 'var(--text2)', fontSize: 12 }}>
+                Generá el CSR, subí el certificado y probá la conexión antes de activar.
               </p>
             </div>
-          </div>
 
-          <div className="space-y-4">
-            {[
-              {
-                step: 1,
-                title: 'Buscar "Administración de puntos de venta y domicilios"',
-                description: "Ingresá a ARCA y buscá esta opción en el menú de servicios.",
-              },
-              {
-                step: 2,
-                title: "Seleccionar la Empresa a representar",
-                description:
-                  "Por lo general será la que aparece con tu propio CUIT. Hacé clic para seleccionarla.",
-              },
-              {
-                step: 3,
-                title: "Ir a A/B/M de punto de venta/emisión",
-                description:
-                  "Dentro de la empresa seleccionada, buscá la opción para agregar o modificar puntos de venta.",
-              },
-              {
-                step: 4,
-                title: "Agregar nuevo punto de venta",
-                description:
-                  'Completá con un nombre de fantasía. En el campo "SISTEMA" es obligatorio seleccionar "RECE para aplicativo y web services".',
-              },
-              {
-                step: 5,
-                title: "Anotar el número del punto de venta",
-                description:
-                  "Los números de punto de venta deben ser correlativos. Anotá el número asignado porque es el que vas a poner en el sistema.",
-              },
-            ].map((item) => (
-              <div
-                key={item.step}
-                className="flex gap-4 rounded-xl border border-border bg-secondary/30 p-4"
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={handleGenerateCsr}
+                disabled={csrLoading}
               >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-400/20 text-sm font-bold text-sky-400">
-                  {item.step}
-                </div>
-                <div>
-                  <h4 className="font-medium text-foreground">{item.title}</h4>
-                  <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+                {csrLoading ? <span className="spinner" /> : <Save size={15} />}
+                {config?.csrGeneratedAt ? 'Regenerar CSR' : 'Generar CSR'}
+              </button>
 
-        {/* Certificate Generation Steps */}
-        <section className="rounded-3xl border border-border bg-card p-6 shadow-xl shadow-black/10 lg:p-8">
-          <div className="mb-6 flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-violet-400/10 text-violet-400">
-              <FileKey2 size={24} />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">
-                Cómo generar el Certificado en ARCA
-              </h2>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Pasos para que el contador suba el CSR y genere el certificado .crt
-              </p>
+              <button
+                className="btn btn-primary"
+                onClick={handleActivate}
+                disabled={!canActivate || activateLoading || config?.status === 'ACTIVE'}
+              >
+                {activateLoading ? <span className="spinner" /> : <Zap size={15} />}
+                {config?.status === 'ACTIVE' ? 'Configuración activa' : 'Activar configuración'}
+              </button>
             </div>
           </div>
-
-          <div className="space-y-4">
-            {[
-              {
-                step: 1,
-                title: 'Buscar "Administración de Certificados Digitales"',
-                description: "El contador debe ingresar a ARCA y buscar esta opción.",
-              },
-              {
-                step: 2,
-                title: "Agregar un nuevo Alias",
-                description:
-                  "Hacer clic en Agregar Alias y poner un nombre distintivo para identificar el certificado.",
-              },
-              {
-                step: 3,
-                title: "Subir el archivo CSR",
-                description:
-                  'Cargar el archivo que entregó el sistema (suele empezar con "pedido-arca...").',
-              },
-              {
-                step: 4,
-                title: "Descargar el certificado .crt",
-                description:
-                  "Una vez aprobado, volver a certificados, hacer clic en Ver detalle del alias creado y descargar el certificado.",
-              },
-              {
-                step: 5,
-                title: "Autorizar WSFE",
-                description:
-                  "Ir a la sección de autorización de servicios y habilitar WSFE / Facturación Electrónica para el certificado recién creado.",
-              },
-            ].map((item) => (
-              <div
-                key={item.step}
-                className="flex gap-4 rounded-xl border border-border bg-secondary/30 p-4"
-              >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-400/20 text-sm font-bold text-violet-400">
-                  {item.step}
-                </div>
-                <div>
-                  <h4 className="font-medium text-foreground">{item.title}</h4>
-                  <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        </div>
       </div>
-    </main>
+    </AppLayout>
   );
 }

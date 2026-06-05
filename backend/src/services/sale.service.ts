@@ -16,15 +16,19 @@ import { sendInvoiceEmail } from "../utils/mailer";
 import alertService from "./alert.service";
 import { productStatsService } from "./productStats.service";
 import { generarTicketPedidoPDF } from "../utils/generarReciboPDF";
+import { generarCotizacionPDF } from "../utils/generarCotizacionPDF";
 
 type CreateSaleInput = {
   userId?: string;
+  stockLocation?: Location;
   clientId?: string;
   discountType?: "PERCENTAGE" | "FIXED";
   discountValue?: number;
   gmailSend?: string;
 
   paymentMethod: PaymentMethod;
+
+  quotationHours?: number;
 
   payments?: {
     method: PaymentMethod;
@@ -72,6 +76,8 @@ type ResolvedSaleItem = {
   }[];
 };
 
+type StockLocation = "LOCAL" | "DEPOSITO";
+
 type StockLine = {
   productId: string;
   quantity: number;
@@ -81,6 +87,26 @@ type StockLine = {
 
 function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function normalizeStockLocation(value?: Location | string): StockLocation {
+  if (!value) return "LOCAL";
+
+  if (value !== "LOCAL" && value !== "DEPOSITO") {
+    throw new Error("Depósito/origen de stock inválido. Usá LOCAL o DEPOSITO");
+  }
+
+  return value;
+}
+
+function getStockFieldNames(location: StockLocation) {
+  return location === "DEPOSITO"
+    ? { unit: "stockDeposito", kg: "stockDepositoKg" }
+    : { unit: "stockLocal", kg: "stockLocalKg" };
+}
+
+function getLocationLabel(location: StockLocation) {
+  return location === "DEPOSITO" ? "depósito" : "local";
 }
 
 function resolveQty(product: any, item: any) {
@@ -165,7 +191,8 @@ function buildStockLines(items: ResolvedSaleItem[]) {
   const stockMap = new Map<string, StockLine>();
 
   for (const item of items) {
-    const soldQty = item.saleUnit === SaleUnit.KG ? item.quantityKg ?? 0 : item.quantity;
+    const soldQty =
+      item.saleUnit === SaleUnit.KG ? item.quantityKg ?? 0 : item.quantity;
 
     if (item.productType !== ProductType.COMPUESTO) {
       addStockLine(stockMap, {
@@ -193,7 +220,11 @@ function buildStockLines(items: ResolvedSaleItem[]) {
   );
 }
 
-async function validateStockAvailability(tx: any, stockLines: StockLine[]) {
+async function validateStockAvailability(
+  tx: any,
+  stockLines: StockLine[],
+  stockLocation: StockLocation
+) {
   for (const line of stockLines) {
     const product = await tx.product.findUnique({
       where: { id: line.productId },
@@ -202,7 +233,9 @@ async function validateStockAvailability(tx: any, stockLines: StockLine[]) {
         name: true,
         saleUnit: true,
         stockLocal: true,
+        stockDeposito: true,
         stockLocalKg: true,
+        stockDepositoKg: true,
       },
     });
 
@@ -210,15 +243,20 @@ async function validateStockAvailability(tx: any, stockLines: StockLine[]) {
       throw new Error("Producto no encontrado para validar stock");
     }
 
-    if (line.quantity > 0 && product.stockLocal < line.quantity) {
+    const fields = getStockFieldNames(stockLocation);
+    const availableUnits = Number(product[fields.unit] ?? 0);
+    const availableKg = Number(product[fields.kg] ?? 0);
+    const locationLabel = getLocationLabel(stockLocation);
+
+    if (line.quantity > 0 && availableUnits < line.quantity) {
       throw new Error(
-        `Stock insuficiente para ${product.name}. Necesitás ${line.quantity}, disponible ${product.stockLocal}`
+        `Stock insuficiente en ${locationLabel} para ${product.name}. Necesitás ${line.quantity}, disponible ${availableUnits}`
       );
     }
 
-    if (line.quantityKg > 0 && product.stockLocalKg < line.quantityKg) {
+    if (line.quantityKg > 0 && availableKg < line.quantityKg) {
       throw new Error(
-        `Stock KG insuficiente para ${product.name}. Necesitás ${line.quantityKg}, disponible ${product.stockLocalKg}`
+        `Stock KG insuficiente en ${locationLabel} para ${product.name}. Necesitás ${line.quantityKg}, disponible ${availableKg}`
       );
     }
   }
@@ -229,6 +267,7 @@ async function discountStockLines(
   stockLines: StockLine[],
   userId: string | undefined,
   saleId: string,
+  stockLocation: StockLocation,
   pendingAlerts: Array<{
     productId: string;
     name: string;
@@ -238,13 +277,14 @@ async function discountStockLines(
 ) {
   for (const line of stockLines) {
     const data: any = {};
+    const fields = getStockFieldNames(stockLocation);
 
     if (line.quantity > 0) {
-      data.stockLocal = { decrement: line.quantity };
+      data[fields.unit] = { decrement: line.quantity };
     }
 
     if (line.quantityKg > 0) {
-      data.stockLocalKg = { decrement: line.quantityKg };
+      data[fields.kg] = { decrement: line.quantityKg };
     }
 
     const updatedProduct = await tx.product.update({
@@ -254,13 +294,14 @@ async function discountStockLines(
         id: true,
         name: true,
         stockLocal: true,
+        stockDeposito: true,
         minStock: true,
       },
     });
 
     const movementData: any = {
       type: MovementType.SALE,
-      from: Location.LOCAL,
+      from: stockLocation,
       to: null,
       quantity: line.quantity > 0 ? line.quantity : null,
       quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
@@ -287,7 +328,11 @@ async function discountStockLines(
 
     const minStock = updatedProduct.minStock ?? 0;
 
-    if (line.quantity > 0 && updatedProduct.stockLocal <= minStock) {
+    if (
+  stockLocation === "LOCAL" &&
+  line.quantity > 0 &&
+  updatedProduct.stockLocal <= minStock
+){
       pendingAlerts.push({
         productId: updatedProduct.id,
         name: updatedProduct.name,
@@ -302,19 +347,21 @@ async function restoreStockLines(
   tx: any,
   stockLines: StockLine[],
   userId: string | undefined,
-  saleId: string
+  saleId: string,
+  stockLocation: StockLocation
 ) {
   for (const line of stockLines) {
     const data: any = {};
+    const fields = getStockFieldNames(stockLocation);
 
     if (line.quantity > 0) {
-      data.stockLocal = {
+      data[fields.unit] = {
         increment: line.quantity,
       };
     }
 
     if (line.quantityKg > 0) {
-      data.stockLocalKg = {
+      data[fields.kg] = {
         increment: line.quantityKg,
       };
     }
@@ -329,7 +376,7 @@ async function restoreStockLines(
     const movementData: any = {
       type: MovementType.SALE_CANCEL,
       from: null,
-      to: Location.LOCAL,
+      to: stockLocation,
       quantity: line.quantity > 0 ? line.quantity : null,
       quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
       reason: "Cancelación de venta",
@@ -557,6 +604,22 @@ async function reverseAccountDebtFromSale(tx: any, sale: any) {
     },
   });
 }
+const DEFAULT_QUOTATION_HOURS = Number(process.env.DEFAULT_QUOTATION_HOURS ?? 36);
+
+function addHours(date: Date, hours: number) {
+  return new Date(date.getTime() + hours * 60 * 60 * 1000);
+}
+
+function resolveQuotationHours(value?: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_QUOTATION_HOURS;
+  }
+
+  return parsed;
+}
+
 
 export const saleService = {
   async getAll() {
@@ -792,6 +855,7 @@ export const saleService = {
       throw new Error("Para vender en cuenta corriente necesitás seleccionar un cliente");
     }
 
+    const stockLocation = normalizeStockLocation(data.stockLocation);
     const stockLines = buildStockLines(itemsWithPrices);
 
     const pendingAlerts: Array<{
@@ -801,9 +865,16 @@ export const saleService = {
       minStock: number;
     }> = [];
 
+     const saleStatus = data.status ?? SaleStatus.PENDING;
+
+    const quotationExpiresAt =
+      saleStatus === SaleStatus.PENDING
+        ? addHours(new Date(), resolveQuotationHours(data.quotationHours))
+        : null;
+
     const result = await prisma.$transaction(
       async (tx) => {
-        await validateStockAvailability(tx, stockLines);
+        await validateStockAvailability(tx, stockLines, stockLocation);
 
         const sale = await tx.sale.create({
           data: {
@@ -816,7 +887,10 @@ export const saleService = {
             discountValue: data.discountValue ?? null,
             paymentMethod: data.paymentMethod,
             receiptType: data.receiptType,
-            status: data.status ?? SaleStatus.PENDING,
+            status: saleStatus,
+            stockLocation,
+            quotationExpiresAt,
+            quotationExpiredAt: null,
             isAccountSale: paymentState.isAccountSale,
             accountDebtAmount: paymentState.debtAmount,
 
@@ -875,6 +949,7 @@ export const saleService = {
           stockLines,
           data.userId,
           sale.id,
+          stockLocation,
           pendingAlerts
         );
 
@@ -976,6 +1051,9 @@ export const saleService = {
     }
 
     const restoredStockLines: StockLine[] = [];
+    const stockLocation = normalizeStockLocation(
+  (sale as any).stockLocation ?? "LOCAL"
+);
 
     if (status === SaleStatus.CANCELLED) {
       const resolvedItems: ResolvedSaleItem[] = sale.items.map((item) => ({
@@ -1006,18 +1084,25 @@ export const saleService = {
             tx,
             restoredStockLines,
             sale.userId ?? undefined,
-            sale.id
+            sale.id,
+            stockLocation
           );
 
           await reverseAccountDebtFromSale(tx, sale);
         }
 
-        return tx.sale.update({
+   return tx.sale.update({
           where: {
             id,
           },
           data: {
             status,
+            ...(status === SaleStatus.CANCELLED
+              ? { quotationExpiredAt: sale.quotationExpiredAt ?? new Date() }
+              : {}),
+            ...(status === SaleStatus.COMPLETED
+              ? { quotationExpiredAt: null }
+              : {}),
           },
           include: {
             payments: true,
@@ -1114,6 +1199,118 @@ export const saleService = {
     };
   },
 
+async generarCotizacion(saleId: string) {
+  let sale = await prisma.sale.findUnique({
+    where: {
+      id: saleId,
+    },
+    include: {
+      payments: true,
+      items: {
+        include: {
+          product: true,
+          boxContents: {
+            include: {
+              product: true,
+            },
+          },
+        },
+      },
+      user: true,
+      client: true,
+    },
+  });
+
+  if (!sale) {
+    throw new Error("Venta no encontrada");
+  }
+
+  if (sale.status !== SaleStatus.PENDING) {
+    throw new Error("Solo se puede descargar cotización de una venta pendiente");
+  }
+
+  if (!sale.quotationExpiresAt) {
+    sale = await prisma.sale.update({
+      where: {
+        id: sale.id,
+      },
+      data: {
+        quotationExpiresAt: addHours(new Date(), DEFAULT_QUOTATION_HOURS),
+      },
+      include: {
+        payments: true,
+        items: {
+          include: {
+            product: true,
+            boxContents: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
+        user: true,
+        client: true,
+      },
+    });
+  }
+
+  const pdfBuffer = await generarCotizacionPDF(sale);
+
+  return {
+    filename: `cotizacion-${sale.id}.pdf`,
+    buffer: pdfBuffer,
+  };
+},
+
+  async expirePendingQuotations(limit = 100) {
+    const now = new Date();
+
+    const expiredSales = await prisma.sale.findMany({
+      where: {
+        status: SaleStatus.PENDING,
+        quotationExpiresAt: {
+          lte: now,
+        },
+        quotationExpiredAt: null,
+      },
+      select: {
+        id: true,
+        quotationExpiresAt: true,
+      },
+      take: limit,
+      orderBy: {
+        quotationExpiresAt: "asc",
+      },
+    });
+
+    const results = [];
+
+    for (const sale of expiredSales) {
+      try {
+        const updated = await this.updateStatus(sale.id, SaleStatus.CANCELLED);
+
+        results.push({
+          id: sale.id,
+          ok: true,
+          status: updated?.status ?? SaleStatus.CANCELLED,
+        });
+      } catch (error: any) {
+        results.push({
+          id: sale.id,
+          ok: false,
+          error: error?.message ?? "Error desconocido",
+        });
+      }
+    }
+
+    return {
+      checkedAt: now,
+      expiredCount: expiredSales.length,
+      results,
+    };
+  },
+  
   async updatePaymentMethod(id: string, method: PaymentMethod) {
     const sale = await prisma.sale.findUnique({
       where: {

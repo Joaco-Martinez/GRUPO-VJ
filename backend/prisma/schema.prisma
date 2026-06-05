@@ -344,6 +344,10 @@ model Sale {
   subtotal Float @default(0)
   total    Float @default(0)
 
+  quotationExpiresAt DateTime?
+  quotationExpiredAt DateTime?
+  quotationPdfUrl     String?
+
   discountType  DiscountType?
   discountValue Float?
 
@@ -360,6 +364,10 @@ model Sale {
   receiptType   ReceiptType
   status        SaleStatus    @default(PENDING)
 
+
+// Sirve para devolver el stock al mismo lugar si se cancela.
+  stockLocation Location @default(LOCAL)
+  
   // Cuenta corriente
   isAccountSale     Boolean @default(false)
   accountDebtAmount Float   @default(0)
@@ -374,6 +382,7 @@ model Sale {
   payments         SalePayment[]
   accountMovements AccountMovement[]
 
+  @@index([quotationExpiresAt])
   @@index([clientId])
   @@index([userId])
   @@index([status])

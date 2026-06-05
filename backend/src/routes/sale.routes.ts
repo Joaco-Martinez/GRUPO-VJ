@@ -19,6 +19,8 @@ router.patch("/:id/payments", authMiddleware, saleController.updatePayments);
 
 router.post("/:id/nota-pedido", authMiddleware, saleController.generarNotaPedido);
 
+router.get("/:id/cotizacion-pdf", authMiddleware, saleController.generarCotizacion);
+
 router.get("/:id", authMiddleware, saleController.getById);
 
 export default router;

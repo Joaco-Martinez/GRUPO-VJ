@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { PaymentMethod, Sale } from '@/types';
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const PAGE_SIZE = 10;
 
 const badge = (s: string) =>
   s === 'COMPLETED' ? 'badge-green' : s === 'PENDING' ? 'badge-yellow' : 'badge-red';
@@ -384,6 +385,7 @@ export default function VentasPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [detail, setDetail] = useState<Sale | null>(null);
   const [payEdit, setPayEdit] = useState<Sale | null>(null);
 
@@ -444,13 +446,37 @@ export default function VentasPage() {
     };
   }, []);
 
-  const filtered = sales.filter(
-    (s) =>
-      (!status || s.status === status) &&
-      (!search ||
-        s.id.includes(search) ||
-        clientName(s.client).toLowerCase().includes(search.toLowerCase()))
-  );
+  const filtered = useMemo(() => {
+    const cleanSearch = search.trim().toLowerCase();
+
+    return sales.filter(
+      (s) =>
+        (!status || s.status === status) &&
+        (!cleanSearch ||
+          s.id.toLowerCase().includes(cleanSearch) ||
+          clientName(s.client).toLowerCase().includes(cleanSearch))
+    );
+  }, [sales, search, status]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+
+  const paginatedSales = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, currentPage]);
+
+  const pageStart = filtered.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(currentPage * PAGE_SIZE, filtered.length);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, status]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const total = sales
     .filter((s) => s.status !== 'CANCELLED')
@@ -1037,7 +1063,7 @@ if (!contentType.includes('application/pdf')) {
               </thead>
 
               <tbody>
-                {filtered.map((s) => {
+                {paginatedSales.map((s) => {
                   const invoiceStatus = getSaleInvoiceStatus(s);
                   const quotationExpirationLabel = getQuotationExpirationLabel(s);
                   const saleIsCreditNote = isCreditNoteSale(s);
@@ -1301,7 +1327,7 @@ if (!contentType.includes('application/pdf')) {
               <div className="skeleton" style={{ height: 240 }} />
             </div>
           ) : (
-            filtered.map((s) => {
+            paginatedSales.map((s) => {
               const invoiceStatus = getSaleInvoiceStatus(s);
               const quotationExpirationLabel = getQuotationExpirationLabel(s);
               const saleIsCreditNote = isCreditNoteSale(s);
@@ -1528,6 +1554,35 @@ if (!contentType.includes('application/pdf')) {
           )}
         </div>
 
+        {!loading && filtered.length > 0 && (
+          <div className="sales-pagination">
+            <div className="sales-pagination-info">
+              Mostrando {pageStart} - {pageEnd} de {filtered.length} ventas
+            </div>
+
+            <div className="sales-pagination-actions">
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              >
+                Anterior
+              </button>
+
+              <span className="sales-pagination-page">
+                Página {currentPage} de {totalPages}
+              </span>
+
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {detail && (
@@ -2118,6 +2173,61 @@ if (!contentType.includes('application/pdf')) {
       )}
 
       <style jsx>{`
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          background: rgba(0, 0, 0, 0.45);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          overflow-y: auto;
+        }
+
+        .modal {
+          margin: auto;
+          max-height: calc(100dvh - 36px);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .modal-body {
+          overflow-y: auto;
+        }
+
+        .sales-pagination {
+          border-top: 1px solid var(--border);
+          padding: 14px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: wrap;
+          background: var(--surface);
+        }
+
+        .sales-pagination-info {
+          color: var(--text3);
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .sales-pagination-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .sales-pagination-page {
+          color: var(--text2);
+          font-size: 12px;
+          font-weight: 800;
+          padding: 0 4px;
+        }
+
         .sales-mobile-list {
           display: none;
         }
@@ -2133,6 +2243,42 @@ if (!contentType.includes('application/pdf')) {
         }
 
         @media (max-width: 768px) {
+          .modal-overlay {
+            align-items: flex-start;
+            padding: 12px;
+          }
+
+          .modal {
+            margin-top: 0;
+            max-height: calc(100dvh - 24px);
+          }
+
+          .sales-pagination {
+            display: grid;
+            grid-template-columns: 1fr;
+            justify-items: stretch;
+            padding: 12px;
+          }
+
+          .sales-pagination-info {
+            text-align: center;
+          }
+
+          .sales-pagination-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .sales-pagination-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .sales-pagination-page {
+            text-align: center;
+          }
+
           .sales-stats-grid {
             grid-template-columns: 1fr !important;
             gap: 10px !important;

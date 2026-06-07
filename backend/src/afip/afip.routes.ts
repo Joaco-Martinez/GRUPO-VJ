@@ -403,34 +403,58 @@ router.post("/facturar", async (req, res) => {
         });
 
         console.log("✅ PDF generado, subido y ticket enviado correctamente");
-      } catch (printErr: any) {
-        posDisconnected = true;
+      }  catch (err: any) {
+    console.error("❌ ERROR EN /afip/facturar");
+    console.error("📛 Message:", err?.message);
+    console.error("📛 Name:", err?.name);
+    console.error("📛 Stack:", err?.stack);
 
-        const status = printErr?.response?.status;
-        const ngrokCode = printErr?.response?.headers?.["ngrok-error-code"];
-        const url = printErr?.config?.url;
+    if (err?.response) {
+      console.error("🌐 Error response status:", err.response.status);
+      console.error("🌐 Error response data:", err.response.data);
+      console.error("🌐 Error response headers:", err.response.headers);
+    }
 
-        posErrorMessage =
-          ngrokCode === "ERR_NGROK_3200" || status === 404
-            ? `AFIP aprobó y se facturó, pero el POS está desconectado. Endpoint: ${
-                url ?? "desconocido"
-              }`
-            : `AFIP aprobó y se facturó, pero falló la impresión en el POS. ${
-                printErr?.message ?? ""
-              }`;
+    if (err?.cause) {
+      console.error("🧨 Cause:", err.cause);
+    }
 
-        console.warn("⚠️", posErrorMessage);
+    if (err?.code) {
+      console.error("🔢 Error code:", err.code);
+    }
+
+    if (isAfipUnavailable(err)) {
+      const nextRetryAt = new Date(Date.now() + 5 * 60 * 1000);
+
+      try {
+        await prisma.sale.update({
+          where: { id: saleId },
+          data: {
+            invoiceStatus: "PENDING_AFIP",
+            afipLastError: "AFIP_UNAVAILABLE",
+            nextRetryAt,
+            retryCount: { increment: 1 },
+            afipPayloadJson: req.body,
+          },
+        });
+      } catch (updateErr: any) {
+        console.error("❌ No se pudo marcar PENDING_AFIP:", updateErr?.message);
       }
 
-      await prisma.sale.update({
-        where: { id: saleId },
-        data: {
-          invoiceStatus: "INVOICED",
-          afipLastError: posDisconnected ? "POS_DISCONNECTED" : null,
-          nextRetryAt: null,
-          retryCount: 0,
-        },
+      return res.status(202).json({
+        ok: true,
+        invoiceStatus: "PENDING_AFIP",
+        nextRetryAt: nextRetryAt.toISOString(),
       });
+    }
+
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Error interno al facturar",
+      detail: err?.response?.data ?? null,
+      code: err?.code ?? null,
+    });
+  }
 
       return res.status(200).json({
         ok: true,

@@ -746,6 +746,7 @@ export default function POSPage() {
   return (
     <AppLayout title="POS" subtitle="Ventas, promos, envíos, pagos parciales y cuenta corriente">
       <div
+        className="pos-root"
         style={{
           display: 'grid',
           gridTemplateColumns: 'minmax(0, 1fr) 420px',
@@ -754,6 +755,7 @@ export default function POSPage() {
       >
         <section>
           <div
+            className="pos-toolbar"
             style={{
               display: 'flex',
               gap: 10,
@@ -761,7 +763,7 @@ export default function POSPage() {
               flexWrap: 'wrap',
             }}
           >
-            <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
+            <div className="pos-search" style={{ position: 'relative', flex: 1, minWidth: 220 }}>
               <Search
                 size={14}
                 style={{
@@ -781,7 +783,12 @@ export default function POSPage() {
               />
             </div>
 
-            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} style={{ width: 220 }}>
+            <select
+              className="pos-filter"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              style={{ width: 220 }}
+            >
               <option value="">Todas las categorías</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -791,6 +798,7 @@ export default function POSPage() {
             </select>
 
             <select
+              className="pos-filter"
               value={stockLocation}
               onChange={(e) => setStockLocation(e.target.value as StockLocation)}
               style={{ width: 210 }}
@@ -800,13 +808,14 @@ export default function POSPage() {
               <option value="DEPOSITO">Descontar de Depósito</option>
             </select>
 
-            <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
+            <button className="btn btn-secondary btn-sm pos-refresh-btn" onClick={() => load(true)} disabled={loading}>
               <RefreshCcw size={14} />
               Actualizar
             </button>
           </div>
 
           <div
+            className="pos-products-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
@@ -823,7 +832,7 @@ export default function POSPage() {
                 return (
                   <button
                     key={p.id}
-                    className="card"
+                    className="card pos-product-card"
                     onClick={() => add(p)}
                     disabled={withoutStock}
                     style={{
@@ -888,7 +897,7 @@ export default function POSPage() {
         </section>
 
         <aside
-          className="card"
+          className="card pos-cart"
           style={{
             padding: 0,
             alignSelf: 'start',
@@ -900,7 +909,7 @@ export default function POSPage() {
             overflow: 'hidden',
           }}
         >
-          <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
+          <div className="pos-cart-body" style={{ padding: 16, overflow: 'auto', flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <ShoppingCart size={18} />
               <b>Carrito</b>
@@ -984,7 +993,7 @@ export default function POSPage() {
                 <b style={{ fontSize: 13 }}>Entrega</b>
               </div>
 
-              <div className="form-row">
+              <div className="form-row pos-delivery-row">
                 <div className="form-group">
                   <label className="form-label">Tipo</label>
                   <select
@@ -1099,7 +1108,7 @@ export default function POSPage() {
               )}
             </div>
 
-            <div style={{ maxHeight: 260, overflow: 'auto', marginBottom: 12 }}>
+            <div className="pos-cart-items" style={{ maxHeight: 260, overflow: 'auto', marginBottom: 12 }}>
               {cart.map((item) => {
                 const itemPrice = getItemPrice(item, priceType);
 
@@ -1227,6 +1236,7 @@ export default function POSPage() {
               <div>
                 {payments.map((p, idx) => (
                   <div
+                    className="pos-payment-row"
                     key={idx}
                     style={{
                       display: 'grid',
@@ -1347,7 +1357,7 @@ export default function POSPage() {
             if (e.target === e.currentTarget) setConfirmModal(null);
           }}
         >
-          <div className="modal" style={{ maxWidth: 440 }}>
+          <div className="modal pos-confirm-modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <b>{confirmModal.title}</b>
 
@@ -1396,7 +1406,7 @@ export default function POSPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer pos-confirm-footer">
               <button
                 className="btn btn-secondary"
                 onClick={() => setConfirmModal(null)}
@@ -1416,6 +1426,158 @@ export default function POSPage() {
           </div>
         </div>
       )}
+
+
+      <style jsx>{`
+        @media (max-width: 1100px) {
+          .pos-root {
+            grid-template-columns: minmax(0, 1fr) 380px !important;
+            gap: 14px !important;
+          }
+
+          .pos-products-grid {
+            grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 900px) {
+          .pos-root {
+            grid-template-columns: 1fr !important;
+          }
+
+          .pos-cart {
+            position: static !important;
+            top: auto !important;
+            max-height: none !important;
+            order: -1;
+            border-radius: 18px;
+          }
+
+          .pos-cart-body {
+            max-height: none !important;
+            overflow: visible !important;
+          }
+
+          .pos-cart-items {
+            max-height: 280px !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .pos-root {
+            gap: 14px !important;
+          }
+
+          .pos-toolbar {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 12px !important;
+          }
+
+          .pos-search {
+            min-width: 0 !important;
+            width: 100%;
+          }
+
+          .pos-search input,
+          .pos-filter,
+          .pos-refresh-btn {
+            width: 100% !important;
+          }
+
+          .pos-refresh-btn {
+            justify-content: center;
+            height: 42px;
+          }
+
+          .pos-products-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+          }
+
+          .pos-product-card {
+            padding: 12px !important;
+            border-radius: 16px;
+            min-width: 0;
+          }
+
+          .pos-product-card > div:first-child {
+            align-items: flex-start;
+          }
+
+          .pos-product-card b,
+          .pos-product-card div {
+            overflow-wrap: anywhere;
+          }
+
+          .pos-cart {
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .pos-cart-body {
+            padding: 14px !important;
+          }
+
+          .pos-delivery-row {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .pos-cart-items {
+            max-height: 240px !important;
+            padding-right: 2px;
+          }
+
+          .pos-payment-row {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
+          }
+
+          .pos-confirm-modal {
+            width: calc(100vw - 24px);
+            max-width: calc(100vw - 24px) !important;
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
+            border-radius: 18px;
+          }
+
+          .pos-confirm-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .pos-confirm-footer button {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .pos-products-grid {
+            grid-template-columns: 1fr !important;
+          }
+
+          .pos-product-card {
+            padding: 12px !important;
+          }
+
+          .pos-cart-body {
+            padding: 12px !important;
+          }
+
+          .pos-cart-items {
+            max-height: 220px !important;
+          }
+
+          .pos-confirm-modal {
+            border-radius: 16px;
+          }
+        }
+      `}</style>
+
     </AppLayout>
   );
 }

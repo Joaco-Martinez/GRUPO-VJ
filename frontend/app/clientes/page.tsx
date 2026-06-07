@@ -73,6 +73,21 @@ type ConfirmState = {
   onConfirm: () => Promise<void> | void;
 } | null;
 
+function useIsMobile(maxWidth = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= maxWidth);
+
+    check();
+    window.addEventListener('resize', check);
+
+    return () => window.removeEventListener('resize', check);
+  }, [maxWidth]);
+
+  return isMobile;
+}
+
 function cleanString(value: string) {
   const text = String(value || '').trim();
   return text || undefined;
@@ -130,6 +145,8 @@ export default function ClientesPage() {
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const isMobile = useIsMobile();
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -411,7 +428,14 @@ export default function ClientesPage() {
       title="Clientes"
       subtitle="Clientes, direcciones, crédito y cuenta corriente"
       actions={
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={openCreate}
+          style={{
+            width: isMobile ? '100%' : undefined,
+            justifyContent: isMobile ? 'center' : undefined,
+          }}
+        >
           <Plus size={14} /> Nuevo cliente
         </button>
       }
@@ -419,8 +443,8 @@ export default function ClientesPage() {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
-          gap: 12,
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(5, 1fr)',
+          gap: isMobile ? 10 : 12,
           marginBottom: 18,
         }}
       >
@@ -442,14 +466,23 @@ export default function ClientesPage() {
         <div className="stat-card">
           <div
             className="stat-value"
-            style={{ color: totalDebt > 0 ? 'var(--warn)' : 'var(--accent)' }}
+            style={{
+              color: totalDebt > 0 ? 'var(--warn)' : 'var(--accent)',
+              fontSize: isMobile ? 18 : undefined,
+              overflowWrap: 'anywhere',
+            }}
           >
             {fmtMoney(totalDebt)}
           </div>
           <div className="stat-label">Saldo pendiente</div>
         </div>
 
-        <div className="stat-card">
+        <div
+          className="stat-card"
+          style={{
+            gridColumn: isMobile ? '1 / -1' : undefined,
+          }}
+        >
           <div className="stat-value">
             {clients.filter((c) => c.category === 'Mayorista').length}
           </div>
@@ -457,7 +490,14 @@ export default function ClientesPage() {
         </div>
       </div>
 
-      <div style={{ position: 'relative', marginBottom: 18, maxWidth: 520 }}>
+      <div
+        style={{
+          position: 'relative',
+          marginBottom: 18,
+          maxWidth: isMobile ? '100%' : 520,
+          width: '100%',
+        }}
+      >
         <Search
           size={14}
           style={{
@@ -468,19 +508,230 @@ export default function ClientesPage() {
             color: 'var(--text3)',
           }}
         />
+
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar por nombre, DNI, teléfono, email o dirección..."
-          style={{ paddingLeft: 34 }}
+          placeholder={isMobile ? 'Buscar cliente...' : 'Buscar por nombre, DNI, teléfono, email o dirección...'}
+          style={{ paddingLeft: 34, width: '100%' }}
         />
       </div>
 
       <div className="card">
         <div className="table-wrap">
           {loading ? (
-            <div style={{ padding: 20 }}>
-              <div className="skeleton" style={{ height: 220 }} />
+            <div style={{ padding: isMobile ? 14 : 20 }}>
+              <div
+                className="skeleton"
+                style={{
+                  height: isMobile ? 360 : 220,
+                  borderRadius: 12,
+                }}
+              />
+            </div>
+          ) : isMobile ? (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                padding: 12,
+              }}
+            >
+              {filtered.map((c) => {
+                const address = clientAddress(c);
+                const balance = num(c.currentBalance);
+                const accountDisabled = c.isAccountEnabled === false;
+
+                return (
+                  <div
+                    key={c.id}
+                    style={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 12,
+                      padding: 14,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{
+                            fontWeight: 900,
+                            fontSize: 14,
+                            lineHeight: 1.25,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {clientName(c)}
+                        </div>
+
+                        <div
+                          style={{
+                            color: 'var(--text3)',
+                            fontSize: 11,
+                            marginTop: 3,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {c.gmail ?? 'Sin email'}
+                        </div>
+                      </div>
+
+                      <span
+                        className={`badge ${
+                          c.category === 'Mayorista' ? 'badge-blue' : 'badge-green'
+                        }`}
+                        style={{ flexShrink: 0 }}
+                      >
+                        {c.category}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                        gap: 8,
+                      }}
+                    >
+                      <div>
+                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>DNI/CUIT</div>
+                        <div style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{c.dni}</div>
+                      </div>
+
+                      <div>
+                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>Teléfono</div>
+                        <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
+                          {c.telefono ?? '—'}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>Saldo</div>
+                        <span
+                          className={`badge ${balance > 0 ? 'badge-yellow' : 'badge-green'}`}
+                          style={{ marginTop: 3 }}
+                        >
+                          {fmtMoney(balance)}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>Límite</div>
+                        <div style={{ fontSize: 12 }}>
+                          {c.creditLimit ? fmtMoney(c.creditLimit) : 'Sin límite'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 7,
+                        alignItems: 'flex-start',
+                        borderTop: '1px solid var(--border)',
+                        paddingTop: 12,
+                      }}
+                    >
+                      <MapPin
+                        size={13}
+                        style={{
+                          color: address ? 'var(--accent)' : 'var(--text3)',
+                          marginTop: 2,
+                          flexShrink: 0,
+                        }}
+                      />
+
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: address ? 'var(--text2)' : 'var(--text3)',
+                            lineHeight: 1.35,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {address || 'Sin dirección'}
+                        </div>
+
+                        {c.addressNotes && (
+                          <div
+                            style={{
+                              color: 'var(--text3)',
+                              fontSize: 11,
+                              marginTop: 2,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {c.addressNotes}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        alignItems: 'center',
+                        borderTop: '1px solid var(--border)',
+                        paddingTop: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: accountDisabled ? 'var(--danger)' : 'var(--text3)',
+                          fontSize: 11,
+                        }}
+                      >
+                        Cuenta corriente {accountDisabled ? 'deshabilitada' : 'habilitada'}
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 6,
+                          flexWrap: 'wrap',
+                          justifyContent: 'flex-end',
+                        }}
+                      >
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => openPayment(c)}
+                          disabled={balance <= 0}
+                        >
+                          <Wallet size={13} /> Abono
+                        </button>
+
+                        <button className="btn btn-ghost btn-sm" onClick={() => openHistory(c)}>
+                          <CreditCard size={13} />
+                        </button>
+
+                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(c)}>
+                          <Edit2 size={13} />
+                        </button>
+
+                        <button className="btn btn-danger btn-sm" onClick={() => deleteClient(c)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <table>
@@ -601,7 +852,12 @@ export default function ClientesPage() {
           )}
 
           {!loading && !filtered.length && (
-            <div className="empty-state">
+            <div
+              className="empty-state"
+              style={{
+                padding: isMobile ? '48px 16px' : undefined,
+              }}
+            >
               <Users size={36} />
               <p>Sin clientes</p>
             </div>
@@ -611,7 +867,15 @@ export default function ClientesPage() {
 
       {(modal === 'create' || modal === 'edit') && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
-          <div className="modal" style={{ maxWidth: 860 }}>
+          <div
+            className="modal"
+            style={{
+              maxWidth: isMobile ? 'calc(100vw - 24px)' : 860,
+              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+              maxHeight: isMobile ? 'calc(100vh - 24px)' : undefined,
+              overflowY: isMobile ? 'auto' : undefined,
+            }}
+          >
             <div className="modal-header">
               <b>{modal === 'create' ? 'Nuevo cliente' : 'Editar cliente'}</b>
 
@@ -638,7 +902,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Nombre *</label>
                   <input
@@ -656,7 +920,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">DNI/CUIT *</label>
                   <input
@@ -678,7 +942,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Teléfono</label>
                   <input
@@ -696,7 +960,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Límite de crédito</label>
                   <input
@@ -736,7 +1000,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Calle</label>
                   <input
@@ -756,7 +1020,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Piso</label>
                   <input
@@ -776,7 +1040,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Localidad</label>
                   <input
@@ -796,7 +1060,7 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Código postal</label>
                   <input
@@ -834,7 +1098,13 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row" style={{ marginTop: 14 }}>
+              <div
+                className="form-row"
+                style={{
+                  marginTop: 14,
+                  flexDirection: isMobile ? 'column' : undefined,
+                }}
+              >
                 <div className="form-group">
                   <label className="form-label">Latitud</label>
                   <input
@@ -855,8 +1125,18 @@ export default function ClientesPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeModal} disabled={saving}>
+            <div
+              className="modal-footer"
+              style={{
+                flexDirection: isMobile ? 'column-reverse' : undefined,
+              }}
+            >
+              <button
+                className="btn btn-secondary"
+                onClick={closeModal}
+                disabled={saving}
+                style={{ width: isMobile ? '100%' : undefined }}
+              >
                 Cancelar
               </button>
 
@@ -864,6 +1144,7 @@ export default function ClientesPage() {
                 className="btn btn-primary"
                 onClick={saveClient}
                 disabled={saving || !form.nombre || !form.apellido || !form.dni}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
                 {saving ? <span className="spinner" /> : 'Guardar'}
               </button>
@@ -874,7 +1155,13 @@ export default function ClientesPage() {
 
       {modal === 'payment' && editing && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
-          <div className="modal">
+          <div
+            className="modal"
+            style={{
+              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+              maxWidth: isMobile ? 'calc(100vw - 24px)' : undefined,
+            }}
+          >
             <div className="modal-header">
               <b>Registrar abono</b>
 
@@ -884,11 +1171,17 @@ export default function ClientesPage() {
             </div>
 
             <div className="modal-body">
-              <p style={{ color: 'var(--text2)', marginBottom: 14 }}>
+              <p
+                style={{
+                  color: 'var(--text2)',
+                  marginBottom: 14,
+                  overflowWrap: 'anywhere',
+                }}
+              >
                 {clientName(editing)} · saldo {fmtMoney(editing.currentBalance)}
               </p>
 
-              <div className="form-row">
+              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Importe</label>
                   <input
@@ -937,8 +1230,18 @@ export default function ClientesPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeModal} disabled={saving}>
+            <div
+              className="modal-footer"
+              style={{
+                flexDirection: isMobile ? 'column-reverse' : undefined,
+              }}
+            >
+              <button
+                className="btn btn-secondary"
+                onClick={closeModal}
+                disabled={saving}
+                style={{ width: isMobile ? '100%' : undefined }}
+              >
                 Cancelar
               </button>
 
@@ -946,6 +1249,7 @@ export default function ClientesPage() {
                 className="btn btn-primary"
                 onClick={savePayment}
                 disabled={saving || !payment.amount}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
                 {saving ? <span className="spinner" /> : 'Registrar'}
               </button>
@@ -956,9 +1260,17 @@ export default function ClientesPage() {
 
       {modal === 'history' && editing && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
-          <div className="modal" style={{ maxWidth: 760 }}>
+          <div
+            className="modal"
+            style={{
+              maxWidth: isMobile ? 'calc(100vw - 24px)' : 760,
+              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+              maxHeight: isMobile ? 'calc(100vh - 24px)' : undefined,
+              overflowY: isMobile ? 'auto' : undefined,
+            }}
+          >
             <div className="modal-header">
-              <b>Cuenta corriente · {clientName(editing)}</b>
+              <b style={{ overflowWrap: 'anywhere' }}>Cuenta corriente · {clientName(editing)}</b>
 
               <button className="btn btn-ghost btn-sm" onClick={closeModal}>
                 <X size={16} />
@@ -968,23 +1280,40 @@ export default function ClientesPage() {
             <div className="modal-body">
               <div className="card">
                 <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Tipo</th>
-                        <th>Importe</th>
-                        <th>Anterior</th>
-                        <th>Nuevo</th>
-                        <th>Detalle</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
+                  {isMobile ? (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        padding: 12,
+                      }}
+                    >
                       {movements.map((m) => (
-                        <tr key={m.id}>
-                          <td>{fmtDate(m.date)}</td>
-                          <td>
+                        <div
+                          key={m.id}
+                          style={{
+                            background: 'var(--surface)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 12,
+                            padding: 12,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 10,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: 10,
+                              alignItems: 'center',
+                            }}
+                          >
+                            <div style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+                              {fmtDate(m.date)}
+                            </div>
+
                             <span
                               className={`badge ${
                                 m.type === 'PAYMENT' ? 'badge-green' : 'badge-yellow'
@@ -992,17 +1321,83 @@ export default function ClientesPage() {
                             >
                               {m.type}
                             </span>
-                          </td>
-                          <td style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
-                            {fmtMoney(m.amount)}
-                          </td>
-                          <td>{fmtMoney(m.previousBalance)}</td>
-                          <td>{fmtMoney(m.newBalance)}</td>
-                          <td>{m.description ?? m.reference ?? '—'}</td>
-                        </tr>
+                          </div>
+
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                              gap: 8,
+                            }}
+                          >
+                            <div>
+                              <div style={{ color: 'var(--text3)', fontSize: 11 }}>Importe</div>
+                              <div style={{ fontFamily: 'var(--mono)', fontWeight: 800, fontSize: 12 }}>
+                                {fmtMoney(m.amount)}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div style={{ color: 'var(--text3)', fontSize: 11 }}>Anterior</div>
+                              <div style={{ fontSize: 12 }}>{fmtMoney(m.previousBalance)}</div>
+                            </div>
+
+                            <div>
+                              <div style={{ color: 'var(--text3)', fontSize: 11 }}>Nuevo</div>
+                              <div style={{ fontSize: 12 }}>{fmtMoney(m.newBalance)}</div>
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              color: 'var(--text2)',
+                              fontSize: 12,
+                              lineHeight: 1.4,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {m.description ?? m.reference ?? '—'}
+                          </div>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  ) : (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Tipo</th>
+                          <th>Importe</th>
+                          <th>Anterior</th>
+                          <th>Nuevo</th>
+                          <th>Detalle</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {movements.map((m) => (
+                          <tr key={m.id}>
+                            <td>{fmtDate(m.date)}</td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  m.type === 'PAYMENT' ? 'badge-green' : 'badge-yellow'
+                                }`}
+                              >
+                                {m.type}
+                              </span>
+                            </td>
+                            <td style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
+                              {fmtMoney(m.amount)}
+                            </td>
+                            <td>{fmtMoney(m.previousBalance)}</td>
+                            <td>{fmtMoney(m.newBalance)}</td>
+                            <td>{m.description ?? m.reference ?? '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
 
                   {!movements.length && (
                     <div className="empty-state">
@@ -1025,7 +1420,13 @@ export default function ClientesPage() {
             if (e.target === e.currentTarget) setConfirmModal(null);
           }}
         >
-          <div className="modal" style={{ maxWidth: 440 }}>
+          <div
+            className="modal"
+            style={{
+              maxWidth: isMobile ? 'calc(100vw - 24px)' : 440,
+              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+            }}
+          >
             <div className="modal-header">
               <b>{confirmModal.title}</b>
 
@@ -1067,6 +1468,7 @@ export default function ClientesPage() {
                     fontSize: 13,
                     lineHeight: 1.55,
                     margin: 0,
+                    overflowWrap: 'anywhere',
                   }}
                 >
                   {confirmModal.message}
@@ -1074,11 +1476,17 @@ export default function ClientesPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div
+              className="modal-footer"
+              style={{
+                flexDirection: isMobile ? 'column-reverse' : undefined,
+              }}
+            >
               <button
                 className="btn btn-secondary"
                 onClick={() => setConfirmModal(null)}
                 disabled={confirmLoading}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
                 Cancelar
               </button>
@@ -1087,8 +1495,13 @@ export default function ClientesPage() {
                 className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
                 onClick={confirmAction}
                 disabled={confirmLoading}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
-                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
+                {confirmLoading ? (
+                  <span className="spinner" />
+                ) : (
+                  confirmModal.confirmText ?? 'Confirmar'
+                )}
               </button>
             </div>
           </div>

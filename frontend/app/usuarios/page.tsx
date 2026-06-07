@@ -12,7 +12,6 @@ import {
   X,
   Shield,
   Search,
-  RefreshCcw,
   AlertTriangle,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
@@ -410,11 +409,7 @@ export default function UsuariosPage() {
       title="Usuarios"
       subtitle="Gestión de administradores, empleados y clientes ecommerce"
       actions={
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
-            <RefreshCcw size={14} />
-            Actualizar
-          </button>
+        <div className="users-actions" style={{ display: 'flex', gap: 8 }}>
 
           <button className="btn btn-primary btn-sm" onClick={openCreate}>
             <Plus size={14} />
@@ -424,6 +419,7 @@ export default function UsuariosPage() {
       }
     >
       <div
+        className="users-stats-grid"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, 1fr)',
@@ -458,7 +454,7 @@ export default function UsuariosPage() {
         </div>
       </div>
 
-      <div style={{ position: 'relative', marginBottom: 18, maxWidth: 480 }}>
+      <div className="users-search" style={{ position: 'relative', marginBottom: 18, maxWidth: 480 }}>
         <Search
           size={14}
           style={{
@@ -478,8 +474,8 @@ export default function UsuariosPage() {
         />
       </div>
 
-      <div className="card">
-        <div className="table-wrap">
+      <div className="card users-card">
+        <div className="table-wrap users-desktop-table">
           {loading ? (
             <div style={{ padding: 20 }}>
               {[...Array(4)].map((_, i) => (
@@ -636,6 +632,107 @@ export default function UsuariosPage() {
             </div>
           )}
         </div>
+
+        <div className="users-mobile-list">
+          {loading ? (
+            <div style={{ padding: 14 }}>
+              {[...Array(4)].map((_, i) => (
+                <div
+                  key={i}
+                  className="skeleton"
+                  style={{ height: 92, marginBottom: 10, borderRadius: 16 }}
+                />
+              ))}
+            </div>
+          ) : (
+            filtered.map((u) => (
+              <article className="users-mobile-item" key={u.id}>
+                <div className="users-mobile-head">
+                  <div className="users-mobile-user">
+                    <div
+                      className={`users-avatar ${u.role === 'ADMIN' ? 'users-avatar-admin' : ''}`}
+                    >
+                      {u.name?.[0]?.toUpperCase() ?? 'U'}
+                    </div>
+
+                    <div>
+                      <h3>
+                        {u.name}
+                        {u.id === me?.id && <span> vos</span>}
+                      </h3>
+                      <p>{u.email}</p>
+                    </div>
+                  </div>
+
+                  <span
+                    className={`badge ${
+                      u.isActive === false ? 'badge-gray' : 'badge-green'
+                    }`}
+                  >
+                    {u.isActive === false ? 'INACTIVO' : 'ACTIVO'}
+                  </span>
+                </div>
+
+                <div className="users-mobile-badges">
+                  <span
+                    className={`badge ${
+                      u.role === 'ADMIN'
+                        ? 'badge-green'
+                        : u.role === 'CLIENTE'
+                          ? 'badge-blue'
+                          : 'badge-gray'
+                    }`}
+                  >
+                    {u.role === 'ADMIN' ? '👑 ' : ''}
+                    {u.role}
+                  </span>
+
+                  {u.client && (
+                    <span className="badge badge-gray">
+                      {u.client.category} · {u.client.dni}
+                    </span>
+                  )}
+                </div>
+
+                {u.client && (
+                  <div className="users-mobile-client">
+                    <small>Cliente vinculado</small>
+                    <strong>
+                      {u.client.nombre} {u.client.apellido}
+                    </strong>
+                  </div>
+                )}
+
+                <div className="users-mobile-actions">
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => openEdit(u)}
+                  >
+                    <Edit2 size={13} />
+                    Editar
+                  </button>
+
+                  {u.id !== me?.id && (
+                    <button
+                      className="btn btn-danger btn-sm"
+                      onClick={() => handleDelete(u)}
+                    >
+                      <Trash2 size={13} />
+                      Eliminar
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))
+          )}
+
+          {!loading && !filtered.length && (
+            <div className="empty-state">
+              <UserCog size={36} />
+              <p>Sin usuarios</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {modal && (
@@ -643,7 +740,7 @@ export default function UsuariosPage() {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
         >
-          <div className="modal" style={{ maxWidth: 760 }}>
+          <div className="modal users-modal" style={{ maxWidth: 760 }}>
             <div className="modal-header">
               <span style={{ fontWeight: 800 }}>
                 {modal === 'create' ? 'Nuevo usuario' : 'Editar usuario'}
@@ -660,7 +757,7 @@ export default function UsuariosPage() {
             </div>
 
             <div className="modal-body">
-              <div className="form-row">
+              <div className="form-row users-form-row">
                 <div className="form-group">
                   <label className="form-label">Nombre completo *</label>
                   <input
@@ -683,7 +780,7 @@ export default function UsuariosPage() {
                 </div>
               </div>
 
-              <div className="form-row">
+              <div className="form-row users-form-row">
                 <div className="form-group">
                   <label className="form-label">
                     {modal === 'create' ? 'Contraseña *' : 'Nueva contraseña'}
@@ -735,7 +832,7 @@ export default function UsuariosPage() {
                     Datos comerciales del cliente
                   </div>
 
-                  <div className="form-row">
+                  <div className="form-row users-form-row">
                     <div className="form-group">
                       <label className="form-label">Nombre *</label>
                       <input
@@ -755,7 +852,7 @@ export default function UsuariosPage() {
                     </div>
                   </div>
 
-                  <div className="form-row">
+                  <div className="form-row users-form-row">
                     <div className="form-group">
                       <label className="form-label">DNI/CUIT *</label>
                       <input
@@ -775,7 +872,7 @@ export default function UsuariosPage() {
                     </div>
                   </div>
 
-                  <div className="form-row">
+                  <div className="form-row users-form-row">
                     <div className="form-group">
                       <label className="form-label">Categoría de precio</label>
                       <select
@@ -815,7 +912,7 @@ export default function UsuariosPage() {
               )}
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer users-modal-footer">
               <button className="btn btn-secondary" onClick={closeModal} disabled={saving}>
                 Cancelar
               </button>
@@ -848,7 +945,7 @@ export default function UsuariosPage() {
             if (e.target === e.currentTarget) setConfirmModal(null);
           }}
         >
-          <div className="modal" style={{ maxWidth: 440 }}>
+          <div className="modal users-confirm-modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <b>{confirmModal.title}</b>
 
@@ -890,7 +987,7 @@ export default function UsuariosPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer users-modal-footer">
               <button
                 className="btn btn-secondary"
                 onClick={() => setConfirmModal(null)}
@@ -910,6 +1007,224 @@ export default function UsuariosPage() {
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        .users-mobile-list {
+          display: none;
+        }
+
+        .users-avatar {
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          display: grid;
+          place-items: center;
+          font-weight: 800;
+          font-size: 14px;
+          color: var(--text2);
+          flex-shrink: 0;
+        }
+
+        .users-avatar-admin {
+          background: rgba(0, 229, 160, 0.15);
+          border-color: rgba(0, 229, 160, 0.4);
+          color: var(--accent);
+        }
+
+        @media (max-width: 1024px) {
+          .users-stats-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .users-actions {
+            width: 100%;
+            display: grid !important;
+            grid-template-columns: 1fr;
+            gap: 8px !important;
+          }
+
+          .users-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .users-stats-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .users-search {
+            max-width: none !important;
+            width: 100%;
+            margin-bottom: 14px !important;
+          }
+
+          .users-search input {
+            width: 100%;
+          }
+
+          .users-card {
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .users-desktop-table {
+            display: none;
+          }
+
+          .users-mobile-list {
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+          }
+
+          .users-mobile-item {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface2);
+            padding: 12px;
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+          }
+
+          .users-mobile-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .users-mobile-user {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .users-mobile-user > div:last-child {
+            min-width: 0;
+          }
+
+          .users-mobile-user h3 {
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1.25;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .users-mobile-user h3 span {
+            font-size: 10px;
+            color: var(--text3);
+            font-family: var(--mono);
+            font-weight: 700;
+          }
+
+          .users-mobile-user p {
+            margin: 3px 0 0;
+            color: var(--text3);
+            font-size: 11px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .users-mobile-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+          }
+
+          .users-mobile-client {
+            display: grid;
+            gap: 4px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+          }
+
+          .users-mobile-client small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .users-mobile-client strong {
+            color: var(--text2);
+            font-size: 12px;
+            overflow-wrap: anywhere;
+          }
+
+          .users-mobile-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+          }
+
+          .users-mobile-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .users-modal,
+          .users-confirm-modal {
+            width: calc(100vw - 24px);
+            max-width: calc(100vw - 24px) !important;
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
+            border-radius: 18px;
+          }
+
+          .users-form-row {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .users-modal-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .users-modal-footer button {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .users-mobile-list {
+            padding: 10px;
+          }
+
+          .users-mobile-item {
+            border-radius: 14px;
+            padding: 10px;
+          }
+
+          .users-mobile-head {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .users-mobile-head > .badge {
+            width: fit-content;
+          }
+
+          .users-mobile-actions {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
     </AppLayout>
   );
 }

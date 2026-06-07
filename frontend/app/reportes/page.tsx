@@ -324,7 +324,10 @@ export default function ReportesPage() {
   return (
     <AppLayout title="Reportes y Estadísticas" subtitle="Análisis de ventas, cobros y cuenta corriente">
       {loading ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div
+          className="reports-loading-grid"
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}
+        >
           {[...Array(4)].map((_, i) => (
             <div key={`skeleton-${i}`} className="skeleton" style={{ height: 200 }} />
           ))}
@@ -332,6 +335,7 @@ export default function ReportesPage() {
       ) : (
         <>
           <div
+            className="reports-stats-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
@@ -365,7 +369,7 @@ export default function ReportesPage() {
                 color: '#a78bfa',
               },
             ].map((s) => (
-              <div key={s.label} className="stat-card">
+              <div key={s.label} className="stat-card reports-stat-card">
                 <div
                   style={{
                     width: 36,
@@ -382,7 +386,7 @@ export default function ReportesPage() {
                   {s.icon}
                 </div>
 
-                <div className="stat-value" style={{ color: s.color, fontSize: 24 }}>
+                <div className="stat-value reports-stat-value" style={{ color: s.color, fontSize: 24 }}>
                   {s.value}
                 </div>
 
@@ -392,6 +396,7 @@ export default function ReportesPage() {
           </div>
 
           <div
+            className="reports-charts-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: '2fr 1fr',
@@ -399,85 +404,35 @@ export default function ReportesPage() {
               marginBottom: 20,
             }}
           >
-            <div className="card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
+            <div className="card reports-card" style={{ padding: 24 }}>
+              <div className="reports-card-title" style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
                 Top productos — unidades / kg vendidos
               </div>
 
               {topProducts.length > 0 ? (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart
-                    data={topProducts.slice(0, 8)}
-                    layout="vertical"
-                    margin={{ left: 10, right: 20 }}
-                  >
-                    <XAxis
-                      type="number"
-                      tick={{ fill: 'var(--text3)', fontSize: 10, fontFamily: 'var(--mono)' }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v) => `${v}`}
-                    />
+                <div className="reports-bar-chart-wrap">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart
+                      data={topProducts.slice(0, 8)}
+                      layout="vertical"
+                      margin={{ left: 10, right: 20 }}
+                    >
+                      <XAxis
+                        type="number"
+                        tick={{ fill: 'var(--text3)', fontSize: 10, fontFamily: 'var(--mono)' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v) => `${v}`}
+                      />
 
-                    <YAxis
-                      type="category"
-                      dataKey="name"
-                      tick={{ fill: 'var(--text)', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={150}
-                    />
-
-                    <Tooltip
-                      contentStyle={{
-                        background: 'var(--surface2)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 8,
-                        fontFamily: 'var(--mono)',
-                        fontSize: 12,
-                      }}
-                      formatter={(v: unknown) => [Number(v), 'Vendido']}
-                    />
-
-                    <Bar
-                      dataKey="totalSold"
-                      fill="var(--accent)"
-                      radius={[0, 4, 4, 0]}
-                      opacity={0.85}
-                      name="Vendido"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="empty-state">
-                  <TrendingUp size={36} />
-                  <p>Sin datos</p>
-                </div>
-              )}
-            </div>
-
-            <div className="card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
-                Distribución de ingresos cobrados
-              </div>
-
-              {pieData.length > 0 ? (
-                <>
-                  <ResponsiveContainer width="100%" height={160}>
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={45}
-                        outerRadius={70}
-                        paddingAngle={3}
-                        dataKey="value"
-                      >
-                        {pieData.map((d, i) => (
-                          <Cell key={`${d.name}-${i}`} fill={COLORS[i % COLORS.length]} />
-                        ))}
-                      </Pie>
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        tick={{ fill: 'var(--text)', fontSize: 12 }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={150}
+                      />
 
                       <Tooltip
                         contentStyle={{
@@ -485,17 +440,72 @@ export default function ReportesPage() {
                           border: '1px solid var(--border)',
                           borderRadius: 8,
                           fontFamily: 'var(--mono)',
-                          fontSize: 11,
+                          fontSize: 12,
                         }}
-                        formatter={(v: unknown) => fmt(Number(v))}
+                        formatter={(v: unknown) => [Number(v), 'Vendido']}
                       />
-                    </PieChart>
-                  </ResponsiveContainer>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+                      <Bar
+                        dataKey="totalSold"
+                        fill="var(--accent)"
+                        radius={[0, 4, 4, 0]}
+                        opacity={0.85}
+                        name="Vendido"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="empty-state reports-empty-state">
+                  <TrendingUp size={36} />
+                  <p>Sin datos</p>
+                </div>
+              )}
+            </div>
+
+            <div className="card reports-card" style={{ padding: 24 }}>
+              <div className="reports-card-title" style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
+                Distribución de ingresos cobrados
+              </div>
+
+              {pieData.length > 0 ? (
+                <>
+                  <div className="reports-pie-chart-wrap">
+                    <ResponsiveContainer width="100%" height={160}>
+                      <PieChart>
+                        <Pie
+                          data={pieData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={45}
+                          outerRadius={70}
+                          paddingAngle={3}
+                          dataKey="value"
+                        >
+                          {pieData.map((d, i) => (
+                            <Cell key={`${d.name}-${i}`} fill={COLORS[i % COLORS.length]} />
+                          ))}
+                        </Pie>
+
+                        <Tooltip
+                          contentStyle={{
+                            background: 'var(--surface2)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 8,
+                            fontFamily: 'var(--mono)',
+                            fontSize: 11,
+                          }}
+                          formatter={(v: unknown) => fmt(Number(v))}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="reports-pie-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
                     {pieData.slice(0, 5).map((d, i) => (
                       <div
                         key={`${d.name}-${i}`}
+                        className="reports-pie-item"
                         style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
                       >
                         <span
@@ -534,7 +544,7 @@ export default function ReportesPage() {
                   </div>
                 </>
               ) : (
-                <div className="empty-state">
+                <div className="empty-state reports-empty-state">
                   <Award size={36} />
                   <p>Sin ingresos cobrados por producto</p>
                 </div>
@@ -542,8 +552,9 @@ export default function ReportesPage() {
             </div>
           </div>
 
-          <div className="card" style={{ padding: 24 }}>
+          <div className="card reports-card reports-range-card" style={{ padding: 24 }}>
             <div
+              className="reports-range-header"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -553,9 +564,11 @@ export default function ReportesPage() {
                 gap: 12,
               }}
             >
-              <div style={{ fontSize: 14, fontWeight: 700 }}>Top por rango de fechas</div>
+              <div className="reports-card-title" style={{ fontSize: 14, fontWeight: 700 }}>
+                Top por rango de fechas
+              </div>
 
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="reports-date-filters" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <input
                   type="date"
                   value={from}
@@ -577,73 +590,121 @@ export default function ReportesPage() {
             {rangeLoading ? (
               <div className="skeleton" style={{ height: 180 }} />
             ) : topRange.length > 0 ? (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Producto</th>
-                      <th>Vendido</th>
-                      <th>Venta bruta</th>
-                      <th>Cobrado</th>
-                      <th>Pendiente CC</th>
-                    </tr>
-                  </thead>
+              <>
+                <div className="table-wrap reports-desktop-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Producto</th>
+                        <th>Vendido</th>
+                        <th>Venta bruta</th>
+                        <th>Cobrado</th>
+                        <th>Pendiente CC</th>
+                      </tr>
+                    </thead>
 
-                  <tbody>
-                    {topRange.map((p, i) => (
-                      <tr key={`${p.productId ?? p.name}-${i}`}>
-                        <td>
-                          <span
+                    <tbody>
+                      {topRange.map((p, i) => (
+                        <tr key={`${p.productId ?? p.name}-${i}`}>
+                          <td>
+                            <span
+                              style={{
+                                fontFamily: 'var(--mono)',
+                                fontSize: 13,
+                                color: i < 3 ? 'var(--accent)' : 'var(--text3)',
+                                fontWeight: 700,
+                              }}
+                            >
+                              #{i + 1}
+                            </span>
+                          </td>
+
+                          <td style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</td>
+
+                          <td>
+                            <span style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>
+                              {p.totalSoldLabel ?? p.totalSold}
+                            </span>
+                          </td>
+
+                          <td style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>
+                            {fmt(p.grossRevenue ?? p.totalRevenue)}
+                          </td>
+
+                          <td
                             style={{
                               fontFamily: 'var(--mono)',
-                              fontSize: 13,
-                              color: i < 3 ? 'var(--accent)' : 'var(--text3)',
                               fontWeight: 700,
+                              color: 'var(--accent)',
+                            }}
+                          >
+                            {fmt(p.collectedRevenue ?? 0)}
+                          </td>
+
+                          <td
+                            style={{
+                              fontFamily: 'var(--mono)',
+                              fontWeight: 700,
+                              color: n0(p.pendingRevenue) > 0 ? '#a78bfa' : 'var(--text3)',
+                            }}
+                          >
+                            {fmt(p.pendingRevenue ?? 0)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="reports-mobile-list">
+                  {topRange.map((p, i) => (
+                    <article className="reports-mobile-item" key={`${p.productId ?? p.name}-mobile-${i}`}>
+                      <div className="reports-mobile-head">
+                        <div>
+                          <span
+                            className="reports-mobile-rank"
+                            style={{
+                              color: i < 3 ? 'var(--accent)' : 'var(--text3)',
                             }}
                           >
                             #{i + 1}
                           </span>
-                        </td>
 
-                        <td style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</td>
+                          <h3>{p.name}</h3>
+                        </div>
 
-                        <td>
-                          <span style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>
-                            {p.totalSoldLabel ?? p.totalSold}
-                          </span>
-                        </td>
+                        <span className="badge badge-gray">{p.totalSoldLabel ?? p.totalSold}</span>
+                      </div>
 
-                        <td style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>
-                          {fmt(p.grossRevenue ?? p.totalRevenue)}
-                        </td>
+                      <div className="reports-mobile-data">
+                        <div>
+                          <small>Venta bruta</small>
+                          <strong>{fmt(p.grossRevenue ?? p.totalRevenue)}</strong>
+                        </div>
 
-                        <td
-                          style={{
-                            fontFamily: 'var(--mono)',
-                            fontWeight: 700,
-                            color: 'var(--accent)',
-                          }}
-                        >
-                          {fmt(p.collectedRevenue ?? 0)}
-                        </td>
+                        <div>
+                          <small>Cobrado</small>
+                          <strong className="reports-accent">{fmt(p.collectedRevenue ?? 0)}</strong>
+                        </div>
 
-                        <td
-                          style={{
-                            fontFamily: 'var(--mono)',
-                            fontWeight: 700,
-                            color: n0(p.pendingRevenue) > 0 ? '#a78bfa' : 'var(--text3)',
-                          }}
-                        >
-                          {fmt(p.pendingRevenue ?? 0)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        <div>
+                          <small>Pendiente CC</small>
+                          <strong
+                            style={{
+                              color: n0(p.pendingRevenue) > 0 ? '#a78bfa' : 'var(--text3)',
+                            }}
+                          >
+                            {fmt(p.pendingRevenue ?? 0)}
+                          </strong>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </>
             ) : (
-              <div className="empty-state">
+              <div className="empty-state reports-empty-state">
                 <TrendingUp size={36} />
                 <p>Sin datos para el rango seleccionado</p>
               </div>
@@ -651,6 +712,240 @@ export default function ReportesPage() {
           </div>
         </>
       )}
+
+      <style jsx>{`
+        .reports-mobile-list {
+          display: none;
+        }
+
+        @media (max-width: 1024px) {
+          .reports-stats-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+
+          .reports-charts-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .reports-loading-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .reports-stats-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+            margin-bottom: 16px !important;
+          }
+
+          .reports-stat-card {
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .reports-stat-value {
+            font-size: 20px !important;
+            line-height: 1.2;
+            overflow-wrap: anywhere;
+          }
+
+          .reports-charts-grid {
+            gap: 14px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .reports-card {
+            padding: 14px !important;
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .reports-card-title {
+            font-size: 14px !important;
+            margin-bottom: 14px !important;
+            line-height: 1.3;
+          }
+
+          .reports-bar-chart-wrap {
+            width: 100%;
+            height: 260px;
+            overflow: hidden;
+          }
+
+          .reports-pie-chart-wrap {
+            width: 100%;
+            height: 170px;
+            overflow: hidden;
+          }
+
+          .reports-pie-list {
+            gap: 8px !important;
+          }
+
+          .reports-pie-item {
+            border-radius: 12px;
+            background: var(--surface2);
+            padding: 8px 10px;
+            min-width: 0;
+          }
+
+          .reports-pie-item span:nth-child(2) {
+            min-width: 0;
+          }
+
+          .reports-range-card {
+            margin-top: 0;
+          }
+
+          .reports-range-header {
+            align-items: stretch !important;
+            gap: 12px !important;
+          }
+
+          .reports-date-filters {
+            width: 100%;
+            display: grid !important;
+            grid-template-columns: 1fr;
+            gap: 8px !important;
+          }
+
+          .reports-date-filters input {
+            width: 100% !important;
+          }
+
+          .reports-date-filters span {
+            text-align: center;
+          }
+
+          .reports-desktop-table {
+            display: none;
+          }
+
+          .reports-mobile-list {
+            display: grid;
+            gap: 10px;
+          }
+
+          .reports-mobile-item {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface2);
+            padding: 12px;
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+          }
+
+          .reports-mobile-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .reports-mobile-head > div {
+            min-width: 0;
+            display: grid;
+            gap: 5px;
+          }
+
+          .reports-mobile-rank {
+            font-family: var(--mono);
+            font-size: 12px;
+            font-weight: 900;
+          }
+
+          .reports-mobile-head h3 {
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1.25;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .reports-mobile-head .badge {
+            flex-shrink: 0;
+          }
+
+          .reports-mobile-data {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .reports-mobile-data > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+            min-width: 0;
+          }
+
+          .reports-mobile-data small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .reports-mobile-data strong {
+            font-family: var(--mono);
+            font-size: 12px;
+            text-align: right;
+            overflow-wrap: anywhere;
+          }
+
+          .reports-accent {
+            color: var(--accent);
+          }
+
+          .reports-empty-state {
+            min-height: 170px;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .reports-card {
+            padding: 12px !important;
+            border-radius: 16px;
+          }
+
+          .reports-mobile-item {
+            padding: 10px;
+            border-radius: 14px;
+          }
+
+          .reports-mobile-head {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .reports-mobile-head h3 {
+            white-space: normal;
+          }
+
+          .reports-mobile-head .badge {
+            width: fit-content;
+          }
+
+          .reports-mobile-data > div {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+          }
+
+          .reports-mobile-data strong {
+            text-align: left;
+          }
+        }
+      `}</style>
     </AppLayout>
   );
 }

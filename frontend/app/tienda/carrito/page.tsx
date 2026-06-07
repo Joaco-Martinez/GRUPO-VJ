@@ -1101,6 +1101,355 @@ export default function TiendaCarritoPage() {
             font-size: 28px;
           }
         }
+
+        @media (max-width: 768px) {
+          .cart-page {
+            overflow-x: hidden;
+          }
+
+          .cart-header {
+            position: sticky;
+            top: 0;
+          }
+
+          .cart-header-inner {
+            padding: 12px 14px !important;
+            gap: 10px;
+          }
+
+          .brand {
+            flex: 1;
+            min-width: 0;
+          }
+
+          .brand-info {
+            min-width: 0;
+          }
+
+          .brand-name {
+            max-width: 170px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .info-bar-inner {
+            padding: 9px 14px !important;
+          }
+
+          .info-item {
+            align-items: flex-start;
+            line-height: 1.35;
+          }
+
+          .info-item svg {
+            margin-top: 2px;
+            flex-shrink: 0;
+          }
+
+          .cart-main {
+            padding: 18px 14px 92px !important;
+          }
+
+          .page-head {
+            margin-bottom: 16px;
+            gap: 12px;
+          }
+
+          .page-title {
+            font-size: 32px !important;
+            letter-spacing: -0.05em;
+          }
+
+          .page-subtitle {
+            font-size: 13px;
+            line-height: 1.45;
+            max-width: 100%;
+          }
+
+          .head-chips {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+          }
+
+          .cart-count-chip,
+          .price-chip {
+            width: 100%;
+            height: 38px;
+            justify-content: center;
+            padding: 0 10px;
+            font-size: 12px;
+          }
+
+          .cart-layout {
+            gap: 14px !important;
+          }
+
+          .items-card {
+            border-radius: 20px !important;
+            overflow: hidden;
+          }
+
+          .cart-row {
+            padding: 14px !important;
+            gap: 12px !important;
+            background: var(--white);
+          }
+
+          .cart-row + .cart-row {
+            border-top: 1px solid var(--line);
+          }
+
+          .product-info {
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 12px;
+          }
+
+          .row-name {
+            font-size: 14px;
+            line-height: 1.35;
+            white-space: normal !important;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+          }
+
+          .row-unit-price {
+            font-size: 12px;
+            line-height: 1.4;
+          }
+
+          .mobile-row-actions {
+            display: grid !important;
+            grid-template-columns: 1fr auto;
+            grid-template-areas:
+              "qty remove"
+              "subtotal subtotal";
+            align-items: center;
+            gap: 10px !important;
+          }
+
+          .qty-control {
+            grid-area: qty;
+            width: 100%;
+            max-width: 156px;
+            height: 44px;
+          }
+
+          .qty-btn {
+            width: 42px;
+          }
+
+          .qty-input {
+            width: 56px;
+          }
+
+          .row-subtotal {
+            grid-area: subtotal;
+            width: 100%;
+            border-radius: 14px;
+            background: #f9fafb;
+            border: 1px solid var(--line);
+            padding: 11px 12px;
+            text-align: right;
+            font-size: 20px !important;
+          }
+
+          .btn-remove {
+            grid-area: remove;
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            background: var(--red-soft);
+            color: var(--red);
+          }
+
+          .cart-summary {
+            border-radius: 20px !important;
+            padding: 16px !important;
+            box-shadow: var(--shadow-sm);
+          }
+
+          .summary-heading {
+            margin-bottom: 14px;
+          }
+
+          .summary-title {
+            font-size: 18px;
+          }
+
+          .summary-price-label {
+            height: 28px;
+            font-size: 10px;
+          }
+
+          .summary-list {
+            max-height: 210px;
+            gap: 8px;
+          }
+
+          .summary-row {
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 12px;
+          }
+
+          .summary-name {
+            white-space: normal;
+            line-height: 1.35;
+          }
+
+          .summary-total {
+            padding: 14px 0;
+          }
+
+          .summary-total-amount {
+            font-size: 26px !important;
+            letter-spacing: -0.045em;
+          }
+
+          .notes-area {
+            min-height: 86px;
+            border-radius: 16px;
+          }
+
+          .btn-checkout {
+            height: 50px;
+            font-size: 13px;
+          }
+
+          .secure-note {
+            border-radius: 16px;
+          }
+
+          .empty-cart {
+            padding: 54px 18px !important;
+            border-radius: 22px !important;
+          }
+
+          .empty-cart h2 {
+            font-size: 22px;
+          }
+
+          .empty-cart p {
+            font-size: 13px;
+          }
+
+          .btn-go-shop {
+            width: 100%;
+          }
+
+          .modal-overlay {
+            padding: 12px;
+            align-items: flex-end;
+          }
+
+          .modal {
+            max-width: none;
+            width: 100%;
+            border-radius: 22px 22px 18px 18px;
+          }
+
+          .modal-header,
+          .modal-body,
+          .modal-footer {
+            padding-left: 16px;
+            padding-right: 16px;
+          }
+
+          .modal-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .modal-secondary,
+          .modal-primary {
+            width: 100%;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .cart-header-inner {
+            padding: 10px 12px !important;
+          }
+
+          .brand-mark {
+            width: 44px !important;
+            height: 44px !important;
+            border-radius: 15px !important;
+          }
+
+          .brand-logo {
+            width: 31px !important;
+          }
+
+          .brand-name {
+            max-width: 145px;
+            font-size: 13px !important;
+          }
+
+          .info-bar-inner {
+            padding: 8px 12px !important;
+          }
+
+          .cart-main {
+            padding: 16px 12px 86px !important;
+          }
+
+          .page-title {
+            font-size: 30px !important;
+          }
+
+          .head-chips {
+            grid-template-columns: 1fr;
+          }
+
+          .cart-count-chip,
+          .price-chip {
+            justify-content: flex-start;
+          }
+
+          .cart-row {
+            padding: 12px !important;
+          }
+
+          .mobile-row-actions {
+            grid-template-columns: 1fr 44px;
+          }
+
+          .qty-control {
+            max-width: none;
+          }
+
+          .row-subtotal {
+            text-align: left;
+            font-size: 18px !important;
+          }
+
+          .cart-summary {
+            padding: 14px !important;
+          }
+
+          .summary-heading {
+            gap: 8px;
+          }
+
+          .summary-total {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 6px;
+          }
+
+          .summary-total-amount {
+            font-size: 25px !important;
+          }
+
+          .modal-message-row {
+            flex-direction: column;
+          }
+        }
+
       `}</style>
 
       <div className="cart-page">

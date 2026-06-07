@@ -1,1385 +1,2019 @@
-"use client";
+/* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+'use client';
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ElementType, ReactNode } from "react";
-import AppLayout from "@/components/AppLayout";
-import api from "@/lib/api";
-import toast from "react-hot-toast";
+import { useEffect, useMemo, useState } from 'react';
+import AppLayout from '@/components/AppLayout';
+import api from '@/lib/api';
+import type { FinanceEntry, Product, Sale } from '@/types';
 import {
-  AlertCircle,
-  Building2,
-  CheckCircle2,
-  Edit2,
-  HelpCircle,
-  Info,
-  Loader2,
-  MapPin,
   Plus,
-  RefreshCcw,
-  Save,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  X,
+  Trophy,
+  AlertTriangle,
+  Tags,
+  CalendarDays,
+  Filter,
+  RotateCcw,
+  PackageCheck,
+  HandCoins,
+  ReceiptText,
+  Percent,
   Search,
-  Star,
-  Trash2,
-  Warehouse,
-  XCircle,
-} from "lucide-react";
+  ArrowUpDown,
+  BadgeDollarSign,
+} from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 
-type BusinessLocationType = "BRANCH" | "WAREHOUSE" | "STORE";
+const fmt = (n: number) =>
+  new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
 
-type BusinessLocation = {
+const pct = (n: number) => `${Number(n || 0).toFixed(1)}%`;
+
+const MOVEMENTS_PAGE_SIZE = 5;
+
+const FINANCE_CATEGORIES = [
+  { value: 'VENTA', label: 'Venta' },
+  { value: 'COBRANZA', label: 'Cobranza' },
+  { value: 'AlquilerL1', label: 'Alquiler Local 1' },
+  { value: 'AlquilerF1', label: 'Alquiler Fábrica / Fondo 1' },
+  { value: 'Alarma', label: 'Alarma' },
+  { value: 'Sueldos', label: 'Sueldos' },
+  { value: 'MateriaPrima', label: 'Materia prima' },
+  { value: 'Impuestos', label: 'Impuestos' },
+  { value: 'VEP', label: 'VEP' },
+  { value: 'Contadora', label: 'Contadora' },
+  { value: 'Arca', label: 'ARCA' },
+  { value: 'Eenvios', label: 'Envíos' },
+  { value: 'Publicidad', label: 'Publicidad' },
+  { value: 'Otro', label: 'Otro' },
+];
+
+const categoryLabel = (value?: string | null) => {
+  if (!value) return '—';
+  return FINANCE_CATEGORIES.find(c => c.value === value)?.label ?? value;
+};
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+const firstDayOfCurrentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+};
+
+const getPartsFromDate = (date: string) => {
+  const [year, month, day] = date.split('-').map(Number);
+
+  return {
+    year,
+    month,
+    day,
+  };
+};
+
+const startOfDay = (date: string) => new Date(`${date}T00:00:00.000`);
+const endOfDay = (date: string) => new Date(`${date}T23:59:59.999`);
+
+type StatsState = {
+  week: number;
+  month: number;
+  year: number;
+};
+
+type AnyObj = Record<string, any>;
+
+type FinanceForm = {
+  type: 'INGRESO' | 'EGRESO';
+  amount: string;
+  description: string;
+  category: string;
+  date: string;
+};
+
+type MarginRow = {
   id: string;
   name: string;
-  type: BusinessLocationType;
-
-  addressStreet?: string | null;
-  addressNumber?: string | null;
-  addressCity?: string | null;
-  addressProvince?: string | null;
-  addressPostalCode?: string | null;
-  addressNotes?: string | null;
-
-  latitude?: number | null;
-  longitude?: number | null;
-
-  isDefault: boolean;
-  isActive: boolean;
-
-  createdAt: string;
-  updatedAt: string;
+  sku?: string | null;
+  saleUnit: Product['saleUnit'];
+  category: string;
+  cost: number;
+  finalPrice: number;
+  clientPrice: number;
+  wholesalePrice: number;
+  finalProfit: number;
+  clientProfit: number;
+  wholesaleProfit: number;
+  finalMargin: number;
+  clientMargin: number;
+  wholesaleMargin: number;
 };
 
-type ApiListResponse =
-  | {
-      ok: boolean;
-      locations: BusinessLocation[];
-    }
-  | BusinessLocation[];
+type MarginSort =
+  | 'name'
+  | 'cost'
+  | 'finalMargin'
+  | 'clientMargin'
+  | 'wholesaleMargin'
+  | 'finalProfit'
+  | 'clientProfit'
+  | 'wholesaleProfit';
 
-type ConfirmState = {
-  title: string;
-  message: string;
-  confirmText?: string;
-  danger?: boolean;
-  onConfirm: () => Promise<void> | void;
-} | null;
-
-type LocationForm = {
-  name: string;
-  type: BusinessLocationType;
-
-  addressStreet: string;
-  addressNumber: string;
-  addressCity: string;
-  addressProvince: string;
-  addressPostalCode: string;
-  addressNotes: string;
-
-  latitude: string;
-  longitude: string;
-
-  isDefault: boolean;
-  isActive: boolean;
-};
-
-const emptyForm: LocationForm = {
-  name: "",
-  type: "WAREHOUSE",
-
-  addressStreet: "",
-  addressNumber: "",
-  addressCity: "",
-  addressProvince: "",
-  addressPostalCode: "",
-  addressNotes: "",
-
-  latitude: "",
-  longitude: "",
-
-  isDefault: false,
-  isActive: true,
-};
-
-function getErrorMessage(error: unknown, fallback: string) {
-  const e = error as {
-    response?: {
-      data?: {
-        message?: string;
-        error?: string;
-      };
-    };
-  };
-
-  return e?.response?.data?.message ?? e?.response?.data?.error ?? fallback;
-}
-
-function normalizeArray<T>(value: unknown): T[] {
-  if (Array.isArray(value)) return value as T[];
-
-  if (
-    value &&
-    typeof value === "object" &&
-    "locations" in value &&
-    Array.isArray((value as { locations?: unknown }).locations)
-  ) {
-    return (value as { locations: T[] }).locations;
-  }
-
-  if (
-    value &&
-    typeof value === "object" &&
-    "content" in value &&
-    Array.isArray((value as { content?: unknown }).content)
-  ) {
-    return (value as { content: T[] }).content;
-  }
-
+const normalizeArray = <T,>(data: any): T[] => {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.content)) return data.content;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.results)) return data.results;
   return [];
-}
+};
 
-async function fetchLocations() {
-  const res = await api.get<ApiListResponse>("/business-locations");
-  return normalizeArray<BusinessLocation>(res.data);
-}
+const normalizeAmount = (data: any): number => {
+  if (typeof data === 'number') return data;
 
-function typeLabel(type: BusinessLocationType) {
-  if (type === "WAREHOUSE") return "Depósito";
-  if (type === "STORE") return "Local";
-  return "Sucursal";
-}
+  if (typeof data?.total === 'number') return data.total;
+  if (typeof data?.amount === 'number') return data.amount;
+  if (typeof data?.income === 'number') return data.income;
+  if (typeof data?.totalIncome === 'number') return data.totalIncome;
+  if (typeof data?._sum?.amount === 'number') return data._sum.amount;
 
-function typeDescription(type: BusinessLocationType) {
-  if (type === "WAREHOUSE")
-    return "Lugar principal de stock o guardado de mercadería.";
-  if (type === "STORE") return "Local de atención o punto de venta físico.";
-  return "Sucursal secundaria o punto operativo.";
-}
+  return 0;
+};
 
-function typeIcon(type: BusinessLocationType): ElementType {
-  if (type === "WAREHOUSE") return Warehouse;
-  if (type === "STORE") return Building2;
-  return MapPin;
-}
+const getProductName = (p: AnyObj) =>
+  p.name ??
+  p.productName ??
+  p.productNameSnapshot ??
+  p.product?.name ??
+  p.product?.title ??
+  p.title ??
+  'Producto';
 
-function buildAddress(location: BusinessLocation) {
-  const line1 = [location.addressStreet, location.addressNumber]
-    .filter(Boolean)
-    .join(" ");
-  const line2 = [
-    location.addressCity,
-    location.addressProvince,
-    location.addressPostalCode,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  if (!line1 && !line2) return "Sin dirección cargada";
-  if (line1 && line2) return `${line1} — ${line2}`;
-  return line1 || line2;
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "—";
-
-  return new Intl.DateTimeFormat("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function cleanPayload(form: LocationForm) {
-  return {
-    name: form.name.trim(),
-    type: form.type,
-
-    addressStreet: form.addressStreet.trim() || null,
-    addressNumber: form.addressNumber.trim() || null,
-    addressCity: form.addressCity.trim() || null,
-    addressProvince: form.addressProvince.trim() || null,
-    addressPostalCode: form.addressPostalCode.trim() || null,
-    addressNotes: form.addressNotes.trim() || null,
-
-    latitude: form.latitude.trim() === "" ? null : Number(form.latitude),
-    longitude: form.longitude.trim() === "" ? null : Number(form.longitude),
-
-    isDefault: form.isDefault,
-    isActive: form.isActive,
-  };
-}
-
-function FieldHelp({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: 6,
-        alignItems: "flex-start",
-        marginTop: 6,
-      }}
-    >
-      <Info
-        size={13}
-        style={{ color: "var(--text3)", marginTop: 1, flexShrink: 0 }}
-      />
-      <p style={{ color: "var(--text3)", fontSize: 12, lineHeight: 1.45 }}>
-        {children}
-      </p>
-    </div>
+const getProductQty = (p: AnyObj) =>
+  Number(
+    p.quantity ??
+      p.totalSold ??
+      p.totalQuantity ??
+      p.sold ??
+      p._sum?.quantity ??
+      p._sum?.quantityKg ??
+      0
   );
-}
 
-function InputField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  help,
-  type = "text",
-  optional = false,
-  disabled = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  help?: ReactNode;
-  type?: string;
-  optional?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <label style={{ display: "block" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          marginBottom: 7,
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 900, color: "var(--text2)" }}>
-          {label}
-        </span>
+const getItemQuantity = (item: AnyObj) => {
+  const quantityKg = Number(item.quantityKg || 0);
+  if (quantityKg > 0) return quantityKg;
 
-        {optional && (
-          <span
-            className="badge badge-gray"
-            style={{ fontSize: 10, padding: "3px 7px" }}
-          >
-            OPCIONAL
-          </span>
-        )}
-      </div>
+  const quantity = Number(item.quantity || 0);
+  return quantity > 0 ? quantity : 1;
+};
 
-      <input
-        value={value}
-        type={type}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="input"
-      />
+const getSaleItemCost = (item: AnyObj) => {
+  const qty = getItemQuantity(item);
+  return Number(item.purchasePriceSnapshot || 0) * qty;
+};
 
-      {help && <FieldHelp>{help}</FieldHelp>}
-    </label>
-  );
-}
+const getSaleCost = (sale: Sale) => {
+  return (sale.items || []).reduce((acc, item) => {
+    return acc + getSaleItemCost(item as AnyObj);
+  }, 0);
+};
 
-function TextAreaField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  help,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  help?: ReactNode;
-}) {
-  return (
-    <label style={{ display: "block" }}>
-      <div style={{ marginBottom: 7 }}>
-        <span style={{ fontSize: 12, fontWeight: 900, color: "var(--text2)" }}>
-          {label}
-        </span>
-      </div>
+const getSaleProfit = (sale: Sale) => {
+  if (typeof sale.grossProfit === 'number') {
+    return Number(sale.grossProfit || 0);
+  }
 
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={3}
-        className="input"
-        style={{
-          height: "auto",
-          minHeight: 88,
-          resize: "vertical",
-          paddingTop: 12,
-        }}
-      />
+  const total = Number(sale.total || 0);
+  const cost = getSaleCost(sale);
 
-      {help && <FieldHelp>{help}</FieldHelp>}
-    </label>
-  );
-}
+  return total - cost;
+};
 
-function SectionCard({
-  title,
-  subtitle,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  icon: ElementType;
-  children: ReactNode;
-}) {
-  return (
-    <section className="card" style={{ padding: 22 }}>
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 22,
-        }}
-      >
-        <span
-          style={{
-            width: 42,
-            height: 42,
-            borderRadius: 12,
-            background: "var(--surface2)",
-            border: "1px solid var(--border)",
-            display: "grid",
-            placeItems: "center",
-            flexShrink: 0,
-          }}
-        >
-          <Icon size={19} />
-        </span>
+const getSaleDate = (sale: Sale) => {
+  return new Date(sale.createdAt);
+};
 
-        <div>
-          <h3 style={{ fontSize: 15, fontWeight: 900 }}>{title}</h3>
-          <p style={{ color: "var(--text2)", fontSize: 13, marginTop: 3 }}>
-            {subtitle}
-          </p>
-        </div>
-      </div>
 
-      {children}
-    </section>
-  );
-}
+const getProductCategoryName = (product: Product) => {
+  if (!product.category) return 'Sin categoría';
+  if (typeof product.category === 'string') return product.category;
+  return product.category.name || 'Sin categoría';
+};
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  help,
-  badge,
-}: {
-  icon: ElementType;
-  label: string;
-  value: string | number;
-  help: string;
-  badge?: ReactNode;
-}) {
-  return (
-    <div className="card" style={{ padding: 18 }}>
-      <div
-        style={{ display: "flex", justifyContent: "space-between", gap: 14 }}
-      >
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              display: "grid",
-              placeItems: "center",
-              background: "var(--surface2)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            <Icon size={18} />
-          </span>
+const getProductCost = (product: Product) => Number(product.purchasePrice || 0);
 
-          <div>
-            <p style={{ color: "var(--text2)", fontSize: 12, fontWeight: 800 }}>
-              {label}
-            </p>
-            <p
-              style={{
-                color: "var(--text)",
-                fontSize: 22,
-                fontWeight: 950,
-                marginTop: 2,
-              }}
-            >
-              {value}
-            </p>
-          </div>
-        </div>
+const getProductFinalPrice = (product: Product) => {
+  if (product.saleUnit === 'KG') return Number(product.pricePerKg ?? product.price ?? 0);
+  return Number(product.price || 0);
+};
 
-        {badge}
-      </div>
+const getProductClientPrice = (product: Product) => {
+  if (product.saleUnit === 'KG') {
+    return Number(product.clientPricePerKg ?? product.clientPrice ?? product.pricePerKg ?? product.price ?? 0);
+  }
+  return Number(product.clientPrice ?? product.price ?? 0);
+};
 
-      <p
-        style={{
-          color: "var(--text3)",
-          fontSize: 12,
-          marginTop: 12,
-          lineHeight: 1.45,
-        }}
-      >
-        {help}
-      </p>
-    </div>
-  );
-}
+const getProductWholesalePrice = (product: Product) => {
+  if (product.saleUnit === 'KG') {
+    return Number(product.wholesalePricePerKg ?? product.wholesalePrice ?? product.pricePerKg ?? product.price ?? 0);
+  }
+  return Number(product.wholesalePrice ?? product.price ?? 0);
+};
 
-function ToggleBox({
-  title,
-  subtitle,
-  checked,
-  onChange,
-  icon: Icon,
-}: {
-  title: string;
-  subtitle: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  icon: ElementType;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      style={{
-        width: "100%",
-        textAlign: "left",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 14,
-        padding: 14,
-        borderRadius: 16,
-        border: checked
-          ? "1px solid rgba(0,229,160,0.34)"
-          : "1px solid var(--border)",
-        background: checked ? "rgba(0,229,160,0.08)" : "var(--surface2)",
-      }}
-    >
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <span
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 11,
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            display: "grid",
-            placeItems: "center",
-            flexShrink: 0,
-          }}
-        >
-          <Icon size={16} />
-        </span>
+const getMargin = (price: number, cost: number) => {
+  if (!price || price <= 0) return 0;
+  return ((price - cost) / price) * 100;
+};
 
-        <div>
-          <p style={{ fontSize: 13, fontWeight: 900 }}>{title}</p>
-          <p style={{ color: "var(--text3)", fontSize: 12, marginTop: 2 }}>
-            {subtitle}
-          </p>
-        </div>
-      </div>
+const getProfitColor = (value: number) => {
+  if (value > 0) return 'var(--accent)';
+  if (value < 0) return 'var(--danger)';
+  return 'var(--text2)';
+};
 
-      <span className={`badge ${checked ? "badge-green" : "badge-gray"}`}>
-        {checked ? "SÍ" : "NO"}
-      </span>
-    </button>
-  );
-}
-
-export default function BusinessLocationsPage() {
-  const [locations, setLocations] = useState<BusinessLocation[]>([]);
+export default function FinanzasPage() {
+  const [entries, setEntries] = useState<FinanceEntry[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [search, setSearch] = useState("");
-  const [showInactive, setShowInactive] = useState(true);
+  const [dateFrom, setDateFrom] = useState(firstDayOfCurrentMonth());
+  const [dateTo, setDateTo] = useState(today());
 
-  const [form, setForm] = useState<LocationForm>(emptyForm);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [marginSearch, setMarginSearch] = useState('');
+  const [marginSort, setMarginSort] = useState<MarginSort>('finalMargin');
+  const [movementsPage, setMovementsPage] = useState(1);
 
-  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
-  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [stats, setStats] = useState<StatsState>({
+    week: 0,
+    month: 0,
+    year: 0,
+  });
 
-  const loadLocations = useCallback(async (showSuccess = false) => {
+  const [categoryStats, setCategoryStats] = useState<AnyObj[]>([]);
+  const [topProducts, setTopProducts] = useState<AnyObj[]>([]);
+  const [worstProducts, setWorstProducts] = useState<AnyObj[]>([]);
+
+  const [form, setForm] = useState<FinanceForm>({
+    type: 'INGRESO',
+    amount: '',
+    description: '',
+    category: 'Otro',
+    date: today(),
+  });
+
+  const safeGet = async <T,>(
+    url: string,
+    fallback: T,
+    params?: AnyObj
+  ): Promise<T> => {
     try {
-      setLoading(true);
+      const res = await api.get(url, { params });
+      return res.data;
+    } catch {
+      return fallback;
+    }
+  };
 
-      const data = await fetchLocations();
-      setLocations(data);
+  const load = async () => {
+    setLoading(true);
 
-      if (showSuccess) {
-        toast.success("Ubicaciones actualizadas");
-      }
-    } catch (err) {
-      toast.error(
-        getErrorMessage(err, "No se pudieron cargar las ubicaciones."),
-      );
+    try {
+      const selected = getPartsFromDate(dateTo);
+
+      const [
+        financeData,
+        salesData,
+        productsData,
+        weekData,
+        monthData,
+        yearData,
+        categoryData,
+        topProductsData,
+        worstProductsData,
+      ] = await Promise.all([
+        safeGet<any>('/finance', []),
+        safeGet<any>('/sales', []),
+        safeGet<any>('/products', []),
+        safeGet<any>('/finance/income/week', 0, {
+          year: selected.year,
+          month: selected.month,
+          day: selected.day,
+        }),
+        safeGet<any>('/finance/income/month', 0, {
+          year: selected.year,
+          month: selected.month,
+        }),
+        safeGet<any>('/finance/income/year', 0, {
+          year: selected.year,
+        }),
+        safeGet<any>('/finance/income/category', [], {
+          startDate: dateFrom,
+          endDate: dateTo,
+        }),
+        safeGet<any>('/finance/products/top-range', [], {
+          startDate: dateFrom,
+          endDate: dateTo,
+          limit: 5,
+        }),
+        safeGet<any>('/finance/products/worst-range', [], {
+          startDate: dateFrom,
+          endDate: dateTo,
+          limit: 5,
+        }),
+      ]);
+
+      setEntries(normalizeArray<FinanceEntry>(financeData));
+      setSales(normalizeArray<Sale>(salesData));
+      setProducts(normalizeArray<Product>(productsData));
+
+      setStats({
+        week: normalizeAmount(weekData),
+        month: normalizeAmount(monthData),
+        year: normalizeAmount(yearData),
+      });
+
+      setCategoryStats(normalizeArray<AnyObj>(categoryData));
+      setTopProducts(normalizeArray<AnyObj>(topProductsData));
+      setWorstProducts(normalizeArray<AnyObj>(worstProductsData));
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    let alive = true;
-
-    fetchLocations()
-      .then((data) => {
-        if (!alive) return;
-        setLocations(data);
-      })
-      .catch((err) => {
-        console.error(err);
-        if (!alive) return;
-        toast.error(
-          getErrorMessage(err, "No se pudieron cargar las ubicaciones."),
-        );
-      })
-      .finally(() => {
-        if (!alive) return;
-        setLoading(false);
-      });
-
-    return () => {
-      alive = false;
-    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredLocations = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const filteredEntries = useMemo(() => {
+    const from = startOfDay(dateFrom);
+    const to = endOfDay(dateTo);
 
-    return locations.filter((location) => {
-      const matchesActive = showInactive || location.isActive;
-
-      const matchesSearch =
-        !q ||
-        location.name.toLowerCase().includes(q) ||
-        typeLabel(location.type).toLowerCase().includes(q) ||
-        buildAddress(location).toLowerCase().includes(q);
-
-      return matchesActive && matchesSearch;
+    return entries.filter(e => {
+      const date = new Date(e.date);
+      return date >= from && date <= to;
     });
-  }, [locations, search, showInactive]);
+  }, [entries, dateFrom, dateTo]);
 
-  const defaultLocation = useMemo(
-    () => locations.find((location) => location.isDefault),
-    [locations],
+  const filteredSales = useMemo(() => {
+    const from = startOfDay(dateFrom);
+    const to = endOfDay(dateTo);
+
+    return sales.filter(sale => {
+      const date = getSaleDate(sale);
+      return date >= from && date <= to && sale.status !== 'CANCELLED';
+    });
+  }, [sales, dateFrom, dateTo]);
+
+  useEffect(() => {
+    setMovementsPage(1);
+  }, [dateFrom, dateTo, entries.length]);
+
+  const recentEntries = useMemo(() => {
+    return [...filteredEntries].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+  }, [filteredEntries]);
+
+  const totalMovementPages = Math.max(1, Math.ceil(recentEntries.length / MOVEMENTS_PAGE_SIZE));
+  const currentMovementPage = Math.min(movementsPage, totalMovementPages);
+
+  const paginatedEntries = useMemo(() => {
+    const start = (currentMovementPage - 1) * MOVEMENTS_PAGE_SIZE;
+    return recentEntries.slice(start, start + MOVEMENTS_PAGE_SIZE);
+  }, [recentEntries, currentMovementPage]);
+
+
+  const marginRows = useMemo<MarginRow[]>(() => {
+    return products
+      .filter(product => product.isActive !== false)
+      .map(product => {
+        const cost = getProductCost(product);
+        const finalPrice = getProductFinalPrice(product);
+        const clientPrice = getProductClientPrice(product);
+        const wholesalePrice = getProductWholesalePrice(product);
+        const finalProfit = finalPrice - cost;
+        const clientProfit = clientPrice - cost;
+        const wholesaleProfit = wholesalePrice - cost;
+
+        return {
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          saleUnit: product.saleUnit,
+          category: getProductCategoryName(product),
+          cost,
+          finalPrice,
+          clientPrice,
+          wholesalePrice,
+          finalProfit,
+          clientProfit,
+          wholesaleProfit,
+          finalMargin: getMargin(finalPrice, cost),
+          clientMargin: getMargin(clientPrice, cost),
+          wholesaleMargin: getMargin(wholesalePrice, cost),
+        };
+      });
+  }, [products]);
+
+  const filteredMarginRows = useMemo(() => {
+    const q = marginSearch.trim().toLowerCase();
+    const rows = marginRows.filter(row => {
+      if (!q) return true;
+      return (
+        row.name.toLowerCase().includes(q) ||
+        String(row.sku || '').toLowerCase().includes(q) ||
+        row.category.toLowerCase().includes(q)
+      );
+    });
+
+    return [...rows].sort((a, b) => {
+      if (marginSort === 'name') return a.name.localeCompare(b.name);
+      return Number(b[marginSort] || 0) - Number(a[marginSort] || 0);
+    });
+  }, [marginRows, marginSearch, marginSort]);
+
+  const marginSummary = useMemo(() => {
+    const rowsWithCost = marginRows.filter(row => row.cost > 0);
+    if (!rowsWithCost.length) {
+      return { avgFinalMargin: 0, avgClientMargin: 0, avgWholesaleMargin: 0, productsWithoutCost: marginRows.length };
+    }
+
+    return {
+      avgFinalMargin: rowsWithCost.reduce((acc, row) => acc + row.finalMargin, 0) / rowsWithCost.length,
+      avgClientMargin: rowsWithCost.reduce((acc, row) => acc + row.clientMargin, 0) / rowsWithCost.length,
+      avgWholesaleMargin: rowsWithCost.reduce((acc, row) => acc + row.wholesaleMargin, 0) / rowsWithCost.length,
+      productsWithoutCost: marginRows.filter(row => row.cost <= 0).length,
+    };
+  }, [marginRows]);
+
+  const ingresos = useMemo(
+    () =>
+      filteredEntries
+        .filter(e => e.type === 'INGRESO')
+        .reduce((a, e) => a + Number(e.amount || 0), 0),
+    [filteredEntries]
   );
 
-  const activeCount = useMemo(
-    () => locations.filter((location) => location.isActive).length,
-    [locations],
+  const egresos = useMemo(
+    () =>
+      filteredEntries
+        .filter(e => e.type === 'EGRESO')
+        .reduce((a, e) => a + Number(e.amount || 0), 0),
+    [filteredEntries]
   );
 
-  function resetForm() {
-    setForm(emptyForm);
-    setEditingId(null);
-  }
+  const ventasFacturadas = useMemo(
+    () => filteredSales.reduce((acc, sale) => acc + Number(sale.total || 0), 0),
+    [filteredSales]
+  );
 
-  function startEdit(location: BusinessLocation) {
-    setEditingId(location.id);
+  const costoVendido = useMemo(
+    () => filteredSales.reduce((acc, sale) => acc + getSaleCost(sale), 0),
+    [filteredSales]
+  );
+
+  const utilidadBruta = useMemo(
+    () => filteredSales.reduce((acc, sale) => acc + getSaleProfit(sale), 0),
+    [filteredSales]
+  );
+
+  const margenBruto = ventasFacturadas > 0 ? (utilidadBruta / ventasFacturadas) * 100 : 0;
+
+  const balance = ingresos - egresos;
+  const resultadoEstimado = utilidadBruta - egresos;
+
+  const chartData = useMemo(() => {
+    const map: Record<
+      string,
+      { date: string; ingresos: number; egresos: number; utilidad: number }
+    > = {};
+
+    filteredEntries.forEach(e => {
+      const d = new Date(e.date).toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+      });
+
+      if (!map[d]) {
+        map[d] = {
+          date: d,
+          ingresos: 0,
+          egresos: 0,
+          utilidad: 0,
+        };
+      }
+
+      if (e.type === 'INGRESO') {
+        map[d].ingresos += Number(e.amount || 0);
+      } else {
+        map[d].egresos += Number(e.amount || 0);
+      }
+    });
+
+    filteredSales.forEach(sale => {
+      const d = getSaleDate(sale).toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+      });
+
+      if (!map[d]) {
+        map[d] = {
+          date: d,
+          ingresos: 0,
+          egresos: 0,
+          utilidad: 0,
+        };
+      }
+
+      map[d].utilidad += getSaleProfit(sale);
+    });
+
+    return Object.values(map);
+  }, [filteredEntries, filteredSales]);
+
+  const filteredWorstProducts = useMemo(() => {
+    const topNames = new Set(
+      topProducts.map(p => getProductName(p).toLowerCase().trim())
+    );
+
+    return worstProducts.filter(p => {
+      const name = getProductName(p).toLowerCase().trim();
+      return !topNames.has(name);
+    });
+  }, [topProducts, worstProducts]);
+
+  const field = (k: keyof FinanceForm, v: string) => {
+    setForm(p => ({
+      ...p,
+      [k]: v,
+    }));
+  };
+
+  const openCreate = () => {
     setForm({
-      name: location.name ?? "",
-      type: location.type ?? "WAREHOUSE",
-
-      addressStreet: location.addressStreet ?? "",
-      addressNumber: location.addressNumber ?? "",
-      addressCity: location.addressCity ?? "",
-      addressProvince: location.addressProvince ?? "",
-      addressPostalCode: location.addressPostalCode ?? "",
-      addressNotes: location.addressNotes ?? "",
-
-      latitude:
-        location.latitude === null || location.latitude === undefined
-          ? ""
-          : String(location.latitude),
-      longitude:
-        location.longitude === null || location.longitude === undefined
-          ? ""
-          : String(location.longitude),
-
-      isDefault: Boolean(location.isDefault),
-      isActive: Boolean(location.isActive),
+      type: 'INGRESO',
+      amount: '',
+      description: '',
+      category: 'Otro',
+      date: today(),
     });
 
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
+    setModal(true);
+  };
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  const resetDates = async () => {
+    setDateFrom(firstDayOfCurrentMonth());
+    setDateTo(today());
 
-    const payload = cleanPayload(form);
+    setTimeout(() => {
+      load();
+    }, 0);
+  };
 
-    if (!payload.name) {
-      toast.error("El nombre es obligatorio.");
+  const applyFilters = async () => {
+    if (!dateFrom || !dateTo) {
+      alert('Seleccioná desde y hasta');
       return;
     }
 
-    if (
-      payload.latitude !== null &&
-      (!Number.isFinite(payload.latitude) ||
-        payload.latitude < -90 ||
-        payload.latitude > 90)
-    ) {
-      toast.error("La latitud debe estar entre -90 y 90.");
+    if (new Date(dateFrom) > new Date(dateTo)) {
+      alert('La fecha desde no puede ser mayor a la fecha hasta');
       return;
     }
 
-    if (
-      payload.longitude !== null &&
-      (!Number.isFinite(payload.longitude) ||
-        payload.longitude < -180 ||
-        payload.longitude > 180)
-    ) {
-      toast.error("La longitud debe estar entre -180 y 180.");
+    await load();
+  };
+
+  const handleSave = async () => {
+    const amount = Number(form.amount);
+
+    if (!amount || amount <= 0) {
+      alert('Ingresá un importe válido');
+      return;
+    }
+
+    if (!form.description.trim()) {
+      alert('Ingresá una descripción');
       return;
     }
 
     setSaving(true);
 
-    const toastId = toast.loading(
-      editingId ? "Guardando ubicación..." : "Creando ubicación...",
-    );
-
     try {
-      if (editingId) {
-        await api.put(`/business-locations/${editingId}`, payload);
-        toast.success("Ubicación actualizada correctamente.", { id: toastId });
-      } else {
-        await api.post("/business-locations", payload);
-        toast.success("Ubicación creada correctamente.", { id: toastId });
-      }
-
-      resetForm();
-      await loadLocations();
-    } catch (err) {
-      toast.error(getErrorMessage(err, "No se pudo guardar la ubicación."), {
-        id: toastId,
+      await api.post('/finance', {
+        type: form.type,
+        amount,
+        description: form.description.trim(),
+        category: form.category || 'Otro',
+        date: `${form.date}T12:00:00.000Z`,
       });
+
+      setModal(false);
+      await load();
+    } catch (error: any) {
+      alert(error?.response?.data?.error || 'Error guardando el movimiento financiero');
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  async function handleSetDefault(id: string) {
-    try {
-      await api.patch(`/business-locations/${id}/default`);
-      toast.success("Ubicación predeterminada actualizada.");
-      await loadLocations();
-    } catch (err) {
-      toast.error(
-        getErrorMessage(err, "No se pudo marcar como predeterminada."),
-      );
-    }
-  }
-
-  async function handleDelete(location: BusinessLocation) {
-    setConfirmModal({
-      title: "Eliminar ubicación",
-      message: `¿Eliminar o desactivar "${location.name}"? Si tiene ventas asociadas, el sistema la va a desactivar.`,
-      confirmText: "Eliminar",
-      danger: true,
-      onConfirm: async () => {
-        const toastId = toast.loading("Eliminando ubicación...");
-
-        try {
-          await api.delete(`/business-locations/${location.id}`);
-
-          if (editingId === location.id) resetForm();
-
-          await loadLocations();
-          toast.success("Ubicación eliminada o desactivada correctamente.", {
-            id: toastId,
-          });
-        } catch (err) {
-          toast.error(
-            getErrorMessage(err, "No se pudo eliminar la ubicación."),
-            { id: toastId },
-          );
-        }
-      },
-    });
-  }
-
-  async function confirmAction() {
-    if (!confirmModal) return;
-
-    setConfirmLoading(true);
-
-    try {
-      await confirmModal.onConfirm();
-      setConfirmModal(null);
-    } finally {
-      setConfirmLoading(false);
-    }
-  }
 
   return (
     <AppLayout
-      title="Sucursales y depósitos"
-      subtitle="Configurá desde dónde salen ventas, envíos, remitos y entregas."
+      title="Finanzas"
+      subtitle={`Movimientos desde ${dateFrom} hasta ${dateTo}`}
       actions={
-        <button
-          className="btn btn-secondary"
-          onClick={() => loadLocations(true)}
-          disabled={loading}
-        >
-          <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
-          Actualizar
-        </button>
+        <div className="finance-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          
+          <button className="btn btn-primary btn-sm" onClick={openCreate}>
+            <Plus size={14} /> Nueva entrada
+          </button>
+        </div>
       }
     >
-      <div style={{ display: "grid", gap: 18 }}>
-        <section
+      <div className="card finance-filter-card" style={{ padding: 16, marginBottom: 20 }}>
+        <div
+          className="finance-filter-grid"
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-            gap: 14,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, minmax(0, 1fr)) auto auto',
+            gap: 12,
+            alignItems: 'end',
           }}
         >
-          <StatCard
-            icon={MapPin}
-            label="Ubicaciones"
-            value={locations.length}
-            help="Cantidad total de locales, depósitos y sucursales cargadas."
-          />
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Desde</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+            />
+          </div>
 
-          <StatCard
-            icon={CheckCircle2}
-            label="Activas"
-            value={activeCount}
-            help="Solo las ubicaciones activas deberían usarse en ventas nuevas."
-            badge={<span className="badge badge-green">OPERATIVAS</span>}
-          />
+          <div className="form-group" style={{ margin: 0 }}>
+            <label className="form-label">Hasta</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+            />
+          </div>
 
-          <StatCard
-            icon={Star}
-            label="Predeterminada"
-            value={defaultLocation?.name || "Sin definir"}
-            help="Se puede usar por defecto para envíos y remitos."
-            badge={<span className="badge badge-yellow">DEFAULT</span>}
-          />
-        </section>
+          <button className="btn btn-primary" onClick={applyFilters}>
+            <Filter size={15} /> Aplicar
+          </button>
 
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "430px minmax(0, 1fr)",
-            gap: 18,
-            alignItems: "start",
-          }}
-        >
-          <form onSubmit={handleSubmit} style={{ display: "grid", gap: 18 }}>
-            <SectionCard
-              title={editingId ? "Editar ubicación" : "Nueva ubicación"}
-              subtitle="Datos principales de la sucursal, depósito o local."
-              icon={editingId ? Edit2 : Plus}
-            >
-              <div style={{ display: "grid", gap: 14 }}>
-                <InputField
-                  label="Nombre"
-                  value={form.name}
-                  onChange={(value) =>
-                    setForm((prev) => ({ ...prev, name: value }))
-                  }
-                  placeholder="Ej: Depósito principal"
-                  help="Este nombre va a aparecer al seleccionar desde dónde sale una venta."
-                />
-
-                <label style={{ display: "block" }}>
-                  <div style={{ marginBottom: 7 }}>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 900,
-                        color: "var(--text2)",
-                      }}
-                    >
-                      Tipo de ubicación
-                    </span>
-                  </div>
-
-                  <select
-                    value={form.type}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        type: e.target.value as BusinessLocationType,
-                      }))
-                    }
-                    className="input"
-                  >
-                    <option value="WAREHOUSE">Depósito</option>
-                    <option value="STORE">Local</option>
-                    <option value="BRANCH">Sucursal</option>
-                  </select>
-
-                  <FieldHelp>{typeDescription(form.type)}</FieldHelp>
-                </label>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 110px",
-                    gap: 12,
-                  }}
-                >
-                  <InputField
-                    label="Calle"
-                    value={form.addressStreet}
-                    onChange={(value) =>
-                      setForm((prev) => ({ ...prev, addressStreet: value }))
-                    }
-                    placeholder="San Martín"
-                    optional
-                  />
-
-                  <InputField
-                    label="Número"
-                    value={form.addressNumber}
-                    onChange={(value) =>
-                      setForm((prev) => ({ ...prev, addressNumber: value }))
-                    }
-                    placeholder="810"
-                    optional
-                  />
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 12,
-                  }}
-                >
-                  <InputField
-                    label="Localidad"
-                    value={form.addressCity}
-                    onChange={(value) =>
-                      setForm((prev) => ({ ...prev, addressCity: value }))
-                    }
-                    placeholder="Villa General Belgrano"
-                    optional
-                  />
-
-                  <InputField
-                    label="Provincia"
-                    value={form.addressProvince}
-                    onChange={(value) =>
-                      setForm((prev) => ({ ...prev, addressProvince: value }))
-                    }
-                    placeholder="Córdoba"
-                    optional
-                  />
-                </div>
-
-                <InputField
-                  label="Código postal"
-                  value={form.addressPostalCode}
-                  onChange={(value) =>
-                    setForm((prev) => ({ ...prev, addressPostalCode: value }))
-                  }
-                  placeholder="5194"
-                  optional
-                />
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              title="Coordenadas y uso"
-              subtitle="Datos necesarios para calcular envíos automáticamente."
-              icon={MapPin}
-            >
-              <div style={{ display: "grid", gap: 14 }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 12,
-                  }}
-                >
-                  <InputField
-                    label="Latitud"
-                    value={form.latitude}
-                    onChange={(value) =>
-                      setForm((prev) => ({ ...prev, latitude: value }))
-                    }
-                    placeholder="-31.978"
-                    optional
-                    help="Después podemos autocompletar esto con Google Geocoding."
-                  />
-
-                  <InputField
-                    label="Longitud"
-                    value={form.longitude}
-                    onChange={(value) =>
-                      setForm((prev) => ({ ...prev, longitude: value }))
-                    }
-                    placeholder="-64.556"
-                    optional
-                  />
-                </div>
-
-                <TextAreaField
-                  label="Notas internas"
-                  value={form.addressNotes}
-                  onChange={(value) =>
-                    setForm((prev) => ({ ...prev, addressNotes: value }))
-                  }
-                  placeholder="Ej: entrada por portón lateral, depósito al fondo..."
-                  help="Esto es solo referencia interna para Grupo VJ."
-                />
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 12,
-                  }}
-                >
-                  <ToggleBox
-                    title="Predeterminada"
-                    subtitle="Usarla por defecto"
-                    checked={form.isDefault}
-                    onChange={(checked) =>
-                      setForm((prev) => ({ ...prev, isDefault: checked }))
-                    }
-                    icon={Star}
-                  />
-
-                  <ToggleBox
-                    title="Activa"
-                    subtitle="Disponible en ventas"
-                    checked={form.isActive}
-                    onChange={(checked) =>
-                      setForm((prev) => ({ ...prev, isActive: checked }))
-                    }
-                    icon={CheckCircle2}
-                  />
-                </div>
-
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button
-                    className="btn btn-primary"
-                    type="submit"
-                    disabled={saving}
-                  >
-                    {saving ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Save size={16} />
-                    )}
-                    {editingId ? "Guardar cambios" : "Crear ubicación"}
-                  </button>
-
-                  {editingId && (
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={resetForm}
-                    >
-                      <XCircle size={16} />
-                      Cancelar
-                    </button>
-                  )}
-                </div>
-              </div>
-            </SectionCard>
-          </form>
-
-          <section className="card" style={{ padding: 22 }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 16,
-                alignItems: "flex-start",
-                marginBottom: 18,
-              }}
-            >
-              <div>
-                <h3 style={{ fontSize: 15, fontWeight: 900 }}>
-                  Ubicaciones cargadas
-                </h3>
-                <p
-                  style={{ color: "var(--text2)", fontSize: 13, marginTop: 3 }}
-                >
-                  Administrá los puntos desde donde salen ventas, remitos y
-                  envíos.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className={`badge ${showInactive ? "badge-blue" : "badge-gray"}`}
-                onClick={() => setShowInactive((prev) => !prev)}
-                style={{ cursor: "pointer" }}
-              >
-                {showInactive ? "MOSTRANDO INACTIVAS" : "SOLO ACTIVAS"}
-              </button>
-            </div>
-
-            <div style={{ position: "relative", marginBottom: 16 }}>
-              <Search
-                size={16}
-                style={{
-                  position: "absolute",
-                  left: 13,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  color: "var(--text3)",
-                  pointerEvents: "none",
-                }}
-              />
-
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por nombre, tipo o dirección..."
-                className="input"
-                style={{ paddingLeft: 40 }}
-              />
-            </div>
-
-            {loading ? (
-              <div
-                style={{
-                  minHeight: 280,
-                  border: "1px dashed var(--border)",
-                  borderRadius: 18,
-                  display: "grid",
-                  placeItems: "center",
-                  background: "var(--surface2)",
-                }}
-              >
-                <div
-                  style={{ display: "grid", justifyItems: "center", gap: 10 }}
-                >
-                  <Loader2 size={26} className="animate-spin" />
-                  <p
-                    style={{
-                      color: "var(--text2)",
-                      fontSize: 13,
-                      fontWeight: 800,
-                    }}
-                  >
-                    Cargando ubicaciones...
-                  </p>
-                </div>
-              </div>
-            ) : filteredLocations.length === 0 ? (
-              <div
-                style={{
-                  minHeight: 280,
-                  border: "1px dashed var(--border)",
-                  borderRadius: 18,
-                  display: "grid",
-                  placeItems: "center",
-                  textAlign: "center",
-                  padding: 30,
-                  background: "var(--surface2)",
-                }}
-              >
-                <div>
-                  <HelpCircle
-                    size={30}
-                    style={{ color: "var(--text3)", margin: "0 auto 10px" }}
-                  />
-                  <h4 style={{ fontSize: 15, fontWeight: 900 }}>
-                    No hay ubicaciones para mostrar
-                  </h4>
-                  <p
-                    style={{
-                      color: "var(--text3)",
-                      fontSize: 13,
-                      marginTop: 6,
-                    }}
-                  >
-                    Creá el primer depósito o local para usarlo en ventas y
-                    envíos.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "grid", gap: 12 }}>
-                {filteredLocations.map((location) => {
-                  const Icon = typeIcon(location.type);
-
-                  return (
-                    <article
-                      key={location.id}
-                      style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 18,
-                        background: location.isActive
-                          ? "var(--surface2)"
-                          : "rgba(255,255,255,0.025)",
-                        padding: 16,
-                        opacity: location.isActive ? 1 : 0.65,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 14,
-                          alignItems: "flex-start",
-                        }}
-                      >
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              display: "flex",
-                              flexWrap: "wrap",
-                              alignItems: "center",
-                              gap: 7,
-                              marginBottom: 10,
-                            }}
-                          >
-                            <span className="badge badge-gray">
-                              <Icon size={13} />
-                              {typeLabel(location.type)}
-                            </span>
-
-                            {location.isDefault && (
-                              <span className="badge badge-yellow">
-                                <Star size={13} />
-                                DEFAULT
-                              </span>
-                            )}
-
-                            <span
-                              className={`badge ${
-                                location.isActive ? "badge-green" : "badge-red"
-                              }`}
-                            >
-                              {location.isActive ? "ACTIVA" : "INACTIVA"}
-                            </span>
-                          </div>
-
-                          <h4
-                            style={{
-                              fontSize: 15,
-                              fontWeight: 950,
-                              color: "var(--text)",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {location.name}
-                          </h4>
-
-                          <p
-                            style={{
-                              color: "var(--text2)",
-                              fontSize: 13,
-                              marginTop: 5,
-                              lineHeight: 1.45,
-                            }}
-                          >
-                            {buildAddress(location)}
-                          </p>
-
-                          {(location.latitude !== null ||
-                            location.longitude !== null) && (
-                            <p
-                              style={{
-                                color: "var(--text3)",
-                                fontSize: 12,
-                                marginTop: 5,
-                              }}
-                            >
-                              Lat: {location.latitude ?? "—"} · Lng:{" "}
-                              {location.longitude ?? "—"}
-                            </p>
-                          )}
-
-                          {location.addressNotes && (
-                            <p
-                              style={{
-                                marginTop: 10,
-                                padding: "9px 11px",
-                                borderRadius: 13,
-                                border: "1px solid var(--border)",
-                                color: "var(--text3)",
-                                fontSize: 12,
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              {location.addressNotes}
-                            </p>
-                          )}
-
-                          <p
-                            style={{
-                              color: "var(--text3)",
-                              fontSize: 11,
-                              marginTop: 10,
-                            }}
-                          >
-                            Actualizado: {formatDateTime(location.updatedAt)}
-                          </p>
-                        </div>
-
-                        <div
-                          style={{
-                            display: "flex",
-                            flexWrap: "wrap",
-                            gap: 8,
-                            justifyContent: "flex-end",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {!location.isDefault && location.isActive && (
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              onClick={() => handleSetDefault(location.id)}
-                              style={{ height: 36, padding: "0 11px" }}
-                            >
-                              <Star size={14} />
-                              Default
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => startEdit(location)}
-                            style={{ height: 36, padding: "0 11px" }}
-                          >
-                            <Edit2 size={14} />
-                            Editar
-                          </button>
-
-                          <button
-                            type="button"
-                            className="btn btn-danger"
-                            onClick={() => handleDelete(location)}
-                            style={{ height: 36, padding: "0 11px" }}
-                          >
-                            <Trash2 size={14} />
-                            Eliminar
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </section>
+          <button className="btn btn-secondary" onClick={resetDates}>
+            <RotateCcw size={15} /> Mes actual
+          </button>
+        </div>
       </div>
 
-      {confirmModal && (
+      <div
+        className="finance-stats-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+          gap: 14,
+          marginBottom: 20,
+        }}
+      >
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: 'rgba(0,229,160,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <TrendingUp size={16} style={{ color: 'var(--accent)' }} />
+            </div>
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Ingresos del rango
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
+            {fmt(ingresos)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: 'rgba(239,68,68,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <TrendingDown size={16} style={{ color: 'var(--danger)' }} />
+            </div>
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Egresos del rango
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--danger)', fontSize: 22 }}>
+            {fmt(egresos)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: 'rgba(79,142,255,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Wallet size={16} style={{ color: 'var(--accent2)' }} />
+            </div>
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Balance financiero
+            </span>
+          </div>
+
+          <div
+            className="stat-value"
+            style={{
+              color: balance >= 0 ? 'var(--accent)' : 'var(--danger)',
+              fontSize: 22,
+            }}
+          >
+            {fmt(balance)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: resultadoEstimado >= 0 ? 'rgba(0,229,160,0.1)' : 'rgba(239,68,68,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <HandCoins
+                size={16}
+                style={{
+                  color: resultadoEstimado >= 0 ? 'var(--accent)' : 'var(--danger)',
+                }}
+              />
+            </div>
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Resultado estimado
+            </span>
+          </div>
+
+          <div
+            className="stat-value"
+            style={{
+              color: resultadoEstimado >= 0 ? 'var(--accent)' : 'var(--danger)',
+              fontSize: 22,
+            }}
+          >
+            {fmt(resultadoEstimado)}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="finance-stats-grid finance-stats-grid-secondary"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+          gap: 14,
+          marginBottom: 20,
+        }}
+      >
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <ReceiptText size={16} style={{ color: 'var(--accent2)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Ventas cobradas / emitidas
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--accent2)', fontSize: 22 }}>
+            {fmt(ventasFacturadas)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <PackageCheck size={16} style={{ color: 'var(--text2)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Costo vendido
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--text)', fontSize: 22 }}>
+            {fmt(costoVendido)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <TrendingUp size={16} style={{ color: 'var(--accent)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Utilidad bruta
+            </span>
+          </div>
+
+          <div
+            className="stat-value"
+            style={{
+              color: utilidadBruta >= 0 ? 'var(--accent)' : 'var(--danger)',
+              fontSize: 22,
+            }}
+          >
+            {fmt(utilidadBruta)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Percent size={16} style={{ color: 'var(--accent)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Margen bruto
+            </span>
+          </div>
+
+          <div
+            className="stat-value"
+            style={{
+              color: margenBruto >= 0 ? 'var(--accent)' : 'var(--danger)',
+              fontSize: 22,
+            }}
+          >
+            {pct(margenBruto)}
+          </div>
+        </div>
+      </div>
+
+      <div className="card finance-margin-card" style={{ padding: 20, marginBottom: 20 }}>
         <div
-          className="modal-overlay"
-          onClick={(e) => {
-            if (confirmLoading) return;
-            if (e.target === e.currentTarget) setConfirmModal(null);
+          className="finance-card-header"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 16,
+            alignItems: 'flex-start',
+            marginBottom: 16,
+            flexWrap: 'wrap',
           }}
         >
-          <div className="modal" style={{ maxWidth: 440 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <BadgeDollarSign size={17} style={{ color: 'var(--accent)' }} />
+              <h3 style={{ margin: 0, fontSize: 16 }}>
+                Margen por producto según precio de venta
+              </h3>
+            </div>
+
+            <p style={{ margin: 0, color: 'var(--text2)', fontSize: 13 }}>
+              Calculado con el costo de compra actual. En productos por KG usa los precios por KG.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <span className="badge badge-green">Final prom. {pct(marginSummary.avgFinalMargin)}</span>
+            <span className="badge badge-blue">Cliente prom. {pct(marginSummary.avgClientMargin)}</span>
+            <span className="badge badge-gray">Mayorista prom. {pct(marginSummary.avgWholesaleMargin)}</span>
+            {marginSummary.productsWithoutCost > 0 && (
+              <span className="badge badge-red">{marginSummary.productsWithoutCost} sin costo</span>
+            )}
+          </div>
+        </div>
+
+        <div
+          className="finance-margin-controls"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(240px, 1fr) 260px',
+            gap: 12,
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ position: 'relative' }}>
+            <Search
+              size={16}
+              style={{
+                position: 'absolute',
+                left: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text3)',
+              }}
+            />
+            <input
+              value={marginSearch}
+              onChange={e => setMarginSearch(e.target.value)}
+              placeholder="Buscar producto, SKU o categoría..."
+              style={{ paddingLeft: 36 }}
+            />
+          </div>
+
+          <select value={marginSort} onChange={e => setMarginSort(e.target.value as MarginSort)}>
+            <option value="finalMargin">Ordenar por margen final</option>
+            <option value="clientMargin">Ordenar por margen cliente</option>
+            <option value="wholesaleMargin">Ordenar por margen mayorista</option>
+            <option value="finalProfit">Ordenar por ganancia final</option>
+            <option value="clientProfit">Ordenar por ganancia cliente</option>
+            <option value="wholesaleProfit">Ordenar por ganancia mayorista</option>
+            <option value="cost">Ordenar por costo</option>
+            <option value="name">Ordenar por nombre</option>
+          </select>
+        </div>
+
+        <div className="table-wrap finance-desktop-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Costo</th>
+                <th>Final</th>
+                <th>Gana final</th>
+                <th>Margen final</th>
+                <th>Cliente</th>
+                <th>Gana cliente</th>
+                <th>Margen cliente</th>
+                <th>Mayorista</th>
+                <th>Gana mayorista</th>
+                <th>Margen mayorista</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredMarginRows.map(row => (
+                <tr key={row.id}>
+                  <td>
+                    <div style={{ fontWeight: 800, fontSize: 13 }}>{row.name}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
+                      <span className="badge badge-gray">{row.saleUnit === 'KG' ? 'Por KG' : 'Unidad'}</span>
+                      {row.sku && <span className="badge badge-gray">SKU {row.sku}</span>}
+                      <span className="badge badge-gray">{row.category}</span>
+                    </div>
+                  </td>
+
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
+                    {row.cost > 0 ? fmt(row.cost) : <span style={{ color: 'var(--danger)' }}>Sin costo</span>}
+                  </td>
+                  <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.finalPrice)}</td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.finalProfit) }}>{fmt(row.finalProfit)}</td>
+                  <td><span className={`badge ${row.finalMargin > 0 ? 'badge-green' : row.finalMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.finalMargin)}</span></td>
+                  <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.clientPrice)}</td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.clientProfit) }}>{fmt(row.clientProfit)}</td>
+                  <td><span className={`badge ${row.clientMargin > 0 ? 'badge-green' : row.clientMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.clientMargin)}</span></td>
+                  <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.wholesalePrice)}</td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.wholesaleProfit) }}>{fmt(row.wholesaleProfit)}</td>
+                  <td><span className={`badge ${row.wholesaleMargin > 0 ? 'badge-green' : row.wholesaleMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.wholesaleMargin)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {!filteredMarginRows.length && (
+            <div className="empty-state">
+              <ArrowUpDown size={36} />
+              <p>No hay productos para mostrar</p>
+            </div>
+          )}
+        </div>
+
+        <div className="finance-mobile-list">
+          {filteredMarginRows.map(row => (
+            <article key={row.id} className="finance-mobile-item">
+              <div className="finance-mobile-head">
+                <div>
+                  <h4>{row.name}</h4>
+                  <div className="finance-mobile-badges">
+                    <span className="badge badge-gray">{row.saleUnit === 'KG' ? 'Por KG' : 'Unidad'}</span>
+                    {row.sku && <span className="badge badge-gray">SKU {row.sku}</span>}
+                    <span className="badge badge-gray">{row.category}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="finance-mobile-data">
+                <div>
+                  <small>Costo</small>
+                  <strong>{row.cost > 0 ? fmt(row.cost) : 'Sin costo'}</strong>
+                </div>
+                <div>
+                  <small>Final</small>
+                  <strong>{fmt(row.finalPrice)}</strong>
+                </div>
+                <div>
+                  <small>Gana final</small>
+                  <strong style={{ color: getProfitColor(row.finalProfit) }}>{fmt(row.finalProfit)}</strong>
+                </div>
+                <div>
+                  <small>Margen final</small>
+                  <span className={`badge ${row.finalMargin > 0 ? 'badge-green' : row.finalMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.finalMargin)}</span>
+                </div>
+                <div>
+                  <small>Cliente</small>
+                  <strong>{fmt(row.clientPrice)}</strong>
+                </div>
+                <div>
+                  <small>Gana cliente</small>
+                  <strong style={{ color: getProfitColor(row.clientProfit) }}>{fmt(row.clientProfit)}</strong>
+                </div>
+                <div>
+                  <small>Margen cliente</small>
+                  <span className={`badge ${row.clientMargin > 0 ? 'badge-green' : row.clientMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.clientMargin)}</span>
+                </div>
+                <div>
+                  <small>Mayorista</small>
+                  <strong>{fmt(row.wholesalePrice)}</strong>
+                </div>
+                <div>
+                  <small>Gana mayorista</small>
+                  <strong style={{ color: getProfitColor(row.wholesaleProfit) }}>{fmt(row.wholesaleProfit)}</strong>
+                </div>
+                <div>
+                  <small>Margen mayorista</small>
+                  <span className={`badge ${row.wholesaleMargin > 0 ? 'badge-green' : row.wholesaleMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.wholesaleMargin)}</span>
+                </div>
+              </div>
+            </article>
+          ))}
+
+          {!filteredMarginRows.length && (
+            <div className="empty-state">
+              <ArrowUpDown size={36} />
+              <p>No hay productos para mostrar</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div
+        className="finance-mini-stats-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 14,
+          marginBottom: 20,
+        }}
+      >
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <CalendarDays size={16} style={{ color: 'var(--accent)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Semana de la fecha hasta
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
+            {fmt(stats.week)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <CalendarDays size={16} style={{ color: 'var(--accent)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Mes de la fecha hasta
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
+            {fmt(stats.month)}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <CalendarDays size={16} style={{ color: 'var(--accent)' }} />
+
+            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+              Año de la fecha hasta
+            </span>
+          </div>
+
+          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
+            {fmt(stats.year)}
+          </div>
+        </div>
+      </div>
+
+      {chartData.length > 0 && (
+        <div className="card finance-chart-card" style={{ padding: 24, marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>
+            Flujo de caja y utilidad del rango
+          </div>
+
+          <div className="finance-chart-wrap">
+            <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={chartData} margin={{ left: -20 }}>
+              <XAxis
+                dataKey="date"
+                tick={{
+                  fill: 'var(--text3)',
+                  fontSize: 11,
+                  fontFamily: 'var(--mono)',
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <YAxis
+                tick={{
+                  fill: 'var(--text3)',
+                  fontSize: 10,
+                  fontFamily: 'var(--mono)',
+                }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`}
+              />
+
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--surface2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  fontFamily: 'var(--mono)',
+                  fontSize: 12,
+                }}
+                formatter={(v: unknown) => fmt(Number(v))}
+              />
+
+              <Bar
+                dataKey="ingresos"
+                fill="var(--accent)"
+                radius={[3, 3, 0, 0]}
+                opacity={0.85}
+                name="Ingresos"
+              />
+
+              <Bar
+                dataKey="egresos"
+                fill="var(--danger)"
+                radius={[3, 3, 0, 0]}
+                opacity={0.7}
+                name="Egresos"
+              />
+
+              <Bar
+                dataKey="utilidad"
+                fill="var(--accent2)"
+                radius={[3, 3, 0, 0]}
+                opacity={0.75}
+                name="Utilidad"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {categoryStats.length > 0 && (
+        <div className="card finance-category-card" style={{ padding: 20, marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <Tags size={16} style={{ color: 'var(--accent2)' }} />
+
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              Ingresos por categoría del rango
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: 10 }}>
+            {categoryStats.map((item: AnyObj, index: number) => {
+              const category = item.category ?? item.name ?? item.label ?? 'Sin categoría';
+
+              const total =
+                item.total ??
+                item.amount ??
+                item.income ??
+                item.totalIncome ??
+                item._sum?.amount ??
+                0;
+
+              return (
+                <div
+                  key={`${category}-${index}`}
+                  className="finance-category-row"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 10,
+                    background: 'var(--surface2)',
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>
+                    {categoryLabel(category)}
+                  </span>
+
+                  <span style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
+                    {fmt(Number(total || 0))}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div
+        className="finance-products-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: 14,
+          marginBottom: 20,
+        }}
+      >
+        <div className="card finance-product-card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <Trophy size={16} style={{ color: 'var(--accent)' }} />
+
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              Productos más vendidos
+            </div>
+          </div>
+
+          {topProducts.length ? (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {topProducts.slice(0, 5).map((p: AnyObj, index: number) => (
+                <div
+                  key={p.id ?? `${getProductName(p)}-${index}`}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    fontSize: 13,
+                  }}
+                >
+                  <span style={{ fontWeight: 700 }}>
+                    {index + 1}. {getProductName(p)}
+                  </span>
+
+                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                    {getProductQty(p)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>
+              Sin datos todavía
+            </p>
+          )}
+        </div>
+
+        <div className="card finance-product-card" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <AlertTriangle size={16} style={{ color: 'var(--danger)' }} />
+
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              Productos con menor venta
+            </div>
+          </div>
+
+          {filteredWorstProducts.length ? (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {filteredWorstProducts.slice(0, 5).map((p: AnyObj, index: number) => (
+                <div
+                  key={p.id ?? `${getProductName(p)}-${index}`}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    fontSize: 13,
+                  }}
+                >
+                  <span style={{ fontWeight: 700 }}>
+                    {index + 1}. {getProductName(p)}
+                  </span>
+
+                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--danger)' }}>
+                    {getProductQty(p)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>
+              Sin datos todavía
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="card finance-movements-card">
+        <div className="finance-movements-title">
+          <div>
+            <h3>Últimos movimientos</h3>
+            <p>Se muestran 5 por página, ordenados del más reciente al más antiguo.</p>
+          </div>
+
+          <span className="badge badge-gray">{MOVEMENTS_PAGE_SIZE} por página</span>
+        </div>
+
+        <div className="table-wrap finance-desktop-table">
+          {loading ? (
+            <div style={{ padding: 20 }}>
+              {[...Array(5)].map((_, i) => (
+                <div
+                  key={i}
+                  className="skeleton"
+                  style={{ height: 44, marginBottom: 8 }}
+                />
+              ))}
+            </div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Tipo</th>
+                  <th>Descripción</th>
+                  <th>Categoría</th>
+                  <th>Importe</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {paginatedEntries.map(e => (
+                  <tr key={e.id}>
+                    <td
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--text2)',
+                        fontFamily: 'var(--mono)',
+                      }}
+                    >
+                      {new Date(e.date).toLocaleDateString('es-AR')}
+                    </td>
+
+                    <td>
+                      <span
+                        className={`badge ${
+                          e.type === 'INGRESO' ? 'badge-green' : 'badge-red'
+                        }`}
+                      >
+                        {e.type === 'INGRESO' ? '↑' : '↓'} {e.type}
+                      </span>
+                    </td>
+
+                    <td style={{ fontSize: 13, fontWeight: 600 }}>
+                      {e.description || '—'}
+                    </td>
+
+                    <td>
+                      <span className="badge badge-gray">
+                        {categoryLabel(e.category)}
+                      </span>
+                    </td>
+
+                    <td
+                      style={{
+                        fontFamily: 'var(--mono)',
+                        fontWeight: 700,
+                        color: e.type === 'INGRESO' ? 'var(--accent)' : 'var(--danger)',
+                      }}
+                    >
+                      {e.type === 'INGRESO' ? '+' : '-'}
+                      {fmt(Number(e.amount || 0))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {!loading && !filteredEntries.length && (
+            <div className="empty-state">
+              <Wallet size={36} />
+              <p>Sin movimientos en el rango seleccionado</p>
+            </div>
+          )}
+        </div>
+
+        <div className="finance-mobile-list finance-movements-mobile">
+          {loading ? (
+            <div style={{ padding: 14 }}>
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="skeleton" style={{ height: 88, marginBottom: 10, borderRadius: 16 }} />
+              ))}
+            </div>
+          ) : (
+            paginatedEntries.map(e => (
+              <article key={e.id} className="finance-mobile-item">
+                <div className="finance-mobile-head">
+                  <div>
+                    <div className="finance-mobile-badges">
+                      <span className={`badge ${e.type === 'INGRESO' ? 'badge-green' : 'badge-red'}`}>
+                        {e.type === 'INGRESO' ? '↑' : '↓'} {e.type}
+                      </span>
+                      <span className="badge badge-gray">{categoryLabel(e.category)}</span>
+                    </div>
+
+                    <h4>{e.description || '—'}</h4>
+                    <p>{new Date(e.date).toLocaleDateString('es-AR')}</p>
+                  </div>
+
+                  <strong className={e.type === 'INGRESO' ? 'finance-positive' : 'finance-negative'}>
+                    {e.type === 'INGRESO' ? '+' : '-'}{fmt(Number(e.amount || 0))}
+                  </strong>
+                </div>
+              </article>
+            ))
+          )}
+
+          {!loading && !filteredEntries.length && (
+            <div className="empty-state">
+              <Wallet size={36} />
+              <p>Sin movimientos en el rango seleccionado</p>
+            </div>
+          )}
+        </div>
+
+        {!loading && recentEntries.length > MOVEMENTS_PAGE_SIZE && (
+          <div className="finance-pagination">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMovementsPage(page => Math.max(1, page - 1))}
+              disabled={currentMovementPage <= 1}
+            >
+              Anterior
+            </button>
+
+            <span>
+              Página {currentMovementPage} de {totalMovementPages} · {recentEntries.length} movimientos
+            </span>
+
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMovementsPage(page => Math.min(totalMovementPages, page + 1))}
+              disabled={currentMovementPage >= totalMovementPages}
+            >
+              Siguiente
+            </button>
+          </div>
+        )}
+      </div>
+
+      {modal && (
+        <div
+          className="modal-overlay"
+          onClick={e => e.target === e.currentTarget && setModal(false)}
+        >
+          <div className="modal finance-modal">
             <div className="modal-header">
-              <b>{confirmModal.title}</b>
+              <span style={{ fontWeight: 800 }}>Nueva entrada financiera</span>
 
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => !confirmLoading && setConfirmModal(null)}
-                disabled={confirmLoading}
+                onClick={() => setModal(false)}
+                style={{ padding: 6 }}
               >
-                <XCircle size={16} />
+                <X size={16} />
               </button>
             </div>
 
             <div className="modal-body">
-              <div
-                style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
-              >
-                <span
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 10,
-                    background: confirmModal.danger
-                      ? "rgba(239,68,68,0.12)"
-                      : "var(--surface2)",
-                    display: "grid",
-                    placeItems: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <AlertCircle
-                    size={18}
-                    style={{
-                      color: confirmModal.danger
-                        ? "var(--danger)"
-                        : "var(--accent)",
-                    }}
-                  />
-                </span>
+              <div className="form-row finance-form-row">
+                <div className="form-group">
+                  <label className="form-label">Tipo *</label>
 
-                <p
-                  style={{
-                    color: "var(--text2)",
-                    fontSize: 13,
-                    lineHeight: 1.55,
-                    margin: 0,
-                  }}
+                  <select
+                    value={form.type}
+                    onChange={e => field('type', e.target.value as FinanceForm['type'])}
+                  >
+                    <option value="INGRESO">Ingreso</option>
+                    <option value="EGRESO">Egreso</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Fecha *</label>
+
+                  <input
+                    type="date"
+                    value={form.date}
+                    onChange={e => field('date', e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Importe *</label>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.amount}
+                  onChange={e => field('amount', e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Descripción *</label>
+
+                <input
+                  value={form.description}
+                  onChange={e => field('description', e.target.value)}
+                  placeholder="Ej: Alquiler mayo, sueldo empleado, pago proveedor..."
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Categoría *</label>
+
+                <select
+                  value={form.category}
+                  onChange={e => field('category', e.target.value)}
                 >
-                  {confirmModal.message}
-                </p>
+                  {FINANCE_CATEGORIES.map(cat => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div className="modal-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={() => setConfirmModal(null)}
-                disabled={confirmLoading}
-              >
+            <div className="modal-footer finance-modal-footer">
+              <button className="btn btn-secondary" onClick={() => setModal(false)}>
                 Cancelar
               </button>
 
               <button
-                className={
-                  confirmModal.danger ? "btn btn-danger" : "btn btn-primary"
-                }
-                onClick={confirmAction}
-                disabled={confirmLoading}
+                className="btn btn-primary"
+                onClick={handleSave}
+                disabled={saving || !form.amount || !form.description || !form.category}
               >
-                {confirmLoading ? (
-                  <span className="spinner" />
-                ) : (
-                  (confirmModal.confirmText ?? "Confirmar")
-                )}
+                {saving ? <span className="spinner" /> : 'Guardar'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <style jsx>{`
+
+        .finance-movements-title {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 16px 16px 0;
+        }
+
+        .finance-movements-title h3 {
+          margin: 0;
+          font-size: 15px;
+          font-weight: 900;
+        }
+
+        .finance-movements-title p {
+          margin: 4px 0 0;
+          color: var(--text2);
+          font-size: 13px;
+        }
+
+        .finance-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 14px 16px 16px;
+          border-top: 1px solid var(--border);
+        }
+
+        .finance-pagination span {
+          color: var(--text2);
+          font-size: 12px;
+          font-family: var(--mono);
+          text-align: center;
+        }
+
+        .finance-mobile-list {
+          display: none;
+        }
+
+        .finance-positive {
+          color: var(--accent);
+        }
+
+        .finance-negative {
+          color: var(--danger);
+        }
+
+        @media (max-width: 1100px) {
+          .finance-stats-grid,
+          .finance-stats-grid-secondary {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+
+          .finance-mini-stats-grid {
+            grid-template-columns: 1fr !important;
+          }
+
+          .finance-products-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .finance-actions {
+            width: 100%;
+            display: grid !important;
+            grid-template-columns: 1fr;
+            gap: 8px !important;
+          }
+
+          .finance-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .finance-filter-card,
+          .finance-margin-card,
+          .finance-chart-card,
+          .finance-category-card,
+          .finance-product-card,
+          .finance-movements-card {
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .finance-filter-card,
+          .finance-margin-card,
+          .finance-chart-card,
+          .finance-category-card,
+          .finance-product-card {
+            padding: 14px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .finance-filter-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .finance-filter-grid button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .finance-stats-grid,
+          .finance-stats-grid-secondary,
+          .finance-mini-stats-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .finance-stats-grid .stat-card,
+          .finance-stats-grid-secondary .stat-card,
+          .finance-mini-stats-grid .stat-card {
+            min-width: 0;
+            border-radius: 18px;
+          }
+
+          .finance-stats-grid .stat-value,
+          .finance-stats-grid-secondary .stat-value,
+          .finance-mini-stats-grid .stat-value {
+            font-size: 20px !important;
+            overflow-wrap: anywhere;
+          }
+
+          .finance-card-header {
+            flex-direction: column;
+            gap: 12px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .finance-card-header > div:first-child {
+            width: 100%;
+            min-width: 0;
+          }
+
+          .finance-card-header > div:last-child {
+            width: 100%;
+            gap: 7px !important;
+          }
+
+          .finance-card-header h3 {
+            font-size: 15px !important;
+            line-height: 1.25;
+          }
+
+          .finance-card-header p {
+            font-size: 12px !important;
+            line-height: 1.4;
+          }
+
+          .finance-margin-controls {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .finance-margin-controls input,
+          .finance-margin-controls select {
+            width: 100%;
+          }
+
+          .finance-desktop-table {
+            display: none;
+          }
+
+          .finance-mobile-list {
+            display: grid;
+            gap: 10px;
+          }
+
+          .finance-mobile-item {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface2);
+            padding: 12px;
+            min-width: 0;
+          }
+
+          .finance-mobile-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            min-width: 0;
+          }
+
+          .finance-mobile-head > div {
+            min-width: 0;
+            width: 100%;
+          }
+
+          .finance-mobile-head h4 {
+            margin: 8px 0 0;
+            font-size: 14px;
+            font-weight: 900;
+            color: var(--text);
+            line-height: 1.25;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .finance-mobile-head p {
+            margin: 5px 0 0;
+            color: var(--text3);
+            font-size: 12px;
+          }
+
+          .finance-mobile-head > strong {
+            flex-shrink: 0;
+            font-family: var(--mono);
+            font-size: 13px;
+            font-weight: 900;
+            text-align: right;
+          }
+
+          .finance-mobile-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+          }
+
+          .finance-mobile-data {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-top: 12px;
+          }
+
+          .finance-mobile-data > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-radius: 12px;
+            background: var(--surface);
+            padding: 9px 10px;
+            min-width: 0;
+          }
+
+          .finance-mobile-data small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .finance-mobile-data strong {
+            font-family: var(--mono);
+            font-size: 12px;
+            text-align: right;
+            overflow-wrap: anywhere;
+          }
+
+          .finance-chart-wrap {
+            width: 100%;
+            height: 240px;
+            overflow: hidden;
+          }
+
+          .finance-category-row {
+            align-items: flex-start !important;
+            gap: 10px;
+            border-radius: 14px !important;
+          }
+
+          .finance-category-row span:first-child {
+            min-width: 0;
+            overflow-wrap: anywhere;
+          }
+
+          .finance-category-row span:last-child {
+            flex-shrink: 0;
+            text-align: right;
+          }
+
+          .finance-products-grid {
+            grid-template-columns: 1fr !important;
+            gap: 14px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .finance-product-card > div:first-child {
+            align-items: flex-start !important;
+          }
+
+          .finance-product-card div[style*='justify-content: space-between'] {
+            align-items: flex-start !important;
+          }
+
+          .finance-product-card span {
+            min-width: 0;
+            overflow-wrap: anywhere;
+          }
+
+          .finance-movements-card {
+            padding: 12px;
+          }
+
+          .finance-movements-mobile {
+            padding: 0;
+          }
+
+          .finance-movements-title {
+            padding: 14px 12px 0;
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          .finance-movements-title h3 {
+            font-size: 14px;
+          }
+
+          .finance-movements-title p {
+            font-size: 12px;
+          }
+
+          .finance-pagination {
+            display: grid;
+            grid-template-columns: 1fr;
+            padding: 12px;
+          }
+
+          .finance-pagination button {
+            width: 100%;
+            justify-content: center;
+          }
+
+
+          .finance-modal {
+            width: calc(100vw - 24px);
+            max-width: calc(100vw - 24px);
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
+            border-radius: 18px;
+          }
+
+          .finance-form-row {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .finance-modal-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .finance-modal-footer button {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .finance-filter-card,
+          .finance-margin-card,
+          .finance-chart-card,
+          .finance-category-card,
+          .finance-product-card {
+            padding: 12px !important;
+            border-radius: 16px;
+          }
+
+          .finance-mobile-item {
+            border-radius: 14px;
+            padding: 10px;
+          }
+
+          .finance-mobile-head {
+            flex-direction: column;
+          }
+
+          .finance-mobile-head h4 {
+            white-space: normal;
+          }
+
+          .finance-mobile-head > strong {
+            text-align: left;
+            font-size: 15px;
+          }
+
+          .finance-mobile-data > div {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+          }
+
+          .finance-mobile-data strong {
+            text-align: left;
+          }
+
+          .finance-category-row {
+            flex-direction: column;
+          }
+
+          .finance-category-row span:last-child {
+            text-align: left;
+          }
+        }
+      `}</style>
+
     </AppLayout>
   );
 }

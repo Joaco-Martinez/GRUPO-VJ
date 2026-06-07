@@ -315,7 +315,7 @@ function SectionCard({
   children: ReactNode;
 }) {
   return (
-    <section className="card" style={{ padding: 22 }}>
+    <section className="card locations-list-card" style={{ padding: 22 }}>
       <div
         style={{
           display: 'flex',
@@ -701,8 +701,9 @@ export default function BusinessLocationsPage() {
         </button>
       }
     >
-      <div style={{ display: 'grid', gap: 18 }}>
+      <div className="locations-page" style={{ display: 'grid', gap: 18 }}>
         <section
+          className="locations-stats"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
@@ -734,6 +735,7 @@ export default function BusinessLocationsPage() {
         </section>
 
         <section
+          className="locations-main-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: '430px minmax(0, 1fr)',
@@ -741,7 +743,7 @@ export default function BusinessLocationsPage() {
             alignItems: 'start',
           }}
         >
-          <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
+          <form className="locations-form" onSubmit={handleSubmit} style={{ display: 'grid', gap: 18 }}>
             <SectionCard
               title={editingId ? 'Editar ubicación' : 'Nueva ubicación'}
               subtitle="Datos principales de la sucursal, depósito o local."
@@ -781,7 +783,7 @@ export default function BusinessLocationsPage() {
                   <FieldHelp>{typeDescription(form.type)}</FieldHelp>
                 </label>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 12 }}>
+                <div className="location-street-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 12 }}>
                   <InputField
                     label="Calle"
                     value={form.addressStreet}
@@ -803,7 +805,7 @@ export default function BusinessLocationsPage() {
                   />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="location-two-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <InputField
                     label="Localidad"
                     value={form.addressCity}
@@ -843,7 +845,7 @@ export default function BusinessLocationsPage() {
               icon={MapPin}
             >
               <div style={{ display: 'grid', gap: 14 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="location-two-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <InputField
                     label="Latitud"
                     value={form.latitude}
@@ -876,7 +878,7 @@ export default function BusinessLocationsPage() {
                   help="Esto es solo referencia interna para Grupo VJ."
                 />
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="location-toggle-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <ToggleBox
                     title="Predeterminada"
                     subtitle="Usarla por defecto"
@@ -898,7 +900,7 @@ export default function BusinessLocationsPage() {
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: 10 }}>
+                <div className="location-form-actions" style={{ display: 'flex', gap: 10 }}>
                   <button className="btn btn-primary" type="submit" disabled={saving}>
                     {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                     {editingId ? 'Guardar cambios' : 'Crear ubicación'}
@@ -917,6 +919,7 @@ export default function BusinessLocationsPage() {
 
           <section className="card" style={{ padding: 22 }}>
             <div
+              className="locations-list-header"
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -936,7 +939,7 @@ export default function BusinessLocationsPage() {
 
               <button
                 type="button"
-                className={`badge ${showInactive ? 'badge-blue' : 'badge-gray'}`}
+                className={`badge locations-filter-toggle ${showInactive ? 'badge-blue' : 'badge-gray'}`}
                 onClick={() => setShowInactive((prev) => !prev)}
                 style={{ cursor: 'pointer' }}
               >
@@ -1026,6 +1029,7 @@ export default function BusinessLocationsPage() {
                       }}
                     >
                       <div
+                        className="location-item-main"
                         style={{
                           display: 'flex',
                           justifyContent: 'space-between',
@@ -1130,6 +1134,7 @@ export default function BusinessLocationsPage() {
                         </div>
 
                         <div
+                          className="location-item-actions"
                           style={{
                             display: 'flex',
                             flexWrap: 'wrap',
@@ -1179,6 +1184,143 @@ export default function BusinessLocationsPage() {
           </section>
         </section>
       </div>
+
+
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          .locations-page {
+            gap: 14px !important;
+          }
+
+          .locations-page .card {
+            border-radius: 18px !important;
+          }
+
+          .locations-page section.card,
+          .locations-list-card {
+            padding: 16px !important;
+          }
+
+          .locations-stats {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .locations-stats .card {
+            padding: 14px !important;
+          }
+
+          .locations-main-grid {
+            grid-template-columns: 1fr !important;
+            gap: 14px !important;
+          }
+
+          .locations-form {
+            min-width: 0 !important;
+          }
+
+          .location-street-grid,
+          .location-two-grid,
+          .location-toggle-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .location-form-actions {
+            flex-direction: column !important;
+          }
+
+          .location-form-actions .btn {
+            width: 100% !important;
+            justify-content: center !important;
+          }
+
+          .locations-list-header {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 12px !important;
+          }
+
+          .locations-filter-toggle {
+            width: 100% !important;
+            justify-content: center !important;
+            text-align: center !important;
+            min-height: 36px !important;
+          }
+
+          .location-item-main {
+            flex-direction: column !important;
+            gap: 14px !important;
+          }
+
+          .location-item-main > div:first-child {
+            width: 100% !important;
+          }
+
+          .location-item-main h4 {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            overflow-wrap: anywhere !important;
+            line-height: 1.25 !important;
+          }
+
+          .location-item-actions {
+            width: 100% !important;
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            justify-content: stretch !important;
+            flex-shrink: 1 !important;
+          }
+
+          .location-item-actions .btn {
+            width: 100% !important;
+            justify-content: center !important;
+          }
+
+          .locations-page .input {
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .locations-page .badge {
+            max-width: 100% !important;
+          }
+
+          .modal {
+            width: calc(100vw - 28px) !important;
+            max-width: calc(100vw - 28px) !important;
+            margin: 14px !important;
+          }
+
+          .modal-footer {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .modal-footer .btn {
+            width: 100% !important;
+            justify-content: center !important;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .locations-page section.card,
+          .locations-list-card {
+            padding: 14px !important;
+          }
+
+          .locations-page .card {
+            border-radius: 16px !important;
+          }
+
+          .locations-page .btn {
+            min-height: 40px !important;
+          }
+        }
+      `}</style>
+
 
       {confirmModal && (
         <div

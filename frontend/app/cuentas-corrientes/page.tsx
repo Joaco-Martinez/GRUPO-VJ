@@ -176,12 +176,13 @@ export default function CuentasCorrientesPage() {
       title="Cuentas corrientes"
       subtitle="Deudas, abonos e historial de saldos"
       actions={
-        <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
+        <button className="btn btn-secondary btn-sm cc-action-btn" onClick={() => load(true)} disabled={loading}>
           <RefreshCcw size={14} /> Actualizar
         </button>
       }
     >
       <div
+        className="cc-stats-grid"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(3, 1fr)',
@@ -210,7 +211,7 @@ export default function CuentasCorrientesPage() {
         </div>
       </div>
 
-      <div style={{ position: 'relative', maxWidth: 460, marginBottom: 18 }}>
+      <div className="cc-search" style={{ position: 'relative', maxWidth: 460, marginBottom: 18 }}>
         <Search
           size={14}
           style={{
@@ -230,8 +231,9 @@ export default function CuentasCorrientesPage() {
         />
       </div>
 
-      <div className="card" style={{ marginBottom: 18 }}>
+      <div className="card cc-card" style={{ marginBottom: 18 }}>
         <div
+          className="cc-card-title"
           style={{
             padding: 16,
             borderBottom: '1px solid var(--border)',
@@ -241,7 +243,7 @@ export default function CuentasCorrientesPage() {
           Clientes con saldo pendiente
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap cc-desktop-table">
           {loading ? (
             <div style={{ padding: 20 }}>
               <div className="skeleton" style={{ height: 180 }} />
@@ -311,10 +313,66 @@ export default function CuentasCorrientesPage() {
             </div>
           )}
         </div>
+
+        <div className="cc-mobile-list">
+          {loading ? (
+            <div style={{ padding: 14 }}>
+              <div className="skeleton" style={{ height: 180 }} />
+            </div>
+          ) : (
+            filtered.map((c) => (
+              <div className="cc-mobile-item" key={c.id}>
+                <div className="cc-mobile-item-head">
+                  <div>
+                    <b>{clientName(c)}</b>
+                    <span>{c.telefono ?? c.gmail ?? '—'}</span>
+                  </div>
+
+                  <span
+                    className={`badge ${
+                      c.isAccountEnabled === false ? 'badge-red' : 'badge-green'
+                    }`}
+                  >
+                    {c.isAccountEnabled === false ? 'Bloqueada' : 'Habilitada'}
+                  </span>
+                </div>
+
+                <div className="cc-mobile-data">
+                  <div>
+                    <small>DNI</small>
+                    <strong>{c.dni || '—'}</strong>
+                  </div>
+
+                  <div>
+                    <small>Saldo</small>
+                    <strong className="cc-warn">{fmtMoney(c.currentBalance)}</strong>
+                  </div>
+
+                  <div>
+                    <small>Límite</small>
+                    <strong>{c.creditLimit ? fmtMoney(c.creditLimit) : 'Sin límite'}</strong>
+                  </div>
+                </div>
+
+                <button className="btn btn-primary btn-sm cc-mobile-pay-btn" onClick={() => openPayment(c)}>
+                  <Wallet size={13} /> Registrar abono
+                </button>
+              </div>
+            ))
+          )}
+
+          {!loading && !filtered.length && (
+            <div className="empty-state">
+              <Wallet size={36} />
+              <p>No hay deudas pendientes</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="card">
+      <div className="card cc-card">
         <div
+          className="cc-card-title"
           style={{
             padding: 16,
             borderBottom: '1px solid var(--border)',
@@ -324,7 +382,7 @@ export default function CuentasCorrientesPage() {
           Últimos movimientos
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap cc-desktop-table">
           <table>
             <thead>
               <tr>
@@ -378,6 +436,58 @@ export default function CuentasCorrientesPage() {
             </div>
           )}
         </div>
+
+        <div className="cc-mobile-list">
+          {movements.slice(0, 60).map((m) => (
+            <div className="cc-mobile-item" key={m.id}>
+              <div className="cc-mobile-item-head">
+                <div>
+                  <b>{m.client ? clientName(m.client) : '—'}</b>
+                  <span>{fmtDate(m.date)}</span>
+                </div>
+
+                <span
+                  className={`badge ${
+                    m.type === 'PAYMENT' || m.type === 'ADJUSTMENT_NEGATIVE'
+                      ? 'badge-green'
+                      : 'badge-yellow'
+                  }`}
+                >
+                  {m.type}
+                </span>
+              </div>
+
+              <div className="cc-mobile-data">
+                <div>
+                  <small>Monto</small>
+                  <strong>{fmtMoney(m.amount)}</strong>
+                </div>
+
+                <div>
+                  <small>Saldo anterior</small>
+                  <strong>{fmtMoney(m.previousBalance)}</strong>
+                </div>
+
+                <div>
+                  <small>Saldo nuevo</small>
+                  <strong>{fmtMoney(m.newBalance)}</strong>
+                </div>
+              </div>
+
+              <div className="cc-mobile-detail">
+                <small>Detalle</small>
+                <p>{m.description ?? m.reference ?? '—'}</p>
+              </div>
+            </div>
+          ))}
+
+          {!movements.length && !loading && (
+            <div className="empty-state">
+              <Wallet size={36} />
+              <p>Sin movimientos</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {client && (
@@ -385,7 +495,7 @@ export default function CuentasCorrientesPage() {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closePaymentModal()}
         >
-          <div className="modal">
+          <div className="modal cc-modal">
             <div className="modal-header">
               <b>Registrar abono</b>
 
@@ -399,7 +509,7 @@ export default function CuentasCorrientesPage() {
                 {clientName(client)} · saldo actual {fmtMoney(client.currentBalance)}
               </p>
 
-              <div className="form-row">
+              <div className="form-row cc-form-row">
                 <div className="form-group">
                   <label className="form-label">Importe</label>
                   <input
@@ -461,7 +571,7 @@ export default function CuentasCorrientesPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer cc-modal-footer">
               <button className="btn btn-secondary" onClick={closePaymentModal} disabled={saving}>
                 Cancelar
               </button>
@@ -477,6 +587,211 @@ export default function CuentasCorrientesPage() {
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        .cc-mobile-list {
+          display: none;
+        }
+
+        @media (max-width: 768px) {
+          .cc-action-btn {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .cc-stats-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .cc-search {
+            max-width: none !important;
+            width: 100% !important;
+            margin-bottom: 14px !important;
+          }
+
+          .cc-search input {
+            width: 100%;
+          }
+
+          .cc-card {
+            overflow: hidden;
+            border-radius: 18px;
+          }
+
+          .cc-card-title {
+            padding: 14px !important;
+            font-size: 14px;
+          }
+
+          .cc-desktop-table {
+            display: none;
+          }
+
+          .cc-mobile-list {
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+          }
+
+          .cc-mobile-item {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 12px;
+            background: var(--surface);
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+          }
+
+          .cc-mobile-item-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .cc-mobile-item-head > div {
+            display: grid;
+            gap: 3px;
+            min-width: 0;
+          }
+
+          .cc-mobile-item-head b {
+            font-size: 14px;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .cc-mobile-item-head span:not(.badge) {
+            color: var(--text3);
+            font-size: 11px;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 190px;
+          }
+
+          .cc-mobile-data {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .cc-mobile-data > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+            min-width: 0;
+          }
+
+          .cc-mobile-data small,
+          .cc-mobile-detail small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 700;
+          }
+
+          .cc-mobile-data strong {
+            font-family: var(--mono);
+            font-size: 12px;
+            text-align: right;
+            overflow-wrap: anywhere;
+          }
+
+          .cc-warn {
+            color: var(--warn);
+          }
+
+          .cc-mobile-pay-btn {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .cc-mobile-detail {
+            display: grid;
+            gap: 5px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+          }
+
+          .cc-mobile-detail p {
+            margin: 0;
+            color: var(--text2);
+            font-size: 12px;
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+          }
+
+          .cc-modal {
+            width: calc(100vw - 24px);
+            max-width: calc(100vw - 24px);
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
+            border-radius: 18px;
+          }
+
+          .cc-form-row {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .cc-modal-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .cc-modal-footer button {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .cc-mobile-list {
+            padding: 10px;
+          }
+
+          .cc-mobile-item {
+            border-radius: 14px;
+            padding: 10px;
+          }
+
+          .cc-mobile-item-head {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .cc-mobile-item-head span:not(.badge) {
+            max-width: 100%;
+          }
+
+          .cc-mobile-item-head .badge {
+            width: fit-content;
+          }
+
+          .cc-mobile-data > div {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 4px;
+          }
+
+          .cc-mobile-data strong {
+            text-align: left;
+          }
+        }
+      `}</style>
     </AppLayout>
   );
 }

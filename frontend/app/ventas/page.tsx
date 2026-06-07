@@ -943,6 +943,7 @@ if (!contentType.includes('application/pdf')) {
       }
     >
       <div
+        className="sales-stats-grid"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, 1fr)',
@@ -980,8 +981,8 @@ if (!contentType.includes('application/pdf')) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
-        <div style={{ position: 'relative', flex: 1 }}>
+      <div className="sales-filters" style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+        <div className="sales-search" style={{ position: 'relative', flex: 1 }}>
           <Search
             size={14}
             style={{
@@ -1013,8 +1014,8 @@ if (!contentType.includes('application/pdf')) {
         </select>
       </div>
 
-      <div className="card">
-        <div className="table-wrap">
+      <div className="card sales-card">
+        <div className="table-wrap sales-desktop-table">
           {loading ? (
             <div style={{ padding: 20 }}>
               <div className="skeleton" style={{ height: 240 }} />
@@ -1293,6 +1294,240 @@ if (!contentType.includes('application/pdf')) {
             </div>
           )}
         </div>
+
+        <div className="sales-mobile-list">
+          {loading ? (
+            <div style={{ padding: 14 }}>
+              <div className="skeleton" style={{ height: 240 }} />
+            </div>
+          ) : (
+            filtered.map((s) => {
+              const invoiceStatus = getSaleInvoiceStatus(s);
+              const quotationExpirationLabel = getQuotationExpirationLabel(s);
+              const saleIsCreditNote = isCreditNoteSale(s);
+              const saleHasCreditNote = hasCreditNote(s);
+              const saleCanEmitCreditNote = canEmitCreditNote(s);
+              const saleCanDownloadCreditNote = canDownloadCreditNote(s);
+              const saleHasRemito = hasRemito(s);
+              const saleCanEmitRemito = canEmitRemito(s);
+
+              return (
+                <article
+                  key={`${s.id}-mobile`}
+                  className="sales-mobile-item"
+                  onClick={() => setDetail(s)}
+                >
+                  <div className="sales-mobile-head">
+                    <div>
+                      <span className="sales-mobile-id">#{s.id.slice(-8)}</span>
+                      <h3>{clientName(s.client)}</h3>
+                      <p>{fmtDate(s.createdAt)}</p>
+                    </div>
+
+                    <span className={`badge ${badge(s.status)}`}>{s.status}</span>
+                  </div>
+
+                  <div className="sales-mobile-badges">
+                    <span className="badge badge-gray">
+                      {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                    </span>
+
+                    <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
+                      {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
+                    </span>
+
+                    {saleIsCreditNote ? (
+                      <span className="badge badge-red">NOTA CRÉDITO</span>
+                    ) : saleHasCreditNote ? (
+                      <span className="badge badge-red">NC EMITIDA</span>
+                    ) : null}
+
+                    {saleHasRemito && <span className="badge badge-green">REMITO</span>}
+
+                    {s.status === 'PENDING' && quotationExpirationLabel && (
+                      <span className="badge badge-yellow">Vence {quotationExpirationLabel}</span>
+                    )}
+                  </div>
+
+                  <div className="sales-mobile-data">
+                    <div>
+                      <small>Total</small>
+                      <strong className="sales-accent">{fmtMoney(s.total)}</strong>
+                    </div>
+
+                    <div>
+                      <small>Deuda</small>
+                      <strong>{num(s.accountDebtAmount) > 0 ? fmtMoney(s.accountDebtAmount ?? 0) : '—'}</strong>
+                    </div>
+                  </div>
+
+                  <div className="sales-mobile-actions" onClick={(e) => e.stopPropagation()}>
+                    {s.status === 'PENDING' && (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => setSaleStatus(s, 'COMPLETED')}
+                      >
+                        Confirmar
+                      </button>
+                    )}
+
+                    {s.status !== 'CANCELLED' && (
+                      <button
+                        className="btn btn-danger btn-sm"
+                        onClick={() => setSaleStatus(s, 'CANCELLED')}
+                      >
+                        Cancelar
+                      </button>
+                    )}
+
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => openPayments(s)}
+                    >
+                      Pagos
+                    </button>
+
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={printingTicketId === s.id}
+                      onClick={() => printTicket(s)}
+                    >
+                      {printingTicketId === s.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Printer size={13} />
+                      )}
+                      Ticket
+                    </button>
+
+                    {saleCanEmitRemito && !saleHasRemito && s.status !== 'CANCELLED' && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={remitoLoadingId === s.id}
+                        onClick={() => createRemito(s)}
+                      >
+                        {remitoLoadingId === s.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Truck size={13} />
+                        )}
+                        Remito
+                      </button>
+                    )}
+
+                    {saleHasRemito && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={openingRemitoId === s.id}
+                        onClick={() => openRemitoPdf(s)}
+                      >
+                        {openingRemitoId === s.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <FileText size={13} />
+                        )}
+                        Ver remito
+                      </button>
+                    )}
+
+                    {saleCanEmitRemito && !saleHasRemito && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={openingRemitoId === s.id}
+                        onClick={() => openRemitoPdf(s)}
+                      >
+                        {openingRemitoId === s.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <FileText size={13} />
+                        )}
+                        Ver remito
+                      </button>
+                    )}
+
+                    {s.status === 'PENDING' && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={quotationLoadingId === s.id}
+                        onClick={() => downloadQuotation(s)}
+                      >
+                        {quotationLoadingId === s.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <FileText size={13} />
+                        )}
+                        Cotización
+                      </button>
+                    )}
+
+                    {!isSaleInvoiced(s) && s.status !== 'CANCELLED' && (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        disabled={invoicingId === s.id}
+                        onClick={() => openInvoiceModal(s)}
+                      >
+                        {invoicingId === s.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <ReceiptText size={13} />
+                        )}
+                        Facturar
+                      </button>
+                    )}
+
+                    {isSaleInvoiced(s) && (
+                      <>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            toast.success('Abriendo factura');
+                            window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank');
+                          }}
+                        >
+                          <FileText size={13} />
+                          Factura
+                        </button>
+
+                        {saleCanDownloadCreditNote && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => openCreditNotePdf(s)}
+                          >
+                            <FileText size={13} />
+                            NC PDF
+                          </button>
+                        )}
+
+                        {saleCanEmitCreditNote && (
+                          <button
+                            className="btn btn-danger btn-sm"
+                            disabled={creditNoteLoadingId === s.id}
+                            onClick={() => openCreditNoteModal(s)}
+                          >
+                            {creditNoteLoadingId === s.id ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <ReceiptText size={13} />
+                            )}
+                            Nota crédito
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
+
+          {!loading && !filtered.length && (
+            <div className="empty-state">
+              <FileText size={36} />
+              <p>Sin ventas</p>
+            </div>
+          )}
+        </div>
+
       </div>
 
       {detail && (
@@ -1300,7 +1535,7 @@ if (!contentType.includes('application/pdf')) {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setDetail(null)}
         >
-          <div className="modal" style={{ maxWidth: 760 }}>
+          <div className="modal sales-detail-modal" style={{ maxWidth: 760 }}>
             <div className="modal-header">
               <b>Venta #{detail.id.slice(-8)}</b>
 
@@ -1311,6 +1546,7 @@ if (!contentType.includes('application/pdf')) {
 
             <div className="modal-body">
               <div
+                className="sales-detail-grid"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(3, 1fr)',
@@ -1369,7 +1605,7 @@ if (!contentType.includes('application/pdf')) {
                 </div>
               )}
 
-              <div className="card">
+              <div className="card sales-detail-products-card">
                 <table>
                   <thead>
                     <tr>
@@ -1491,7 +1727,7 @@ if (!contentType.includes('application/pdf')) {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setInvoiceModal(null)}
         >
-          <div className="modal" style={{ maxWidth: 560 }}>
+          <div className="modal sales-small-modal" style={{ maxWidth: 560 }}>
             <div className="modal-header">
               <b>Facturar venta #{invoiceModal.sale.id.slice(-8)}</b>
 
@@ -1618,7 +1854,7 @@ if (!contentType.includes('application/pdf')) {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setCreditNoteModal(null)}
         >
-          <div className="modal" style={{ maxWidth: 560 }}>
+          <div className="modal sales-small-modal" style={{ maxWidth: 560 }}>
             <div className="modal-header">
               <b>Emitir nota de crédito</b>
 
@@ -1711,7 +1947,7 @@ if (!contentType.includes('application/pdf')) {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setPayEdit(null)}
         >
-          <div className="modal">
+          <div className="modal sales-small-modal">
             <div className="modal-header">
               <b>Editar pagos</b>
 
@@ -1729,6 +1965,7 @@ if (!contentType.includes('application/pdf')) {
               {payments.map((p, idx) => (
                 <div
                   key={`${p.method}-${idx}`}
+                  className="sales-payment-row"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '1fr 120px 36px',
@@ -1817,7 +2054,7 @@ if (!contentType.includes('application/pdf')) {
             if (e.target === e.currentTarget) setConfirmModal(null);
           }}
         >
-          <div className="modal" style={{ maxWidth: 440 }}>
+          <div className="modal sales-small-modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <b>{confirmModal.title}</b>
 
@@ -1879,6 +2116,271 @@ if (!contentType.includes('application/pdf')) {
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        .sales-mobile-list {
+          display: none;
+        }
+
+        .sales-accent {
+          color: var(--accent);
+        }
+
+        @media (max-width: 1024px) {
+          .sales-stats-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .sales-stats-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .sales-filters {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 14px !important;
+          }
+
+          .sales-search {
+            width: 100%;
+          }
+
+          .sales-search input,
+          .sales-filters select {
+            width: 100% !important;
+          }
+
+          .sales-card {
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .sales-desktop-table {
+            display: none;
+          }
+
+          .sales-mobile-list {
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+          }
+
+          .sales-mobile-item {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface2);
+            padding: 12px;
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+            cursor: pointer;
+          }
+
+          .sales-mobile-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .sales-mobile-head > div {
+            min-width: 0;
+            display: grid;
+            gap: 4px;
+          }
+
+          .sales-mobile-id {
+            font-family: var(--mono);
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .sales-mobile-head h3 {
+            font-size: 14px;
+            line-height: 1.25;
+            font-weight: 900;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .sales-mobile-head p {
+            margin: 0;
+            color: var(--text3);
+            font-size: 12px;
+          }
+
+          .sales-mobile-head > .badge {
+            flex-shrink: 0;
+          }
+
+          .sales-mobile-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+          }
+
+          .sales-mobile-data {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .sales-mobile-data > div {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+            min-width: 0;
+          }
+
+          .sales-mobile-data small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .sales-mobile-data strong {
+            font-family: var(--mono);
+            font-size: 12px;
+            text-align: right;
+            overflow-wrap: anywhere;
+          }
+
+          .sales-mobile-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+          }
+
+          .sales-mobile-actions button {
+            width: 100%;
+            justify-content: center;
+            min-height: 34px;
+          }
+
+          .sales-detail-modal,
+          .sales-small-modal {
+            width: calc(100vw - 24px) !important;
+            max-width: calc(100vw - 24px) !important;
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
+            border-radius: 18px;
+          }
+
+          .sales-detail-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .sales-detail-products-card {
+            overflow-x: auto;
+          }
+
+          .sales-detail-products-card table {
+            min-width: 520px;
+          }
+
+          .modal-header {
+            gap: 12px;
+          }
+
+          .modal-header b {
+            font-size: 14px;
+            line-height: 1.3;
+          }
+
+          .modal-body {
+            padding: 14px !important;
+          }
+
+          .modal-footer {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+
+          .modal-footer button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .form-row {
+            grid-template-columns: 1fr !important;
+          }
+
+          .sales-payment-row {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 10px;
+            background: var(--surface2);
+          }
+
+          .sales-payment-row button {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .sales-mobile-list {
+            padding: 10px;
+          }
+
+          .sales-mobile-item {
+            border-radius: 14px;
+            padding: 10px;
+          }
+
+          .sales-mobile-head {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .sales-mobile-head h3 {
+            white-space: normal;
+          }
+
+          .sales-mobile-head > .badge {
+            width: fit-content;
+          }
+
+          .sales-mobile-data > div {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+          }
+
+          .sales-mobile-data strong {
+            text-align: left;
+          }
+
+          .sales-mobile-actions {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-detail-modal,
+          .sales-small-modal {
+            width: calc(100vw - 18px) !important;
+            max-width: calc(100vw - 18px) !important;
+            border-radius: 16px;
+          }
+        }
+      `}</style>
+
     </AppLayout>
   );
 }

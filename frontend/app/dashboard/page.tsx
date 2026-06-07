@@ -141,6 +141,7 @@ export default function DashboardPage() {
     <AppLayout title="Dashboard" subtitle="Resumen general">
       {loading ? (
         <div
+          className="dashboard-loading-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
@@ -154,6 +155,7 @@ export default function DashboardPage() {
       ) : (
         <>
           <div
+            className="dashboard-stats-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
@@ -198,57 +200,62 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-            <div className="card" style={{ padding: 24 }}>
+          <div
+            className="dashboard-main-grid"
+            style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}
+          >
+            <div className="card dashboard-chart-card" style={{ padding: 24 }}>
               <div style={{ marginBottom: 20 }}>
-                <div className="section-title" style={{ fontSize: 15 }}>
+                <div className="section-title dashboard-section-title" style={{ fontSize: 15 }}>
                   Ingresos — últimos 14 días
                 </div>
               </div>
 
               {salesByDay.length > 0 ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={salesByDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                    <XAxis
-                      dataKey="date"
-                      tick={{
-                        fill: 'var(--text3)',
-                        fontSize: 11,
-                        fontFamily: 'var(--mono)',
-                      }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
+                <div className="dashboard-chart-wrap">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={salesByDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                      <XAxis
+                        dataKey="date"
+                        tick={{
+                          fill: 'var(--text3)',
+                          fontSize: 11,
+                          fontFamily: 'var(--mono)',
+                        }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
 
-                    <YAxis
-                      tick={{
-                        fill: 'var(--text3)',
-                        fontSize: 10,
-                        fontFamily: 'var(--mono)',
-                      }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                    />
+                      <YAxis
+                        tick={{
+                          fill: 'var(--text3)',
+                          fontSize: 10,
+                          fontFamily: 'var(--mono)',
+                        }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      />
 
-                    <Tooltip
-                      contentStyle={{
-                        background: 'var(--surface2)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 8,
-                        fontFamily: 'var(--mono)',
-                        fontSize: 12,
-                      }}
-                      labelStyle={{ color: 'var(--text2)' }}
-                      formatter={(v: unknown) => [fmt(Number(v)), 'Total']}
-                    />
+                      <Tooltip
+                        contentStyle={{
+                          background: 'var(--surface2)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 8,
+                          fontFamily: 'var(--mono)',
+                          fontSize: 12,
+                        }}
+                        labelStyle={{ color: 'var(--text2)' }}
+                        formatter={(v: unknown) => [fmt(Number(v)), 'Total']}
+                      />
 
-                    <Bar dataKey="total" fill="var(--accent)" radius={[4, 4, 0, 0]} opacity={0.85} />
-                  </BarChart>
-                </ResponsiveContainer>
+                      <Bar dataKey="total" fill="var(--accent)" radius={[4, 4, 0, 0]} opacity={0.85} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               ) : (
                 <div
-                  className="empty-state"
+                  className="empty-state dashboard-empty-chart"
                   style={{
                     height: 220,
                     display: 'flex',
@@ -263,8 +270,9 @@ export default function DashboardPage() {
               )}
             </div>
 
-            <div className="card" style={{ padding: 24 }}>
+            <div className="card dashboard-alerts-card" style={{ padding: 24 }}>
               <div
+                className="dashboard-card-header"
                 style={{
                   marginBottom: 16,
                   display: 'flex',
@@ -272,7 +280,7 @@ export default function DashboardPage() {
                   justifyContent: 'space-between',
                 }}
               >
-                <div className="section-title" style={{ fontSize: 15 }}>
+                <div className="section-title dashboard-section-title" style={{ fontSize: 15 }}>
                   Alertas de stock
                 </div>
 
@@ -290,10 +298,11 @@ export default function DashboardPage() {
                   <p style={{ fontSize: 13 }}>Sin alertas activas</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="dashboard-alerts-list" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {alerts.slice(0, 6).map((a) => (
                     <div
                       key={a.id}
+                      className="dashboard-alert-item"
                       style={{
                         background: 'var(--surface2)',
                         borderRadius: 8,
@@ -324,8 +333,9 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="card" style={{ marginTop: 16, padding: 24 }}>
+          <div className="card dashboard-sales-card" style={{ marginTop: 16, padding: 24 }}>
             <div
+              className="dashboard-card-header"
               style={{
                 marginBottom: 16,
                 display: 'flex',
@@ -333,7 +343,7 @@ export default function DashboardPage() {
                 justifyContent: 'space-between',
               }}
             >
-              <div className="section-title" style={{ fontSize: 15 }}>
+              <div className="section-title dashboard-section-title" style={{ fontSize: 15 }}>
                 Ventas recientes
               </div>
 
@@ -345,7 +355,7 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            <div className="table-wrap">
+            <div className="table-wrap dashboard-desktop-table">
               <table>
                 <thead>
                   <tr>
@@ -417,9 +427,270 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
+
+            <div className="dashboard-mobile-sales">
+              {(Array.isArray(sales) ? sales : []).slice(0, 8).map((s) => (
+                <div className="dashboard-mobile-sale" key={s.id}>
+                  <div className="dashboard-mobile-sale-head">
+                    <div>
+                      <strong>#{s.id.slice(-6)}</strong>
+                      <span>{new Date(s.createdAt).toLocaleDateString('es-AR')}</span>
+                    </div>
+
+                    <span
+                      className={`badge ${
+                        s.status === 'COMPLETED'
+                          ? 'badge-green'
+                          : s.status === 'PENDING'
+                            ? 'badge-yellow'
+                            : 'badge-red'
+                      }`}
+                    >
+                      {s.status}
+                    </span>
+                  </div>
+
+                  <div className="dashboard-mobile-sale-body">
+                    <div>
+                      <small>Cliente</small>
+                      <b>{clientName(s.client)}</b>
+                    </div>
+
+                    <div>
+                      <small>Método</small>
+                      <span className="badge badge-gray">{s.paymentMethod}</span>
+                    </div>
+
+                    <div>
+                      <small>Total</small>
+                      <b className="dashboard-mobile-total">{fmt(s.total)}</b>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {(!sales || !sales.length) && (
+                <div className="empty-state">
+                  <p>Sin ventas registradas</p>
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}
+
+      <style jsx>{`
+        .dashboard-mobile-sales {
+          display: none;
+        }
+
+        @media (max-width: 768px) {
+          .dashboard-loading-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .dashboard-stats-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            margin-bottom: 16px !important;
+          }
+
+          .dashboard-main-grid {
+            grid-template-columns: 1fr !important;
+            gap: 14px !important;
+          }
+
+          .dashboard-chart-card,
+          .dashboard-alerts-card,
+          .dashboard-sales-card {
+            padding: 14px !important;
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .dashboard-section-title {
+            font-size: 14px !important;
+          }
+
+          .dashboard-chart-card > div:first-child {
+            margin-bottom: 12px !important;
+          }
+
+          .dashboard-chart-wrap {
+            width: 100%;
+            height: 220px;
+            overflow: hidden;
+          }
+
+          .dashboard-empty-chart {
+            height: 180px !important;
+          }
+
+          .dashboard-card-header {
+            gap: 12px;
+            align-items: flex-start !important;
+          }
+
+          .dashboard-card-header a {
+            flex-shrink: 0;
+            white-space: nowrap;
+          }
+
+          .dashboard-alerts-card {
+            min-width: 0;
+          }
+
+          .dashboard-alerts-list {
+            gap: 10px !important;
+          }
+
+          .dashboard-alert-item {
+            align-items: flex-start !important;
+            gap: 10px;
+            border-radius: 12px !important;
+            padding: 10px !important;
+          }
+
+          .dashboard-alert-item span:first-child {
+            min-width: 0;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .dashboard-alert-item span:last-child {
+            flex-shrink: 0;
+          }
+
+          .dashboard-desktop-table {
+            display: none;
+          }
+
+          .dashboard-mobile-sales {
+            display: grid;
+            gap: 10px;
+          }
+
+          .dashboard-mobile-sale {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 12px;
+            background: var(--surface);
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+          }
+
+          .dashboard-mobile-sale-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+          }
+
+          .dashboard-mobile-sale-head > div {
+            display: grid;
+            gap: 3px;
+            min-width: 0;
+          }
+
+          .dashboard-mobile-sale-head strong {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--text);
+          }
+
+          .dashboard-mobile-sale-head span:not(.badge) {
+            font-size: 11px;
+            color: var(--text3);
+          }
+
+          .dashboard-mobile-sale-body {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .dashboard-mobile-sale-body > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+            min-width: 0;
+          }
+
+          .dashboard-mobile-sale-body small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 700;
+          }
+
+          .dashboard-mobile-sale-body b {
+            font-size: 12px;
+            text-align: right;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 190px;
+          }
+
+          .dashboard-mobile-total {
+            font-family: var(--mono);
+            color: var(--accent);
+          }
+        }
+
+        @media (max-width: 420px) {
+          .dashboard-chart-card,
+          .dashboard-alerts-card,
+          .dashboard-sales-card {
+            padding: 12px !important;
+            border-radius: 16px;
+          }
+
+          .dashboard-card-header {
+            flex-direction: column;
+          }
+
+          .dashboard-alert-item {
+            flex-direction: column;
+          }
+
+          .dashboard-alert-item span:first-child {
+            white-space: normal;
+          }
+
+          .dashboard-mobile-sale {
+            border-radius: 14px;
+            padding: 10px;
+          }
+
+          .dashboard-mobile-sale-head {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .dashboard-mobile-sale-head .badge {
+            width: fit-content;
+          }
+
+          .dashboard-mobile-sale-body > div {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+          }
+
+          .dashboard-mobile-sale-body b {
+            text-align: left;
+            max-width: 100%;
+          }
+        }
+      `}</style>
     </AppLayout>
   );
 }

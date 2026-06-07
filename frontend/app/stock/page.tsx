@@ -7,22 +7,29 @@ import type { MovementLocation, Product, StockMovement } from '@/types';
 import { fmtDate, normalizeArray, num, productMinStock, productStock } from '@/lib/helpers';
 import {
   ArrowDownCircle,
+  ArrowLeftRight,
   ArrowUpCircle,
   BarChart2,
   Search,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+type StockMode = 'ADD' | 'TRANSFER';
+
 type StockForm = {
   productId: string;
+  from: MovementLocation;
+  to: MovementLocation;
   location: MovementLocation;
   quantity: string;
   quantityKg: string;
-  mode: string;
+  mode: StockMode;
 };
 
 const emptyForm: StockForm = {
   productId: '',
+  from: 'LOCAL',
+  to: 'DEPOSITO',
   location: 'LOCAL',
   quantity: '',
   quantityKg: '',
@@ -49,6 +56,18 @@ async function fetchStockData() {
     products: normalizeArray<Product>(p.data),
     movements: normalizeArray<StockMovement>(m.data),
   };
+}
+
+function movementIcon(type?: string) {
+  if (type === 'SALE') {
+    return <ArrowUpCircle size={14} style={{ color: 'var(--danger)' }} />;
+  }
+
+  if (type === 'TRANSFER') {
+    return <ArrowLeftRight size={14} style={{ color: 'var(--accent2)' }} />;
+  }
+
+  return <ArrowDownCircle size={14} style={{ color: 'var(--accent)' }} />;
 }
 
 export default function StockPage() {
@@ -124,38 +143,66 @@ export default function StockPage() {
 
     const quantity = num(form.quantity);
     const quantityKg = num(form.quantityKg);
+    const isKg = selected.saleUnit === 'KG';
+    const isTransfer = form.mode === 'TRANSFER';
 
-    if (selected.saleUnit === 'KG' && quantityKg <= 0) {
+    if (isKg && quantityKg <= 0) {
       toast.error('Ingresá una cantidad válida en kg');
       return;
     }
 
-    if (selected.saleUnit !== 'KG' && quantity <= 0) {
+    if (!isKg && quantity <= 0) {
       toast.error('Ingresá una cantidad válida');
+      return;
+    }
+
+    if (isTransfer && form.from === form.to) {
+      toast.error('El origen y el destino no pueden ser iguales');
       return;
     }
 
     setSaving(true);
 
-    const toastId = toast.loading('Agregando stock...');
+    const toastId = toast.loading(isTransfer ? 'Transfiriendo stock...' : 'Agregando stock...');
 
     try {
-      if (selected.saleUnit === 'KG') {
-        await api.post(`/products/${selected.id}/add-stock-kg`, {
-          to: form.location,
-          quantityKg,
-        });
+      if (isTransfer) {
+        if (isKg) {
+          await api.post(`/products/${selected.id}/transfer-kg`, {
+            from: form.from,
+            to: form.to,
+            quantityKg,
+          });
+        } else {
+          await api.post('/products/transfer', {
+            productId: selected.id,
+            from: form.from,
+            to: form.to,
+            quantity,
+          });
+        }
       } else {
-        await api.post('/products/add-stock', {
-          productId: selected.id,
-          to: form.location,
-          quantity,
-        });
+        if (isKg) {
+          await api.post(`/products/${selected.id}/add-stock-kg`, {
+            to: form.location,
+            quantityKg,
+          });
+        } else {
+          await api.post('/products/add-stock', {
+            productId: selected.id,
+            to: form.location,
+            quantity,
+          });
+        }
       }
 
       setForm(emptyForm);
 
-      toast.success('Stock agregado correctamente', { id: toastId });
+      toast.success(
+        isTransfer ? 'Stock transferido correctamente' : 'Stock agregado correctamente',
+        { id: toastId }
+      );
+
       await load();
     } catch (e: unknown) {
       toast.error(getErrorMessage(e, 'Error al mover stock'), { id: toastId });
@@ -166,11 +213,12 @@ export default function StockPage() {
 
   return (
     <AppLayout title="Stock" subtitle="Inventario local, depósito y movimientos">
-      <div className="card" style={{ padding: 16, marginBottom: 18 }}>
+      <div className="card stock-form-card" style={{ padding: 16, marginBottom: 18 }}>
         <div
+          className="stock-form-grid"
           style={{
             display: 'grid',
-            gridTemplateColumns: '2fr 1fr 1fr auto',
+            gridTemplateColumns: '1.6fr 0.9fr 1fr 1fr auto',
             gap: 10,
             alignItems: 'end',
           }}
@@ -196,19 +244,80 @@ export default function StockPage() {
           </div>
 
           <div>
-            <label className="form-label">Destino</label>
+            <label className="form-label">Operación</label>
 
             <select
-              value={form.location}
+              value={form.mode}
               onChange={(e) =>
-                setForm((p) => ({ ...p, location: e.target.value as MovementLocation }))
+                setForm((p) => ({
+                  ...p,
+                  mode: e.target.value as StockMode,
+                }))
               }
               disabled={saving}
             >
-              <option value="LOCAL">Local</option>
-              <option value="DEPOSITO">Depósito</option>
+              <option value="ADD">Agregar</option>
+              <option value="TRANSFER">Transferir</option>
             </select>
           </div>
+
+          {form.mode === 'TRANSFER' ? (
+            <>
+              <div>
+                <label className="form-label">Desde</label>
+
+                <select
+                  value={form.from}
+                  onChange={(e) =>
+                    setForm((p) => ({
+                      ...p,
+                      from: e.target.value as MovementLocation,
+                    }))
+                  }
+                  disabled={saving}
+                >
+                  <option value="LOCAL">Local</option>
+                  <option value="DEPOSITO">Depósito</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="form-label">Hacia</label>
+
+                <select
+                  value={form.to}
+                  onChange={(e) =>
+                    setForm((p) => ({
+                      ...p,
+                      to: e.target.value as MovementLocation,
+                    }))
+                  }
+                  disabled={saving}
+                >
+                  <option value="LOCAL">Local</option>
+                  <option value="DEPOSITO">Depósito</option>
+                </select>
+              </div>
+            </>
+          ) : (
+            <div className="stock-location-field">
+              <label className="form-label">Destino</label>
+
+              <select
+                value={form.location}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    location: e.target.value as MovementLocation,
+                  }))
+                }
+                disabled={saving}
+              >
+                <option value="LOCAL">Local</option>
+                <option value="DEPOSITO">Depósito</option>
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="form-label">
@@ -217,6 +326,8 @@ export default function StockPage() {
 
             <input
               type="number"
+              min="0"
+              step={selected?.saleUnit === 'KG' ? '0.001' : '1'}
               value={selected?.saleUnit === 'KG' ? form.quantityKg : form.quantity}
               onChange={(e) =>
                 setForm((p) => ({
@@ -228,13 +339,21 @@ export default function StockPage() {
             />
           </div>
 
-          <button className="btn btn-primary" onClick={save} disabled={saving || !selected}>
-            {saving ? <span className="spinner" /> : 'Agregar stock'}
+          <button className="btn btn-primary stock-submit-btn" onClick={save} disabled={saving || !selected}>
+            {saving ? (
+              <span className="spinner" />
+            ) : form.mode === 'TRANSFER' ? (
+              <>
+                <ArrowLeftRight size={14} /> Transferir
+              </>
+            ) : (
+              'Agregar stock'
+            )}
           </button>
         </div>
       </div>
 
-      <div style={{ position: 'relative', marginBottom: 18, maxWidth: 420 }}>
+      <div className="stock-search" style={{ position: 'relative', marginBottom: 18, maxWidth: 420 }}>
         <Search
           size={14}
           style={{
@@ -254,8 +373,8 @@ export default function StockPage() {
         />
       </div>
 
-      <div className="card" style={{ marginBottom: 18 }}>
-        <div className="table-wrap">
+      <div className="card stock-card" style={{ marginBottom: 18 }}>
+        <div className="table-wrap stock-desktop-table">
           {loading ? (
             <div style={{ padding: 20 }}>
               <div className="skeleton" style={{ height: 200 }} />
@@ -278,6 +397,7 @@ export default function StockPage() {
                 {filtered.map((p) => {
                   const stock = productStock(p);
                   const min = productMinStock(p);
+                  const deposito = p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito);
                   const critical = stock <= min;
 
                   return (
@@ -302,7 +422,10 @@ export default function StockPage() {
                         {p.saleUnit === 'KG' ? ' kg' : ''}
                       </td>
 
-                      <td>{p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito)}</td>
+                      <td style={{ fontFamily: 'var(--mono)' }}>
+                        {deposito}
+                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                      </td>
 
                       <td>{min}</td>
 
@@ -325,10 +448,71 @@ export default function StockPage() {
             </div>
           )}
         </div>
+
+        <div className="stock-mobile-list">
+          {loading ? (
+            <div style={{ padding: 14 }}>
+              <div className="skeleton" style={{ height: 200 }} />
+            </div>
+          ) : (
+            filtered.map((p) => {
+              const stock = productStock(p);
+              const min = productMinStock(p);
+              const deposito = p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito);
+              const critical = stock <= min;
+
+              return (
+                <article className="stock-mobile-item" key={p.id}>
+                  <div className="stock-mobile-head">
+                    <div>
+                      <h3>{p.name}</h3>
+                      <span>{p.sku || 'Sin SKU'}</span>
+                    </div>
+
+                    <span className={`badge ${critical ? 'badge-red' : 'badge-green'}`}>
+                      {critical ? 'BAJO' : 'OK'}
+                    </span>
+                  </div>
+
+                  <div className="stock-mobile-badges">
+                    <span className="badge badge-gray">{p.saleUnit}</span>
+                    <span className="badge badge-gray">Mínimo {min}</span>
+                  </div>
+
+                  <div className="stock-mobile-data">
+                    <div>
+                      <small>Local</small>
+                      <strong className={critical ? 'stock-danger' : ''}>
+                        {stock}
+                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <small>Depósito</small>
+                      <strong>
+                        {deposito}
+                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                      </strong>
+                    </div>
+                  </div>
+                </article>
+              );
+            })
+          )}
+
+          {!loading && !filtered.length && (
+            <div className="empty-state">
+              <BarChart2 size={36} />
+              <p>Sin productos</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="card">
+      <div className="card stock-card">
         <div
+          className="stock-card-title"
           style={{
             padding: 16,
             borderBottom: '1px solid var(--border)',
@@ -338,7 +522,7 @@ export default function StockPage() {
           Movimientos recientes
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap stock-desktop-table">
           <table>
             <thead>
               <tr>
@@ -361,12 +545,7 @@ export default function StockPage() {
 
                   <td>
                     <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      {m.type === 'SALE' ? (
-                        <ArrowUpCircle size={14} style={{ color: 'var(--danger)' }} />
-                      ) : (
-                        <ArrowDownCircle size={14} style={{ color: 'var(--accent)' }} />
-                      )}
-
+                      {movementIcon(m.type)}
                       {m.type}
                     </span>
                   </td>
@@ -392,7 +571,269 @@ export default function StockPage() {
             </div>
           )}
         </div>
+
+        <div className="stock-mobile-list stock-movements-mobile-list">
+          {movements.slice(0, 80).map((m) => (
+            <article className="stock-mobile-item" key={m.id}>
+              <div className="stock-mobile-head">
+                <div>
+                  <h3>{m.product?.name ?? m.productId}</h3>
+                  <span>{fmtDate(m.createdAt)}</span>
+                </div>
+
+                <span className="stock-movement-type">
+                  {movementIcon(m.type)}
+                  {m.type}
+                </span>
+              </div>
+
+              <div className="stock-mobile-data">
+                <div>
+                  <small>Desde</small>
+                  <strong>{m.from ?? '—'}</strong>
+                </div>
+
+                <div>
+                  <small>Hacia</small>
+                  <strong>{m.to ?? '—'}</strong>
+                </div>
+
+                <div>
+                  <small>Cantidad</small>
+                  <strong>{m.quantityKg ? `${m.quantityKg} kg` : m.quantity ?? '—'}</strong>
+                </div>
+
+                <div>
+                  <small>Referencia</small>
+                  <strong>{m.reason ?? m.reference ?? '—'}</strong>
+                </div>
+              </div>
+            </article>
+          ))}
+
+          {!movements.length && !loading && (
+            <div className="empty-state">
+              <BarChart2 size={36} />
+              <p>Sin movimientos</p>
+            </div>
+          )}
+        </div>
       </div>
+
+      <style jsx>{`
+        .stock-mobile-list {
+          display: none;
+        }
+
+        .stock-location-field {
+          grid-column: auto;
+        }
+
+        @media (max-width: 1200px) {
+          .stock-form-grid {
+            grid-template-columns: 1.5fr 1fr 1fr !important;
+          }
+
+          .stock-submit-btn {
+            grid-column: 1 / -1;
+            width: 100%;
+            justify-content: center;
+          }
+
+          .stock-location-field {
+            grid-column: auto;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .stock-form-card {
+            padding: 14px !important;
+            border-radius: 18px;
+          }
+
+          .stock-form-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .stock-submit-btn {
+            width: 100%;
+            height: 42px;
+            justify-content: center;
+          }
+
+          .stock-search {
+            max-width: none !important;
+            width: 100%;
+            margin-bottom: 14px !important;
+          }
+
+          .stock-search input {
+            width: 100%;
+          }
+
+          .stock-card {
+            border-radius: 18px;
+            overflow: hidden;
+          }
+
+          .stock-card-title {
+            padding: 14px !important;
+            font-size: 14px;
+          }
+
+          .stock-desktop-table {
+            display: none;
+          }
+
+          .stock-mobile-list {
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+          }
+
+          .stock-mobile-item {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface2);
+            padding: 12px;
+            display: grid;
+            gap: 12px;
+            min-width: 0;
+          }
+
+          .stock-mobile-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .stock-mobile-head > div {
+            min-width: 0;
+            display: grid;
+            gap: 4px;
+          }
+
+          .stock-mobile-head h3 {
+            font-size: 14px;
+            line-height: 1.25;
+            font-weight: 900;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .stock-mobile-head span:not(.badge):not(.stock-movement-type) {
+            color: var(--text3);
+            font-size: 11px;
+            font-family: var(--mono);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .stock-mobile-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+          }
+
+          .stock-mobile-data {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .stock-mobile-data > div {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-radius: 12px;
+            background: var(--bg);
+            padding: 9px 10px;
+            min-width: 0;
+          }
+
+          .stock-mobile-data small {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .stock-mobile-data strong {
+            font-family: var(--mono);
+            font-size: 12px;
+            text-align: right;
+            overflow-wrap: anywhere;
+          }
+
+          .stock-danger {
+            color: var(--danger);
+          }
+
+          .stock-movement-type {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 900;
+            color: var(--text2);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 5px 8px;
+            flex-shrink: 0;
+          }
+
+          .stock-movements-mobile-list {
+            padding-top: 12px;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .stock-form-card {
+            padding: 12px !important;
+            border-radius: 16px;
+          }
+
+          .stock-mobile-list {
+            padding: 10px;
+          }
+
+          .stock-mobile-item {
+            padding: 10px;
+            border-radius: 14px;
+          }
+
+          .stock-mobile-head {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .stock-mobile-head h3 {
+            white-space: normal;
+          }
+
+          .stock-mobile-head .badge,
+          .stock-movement-type {
+            width: fit-content;
+          }
+
+          .stock-mobile-data > div {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+          }
+
+          .stock-mobile-data strong {
+            text-align: left;
+          }
+        }
+      `}</style>
     </AppLayout>
   );
 }

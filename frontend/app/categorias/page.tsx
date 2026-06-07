@@ -44,6 +44,21 @@ const emptyForm: CategoryForm = {
   isActive: true,
 };
 
+function useIsMobile(maxWidth = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= maxWidth);
+
+    check();
+    window.addEventListener('resize', check);
+
+    return () => window.removeEventListener('resize', check);
+  }, [maxWidth]);
+
+  return isMobile;
+}
+
 function formatDate(value?: string) {
   if (!value) return '—';
 
@@ -79,6 +94,8 @@ export default function CategoriasPage() {
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
+  const isMobile = useIsMobile();
+
   const load = async (showSuccess = false) => {
     setLoading(true);
 
@@ -98,28 +115,28 @@ export default function CategoriasPage() {
   };
 
   useEffect(() => {
-  let alive = true;
+    let alive = true;
 
-  api
-    .get('/categories?includeInactive=true')
-    .then((res) => {
-      if (!alive) return;
-      setCategories(normalizeArray<ProductCategory>(res.data));
-    })
-    .catch((e) => {
-      console.error(e);
-      if (!alive) return;
-      toast.error('Error al cargar categorías');
-    })
-    .finally(() => {
-      if (!alive) return;
-      setLoading(false);
-    });
+    api
+      .get('/categories?includeInactive=true')
+      .then((res) => {
+        if (!alive) return;
+        setCategories(normalizeArray<ProductCategory>(res.data));
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!alive) return;
+        toast.error('Error al cargar categorías');
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
+      });
 
-  return () => {
-    alive = false;
-  };
-}, []);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -295,27 +312,40 @@ export default function CategoriasPage() {
       title="Categorías"
       subtitle="Clasificación dinámica para productos, promos y stock"
       actions={
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
-            <RefreshCcw size={14} />
-            Actualizar
-          </button>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            flexWrap: isMobile ? 'wrap' : 'nowrap',
+            width: isMobile ? '100%' : 'auto',
+          }}
+        >
 
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
-            <Plus size={14} />
-            Nueva categoría
-          </button>
+
+          
         </div>
       }
     >
+      <button
+            className="btn btn-primary btn-sm"
+            onClick={openCreate}
+            style={{
+              flex: isMobile ? '1 1 0' : undefined,
+              minWidth: isMobile ? 0 : undefined,
+            }}
+          >
+            <Plus size={14} />
+            Nueva categoría
+          </button>
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 12,
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, 1fr)',
+          gap: isMobile ? 10 : 12,
           marginBottom: 18,
         }}
       >
+        
         <div className="stat-card">
           <div className="stat-value">{categories.length}</div>
           <div className="stat-label">Categorías</div>
@@ -337,8 +367,24 @@ export default function CategoriasPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: 240 }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          marginBottom: 18,
+          flexWrap: 'wrap',
+          flexDirection: isMobile ? 'column' : 'row',
+        }}
+      >
+        <div
+          style={{
+            position: 'relative',
+            flex: 1,
+            minWidth: isMobile ? '100%' : 240,
+            width: isMobile ? '100%' : undefined,
+          }}
+        >
+          
           <Search
             size={14}
             style={{
@@ -353,22 +399,35 @@ export default function CategoriasPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nombre, slug o descripción..."
-            style={{ paddingLeft: 34 }}
+            placeholder={isMobile ? 'Buscar categoría...' : 'Buscar por nombre, slug o descripción...'}
+            style={{
+              paddingLeft: 34,
+              width: '100%',
+            }}
           />
         </div>
 
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
-          style={{ width: 220 }}
+          style={{
+            width: isMobile ? '100%' : 220,
+          }}
         >
           <option value="all">Todos los estados</option>
           <option value="active">Solo activas</option>
           <option value="inactive">Solo inactivas</option>
         </select>
 
-        <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => load(true)}
+          disabled={loading}
+          style={{
+            width: isMobile ? '100%' : undefined,
+            justifyContent: isMobile ? 'center' : undefined,
+          }}
+        >
           <RefreshCcw size={14} />
           Actualizar
         </button>
@@ -377,8 +436,195 @@ export default function CategoriasPage() {
       <div className="card">
         <div className="table-wrap">
           {loading ? (
-            <div style={{ padding: 20 }}>
-              <div className="skeleton" style={{ height: 220 }} />
+            <div style={{ padding: isMobile ? 14 : 20 }}>
+              <div
+                className="skeleton"
+                style={{
+                  height: isMobile ? 360 : 220,
+                  borderRadius: 12,
+                }}
+              />
+            </div>
+          ) : isMobile ? (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                padding: 12,
+              }}
+            >
+              {filtered.map((category) => (
+                <div
+                  key={category.id}
+                  style={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    padding: 14,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 10,
+                      alignItems: 'flex-start',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 10,
+                        alignItems: 'center',
+                        minWidth: 0,
+                        flex: 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 8,
+                          background: 'var(--surface2)',
+                          display: 'grid',
+                          placeItems: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Tags size={15} />
+                      </span>
+
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            fontSize: 13,
+                            lineHeight: 1.25,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {category.name}
+                        </div>
+
+                        <div
+                          style={{
+                            fontFamily: 'var(--mono)',
+                            color: 'var(--text3)',
+                            fontSize: 11,
+                            marginTop: 2,
+                          }}
+                        >
+                          ID {String(category.id).slice(0, 8)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <span
+                      className={`badge ${category.isActive ? 'badge-green' : 'badge-gray'}`}
+                      style={{ flexShrink: 0 }}
+                    >
+                      {category.isActive ? 'ACTIVA' : 'INACTIVA'}
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <span className="badge badge-gray">{category.slug}</span>
+
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontFamily: 'var(--mono)',
+                        fontWeight: 800,
+                        fontSize: 12,
+                        color: 'var(--text2)',
+                      }}
+                    >
+                      <Package size={13} />
+                      {productsCount(category)} producto/s
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--text2)',
+                      lineHeight: 1.45,
+                      overflowWrap: 'anywhere',
+                    }}
+                  >
+                    {category.description || 'Sin descripción'}
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      alignItems: 'center',
+                      borderTop: '1px solid var(--border)',
+                      paddingTop: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontFamily: 'var(--mono)',
+                        color: 'var(--text3)',
+                        fontSize: 11,
+                      }}
+                    >
+                      Creada: {formatDate(category.createdAt)}
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => openEdit(category)}
+                        title="Editar"
+                      >
+                        <Edit2 size={13} />
+                      </button>
+
+                      {!category.isActive && (
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => restoreCategory(category)}
+                          title="Restaurar"
+                        >
+                          <RotateCcw size={13} />
+                        </button>
+                      )}
+
+                      <button
+                        className="btn btn-danger btn-sm"
+                        onClick={() => deleteCategory(category)}
+                        title="Eliminar o desactivar"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <table>
@@ -413,9 +659,7 @@ export default function CategoriasPage() {
                         </span>
 
                         <div>
-                          <div style={{ fontWeight: 800, fontSize: 13 }}>
-                            {category.name}
-                          </div>
+                          <div style={{ fontWeight: 800, fontSize: 13 }}>{category.name}</div>
 
                           <div
                             style={{
@@ -454,11 +698,7 @@ export default function CategoriasPage() {
                     </td>
 
                     <td>
-                      <span
-                        className={`badge ${
-                          category.isActive ? 'badge-green' : 'badge-gray'
-                        }`}
-                      >
+                      <span className={`badge ${category.isActive ? 'badge-green' : 'badge-gray'}`}>
                         {category.isActive ? 'ACTIVA' : 'INACTIVA'}
                       </span>
                     </td>
@@ -509,7 +749,12 @@ export default function CategoriasPage() {
           )}
 
           {!loading && !filtered.length && (
-            <div className="empty-state">
+            <div
+              className="empty-state"
+              style={{
+                padding: isMobile ? '48px 16px' : undefined,
+              }}
+            >
               <FolderTree size={36} />
               <p>Sin categorías</p>
             </div>
@@ -522,7 +767,15 @@ export default function CategoriasPage() {
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
         >
-          <div className="modal">
+          <div
+            className="modal"
+            style={{
+              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+              maxWidth: isMobile ? 'calc(100vw - 24px)' : undefined,
+              maxHeight: isMobile ? 'calc(100vh - 24px)' : undefined,
+              overflowY: isMobile ? 'auto' : undefined,
+            }}
+          >
             <div className="modal-header">
               <b>{modal === 'create' ? 'Nueva categoría' : 'Editar categoría'}</b>
 
@@ -565,9 +818,10 @@ export default function CategoriasPage() {
                 style={{
                   padding: 14,
                   display: 'flex',
-                  alignItems: 'center',
+                  alignItems: isMobile ? 'flex-start' : 'center',
                   justifyContent: 'space-between',
                   gap: 12,
+                  flexDirection: isMobile ? 'column' : 'row',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -579,16 +833,15 @@ export default function CategoriasPage() {
                       background: 'var(--surface2)',
                       display: 'grid',
                       placeItems: 'center',
+                      flexShrink: 0,
                     }}
                   >
                     {form.isActive ? <Power size={15} /> : <PowerOff size={15} />}
                   </span>
 
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 13 }}>
-                      Categoría activa
-                    </div>
-                    <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+                    <div style={{ fontWeight: 800, fontSize: 13 }}>Categoría activa</div>
+                    <div style={{ color: 'var(--text3)', fontSize: 12, lineHeight: 1.4 }}>
                       Las categorías inactivas no deberían usarse para nuevos productos.
                     </div>
                   </div>
@@ -603,13 +856,27 @@ export default function CategoriasPage() {
                       isActive: e.target.checked,
                     }))
                   }
-                  style={{ width: 18, height: 18 }}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    alignSelf: isMobile ? 'flex-end' : undefined,
+                  }}
                 />
               </div>
             </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeModal} disabled={saving}>
+            <div
+              className="modal-footer"
+              style={{
+                flexDirection: isMobile ? 'column-reverse' : 'row',
+              }}
+            >
+              <button
+                className="btn btn-secondary"
+                onClick={closeModal}
+                disabled={saving}
+                style={{ width: isMobile ? '100%' : undefined }}
+              >
                 Cancelar
               </button>
 
@@ -617,6 +884,7 @@ export default function CategoriasPage() {
                 className="btn btn-primary"
                 onClick={saveCategory}
                 disabled={saving || !form.name.trim()}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
                 {saving ? <span className="spinner" /> : 'Guardar'}
               </button>
@@ -633,7 +901,13 @@ export default function CategoriasPage() {
             if (e.target === e.currentTarget) setConfirmModal(null);
           }}
         >
-          <div className="modal" style={{ maxWidth: 440 }}>
+          <div
+            className="modal"
+            style={{
+              maxWidth: isMobile ? 'calc(100vw - 24px)' : 440,
+              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+            }}
+          >
             <div className="modal-header">
               <b>{confirmModal.title}</b>
 
@@ -675,17 +949,31 @@ export default function CategoriasPage() {
                   />
                 </span>
 
-                <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.55, margin: 0 }}>
+                <p
+                  style={{
+                    color: 'var(--text2)',
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    margin: 0,
+                    overflowWrap: 'anywhere',
+                  }}
+                >
                   {confirmModal.message}
                 </p>
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div
+              className="modal-footer"
+              style={{
+                flexDirection: isMobile ? 'column-reverse' : 'row',
+              }}
+            >
               <button
                 className="btn btn-secondary"
                 onClick={() => setConfirmModal(null)}
                 disabled={confirmLoading}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
                 Cancelar
               </button>
@@ -694,8 +982,13 @@ export default function CategoriasPage() {
                 className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
                 onClick={confirmAction}
                 disabled={confirmLoading}
+                style={{ width: isMobile ? '100%' : undefined }}
               >
-                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
+                {confirmLoading ? (
+                  <span className="spinner" />
+                ) : (
+                  confirmModal.confirmText ?? 'Confirmar'
+                )}
               </button>
             </div>
           </div>

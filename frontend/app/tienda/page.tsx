@@ -11,11 +11,40 @@ import {
   MapPin,
   ChevronDown,
   Store,
-  Sparkles,
 } from 'lucide-react';
 import { CatalogCategory, CatalogProduct, formatMoney, shopApi } from '@/lib/shop';
 import { useCartStore } from '@/store/cart';
 import Image from 'next/image';
+import toast from 'react-hot-toast';
+
+const HIDDEN_PRODUCT_SKUS = ['ENVIO-FLETE2'];
+
+function isVisibleCatalogProduct(product: CatalogProduct) {
+  return !HIDDEN_PRODUCT_SKUS.includes(String(product.sku ?? '').trim().toUpperCase());
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+
+  const apiError = error as {
+    response?: {
+      data?: {
+        message?: string;
+        error?: string;
+      };
+    };
+  };
+
+  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+}
+
+async function fetchCategories() {
+  return shopApi.getCategories();
+}
+
+async function fetchCatalogProducts(category: string, search: string) {
+  return shopApi.getProducts({ category, search, limit: 80 });
+}
 
 export default function TiendaPage() {
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
@@ -49,22 +78,80 @@ export default function TiendaPage() {
   }, [category, categories]);
 
   useEffect(() => {
-    shopApi.getCategories().then(setCategories).catch(() => setCategories([]));
+    let alive = true;
+
+    fetchCategories()
+      .then((data) => {
+        if (!alive) return;
+        setCategories(data);
+      })
+      .catch((err) => {
+        console.error(err);
+
+        if (!alive) return;
+
+        setCategories([]);
+        toast.error('No se pudieron cargar las categorías');
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
+    let alive = true;
+
+    fetchCatalogProducts(category, search)
+      .then((result) => {
+        if (!alive) return;
+
+        setProducts(result.products.filter(isVisibleCatalogProduct));
+        setCustomerCategory(result.customer?.category ?? null);
+        setError('');
+      })
+      .catch((err: unknown) => {
+        console.error(err);
+
+        if (!alive) return;
+
+        const message = getErrorMessage(err, 'No se pudo cargar la tienda');
+
+        setProducts([]);
+        setError(message);
+        toast.error(message);
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [category, search]);
+
+  const handleCategoryChange = (value: string) => {
     setLoading(true);
     setError('');
+    setCategory(value);
+  };
 
-    shopApi
-      .getProducts({ category, search, limit: 80 })
-      .then((result) => {
-        setProducts(result.products);
-        setCustomerCategory(result.customer?.category ?? null);
-      })
-      .catch((err) => setError(err.message || 'No se pudo cargar la tienda'))
-      .finally(() => setLoading(false));
-  }, [category, search]);
+  const handleSearchChange = (value: string) => {
+    setLoading(true);
+    setError('');
+    setSearch(value);
+  };
+
+  const handleAddToCart = (product: CatalogProduct) => {
+    if (!product.canSell) {
+      toast.error('Este producto no tiene stock disponible');
+      return;
+    }
+
+    add(product, 1);
+    toast.success('Producto agregado al carrito');
+  };
 
   return (
     <>
@@ -118,7 +205,6 @@ export default function TiendaPage() {
           color: inherit;
         }
 
-        /* HEADER */
         .topbar {
           background: var(--white);
           border-bottom: 1px solid var(--line);
@@ -146,23 +232,23 @@ export default function TiendaPage() {
         }
 
         .brand-mark {
-  width: 54px;
-  height: 54px;
-  border-radius: 18px;
-  background: #111827;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  box-shadow: 0 12px 24px rgba(17, 24, 39, 0.18);
-}
+          width: 54px;
+          height: 54px;
+          border-radius: 18px;
+          background: #111827;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          box-shadow: 0 12px 24px rgba(17, 24, 39, 0.18);
+        }
 
-.brand-logo {
-  width: 38px;
-  height: auto;
-  object-fit: contain;
-  display: block;
-}
+        .brand-logo {
+          width: 38px;
+          height: auto;
+          object-fit: contain;
+          display: block;
+        }
 
         .brand-text {
           display: flex;
@@ -293,7 +379,6 @@ export default function TiendaPage() {
           padding: 0 6px;
         }
 
-        /* LOCATION */
         .location-bar {
           background: var(--white);
           border-bottom: 1px solid var(--line);
@@ -330,106 +415,12 @@ export default function TiendaPage() {
           font-weight: 800;
         }
 
-        /* LAYOUT */
         .main {
           max-width: 1320px;
           margin: 0 auto;
           padding: 28px 28px 70px;
         }
 
-        .hero {
-          background:
-            radial-gradient(circle at 88% 20%, rgba(20,184,106,0.16), transparent 28%),
-            linear-gradient(135deg, #111827 0%, #1f2937 54%, #0f172a 100%);
-          border-radius: 28px;
-          padding: 34px;
-          color: var(--white);
-          display: grid;
-          grid-template-columns: 1.5fr 0.8fr;
-          gap: 24px;
-          align-items: center;
-          margin-bottom: 22px;
-          overflow: hidden;
-          position: relative;
-          box-shadow: var(--shadow);
-        }
-
-        .hero::after {
-          content: "";
-          position: absolute;
-          width: 260px;
-          height: 260px;
-          border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.12);
-          right: -90px;
-          bottom: -110px;
-        }
-
-        .hero-kicker {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          width: fit-content;
-          background: rgba(255,255,255,0.1);
-          border: 1px solid rgba(255,255,255,0.13);
-          border-radius: 999px;
-          padding: 7px 12px;
-          font-size: 12px;
-          font-weight: 800;
-          margin-bottom: 16px;
-          color: #dcfce7;
-        }
-
-        .hero h1 {
-          margin: 0;
-          max-width: 680px;
-          font-size: clamp(28px, 4vw, 48px);
-          line-height: 0.98;
-          letter-spacing: -0.055em;
-          font-weight: 900;
-        }
-
-        .hero p {
-          max-width: 620px;
-          margin: 16px 0 0;
-          color: rgba(255,255,255,0.72);
-          font-size: 15px;
-          line-height: 1.6;
-        }
-
-        .hero-card {
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.12);
-          backdrop-filter: blur(18px);
-          border-radius: 24px;
-          padding: 22px;
-          position: relative;
-          z-index: 1;
-        }
-
-        .hero-card-label {
-          font-size: 12px;
-          color: rgba(255,255,255,0.62);
-          font-weight: 700;
-          margin-bottom: 8px;
-        }
-
-        .hero-card-value {
-          font-size: 28px;
-          line-height: 1;
-          font-weight: 900;
-          letter-spacing: -0.04em;
-          margin-bottom: 12px;
-        }
-
-        .hero-card small {
-          display: block;
-          color: rgba(255,255,255,0.68);
-          line-height: 1.5;
-          font-size: 13px;
-        }
-
-        /* LOGIN BANNER */
         .login-banner {
           background: var(--white);
           border: 1px solid var(--line);
@@ -505,7 +496,6 @@ export default function TiendaPage() {
           white-space: nowrap;
         }
 
-        /* CONTENT */
         .content-layout {
           display: grid;
           grid-template-columns: 250px 1fr;
@@ -675,7 +665,6 @@ export default function TiendaPage() {
           pointer-events: none;
         }
 
-        /* PRODUCTS */
         .grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
@@ -703,8 +692,7 @@ export default function TiendaPage() {
         .card-img {
           position: relative;
           aspect-ratio: 1 / 1;
-          background:
-            linear-gradient(135deg, #f9fafb 0%, #eef2f7 100%);
+          background: linear-gradient(135deg, #f9fafb 0%, #eef2f7 100%);
           overflow: hidden;
         }
 
@@ -885,7 +873,6 @@ export default function TiendaPage() {
           background: var(--white);
         }
 
-        /* STATES */
         .err-box {
           background: var(--red-soft);
           color: var(--red);
@@ -964,7 +951,6 @@ export default function TiendaPage() {
           font-weight: 600;
         }
 
-        /* FOOTER */
         .footer {
           background: var(--white);
           border-top: 1px solid var(--line);
@@ -992,22 +978,22 @@ export default function TiendaPage() {
         }
 
         .footer-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  background: #111827;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
+          width: 36px;
+          height: 36px;
+          border-radius: 12px;
+          background: #111827;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+        }
 
-.footer-logo {
-  width: 25px;
-  height: auto;
-  object-fit: contain;
-  display: block;
-}
+        .footer-logo {
+          width: 25px;
+          height: auto;
+          object-fit: contain;
+          display: block;
+        }
 
         .footer-links {
           display: flex;
@@ -1027,7 +1013,6 @@ export default function TiendaPage() {
           color: var(--text);
         }
 
-        /* RESPONSIVE */
         @media (max-width: 980px) {
           .topbar-inner {
             height: auto;
@@ -1060,12 +1045,6 @@ export default function TiendaPage() {
 
           .main {
             padding: 20px 18px 56px;
-          }
-
-          .hero {
-            grid-template-columns: 1fr;
-            padding: 26px;
-            border-radius: 24px;
           }
 
           .content-layout {
@@ -1132,14 +1111,6 @@ export default function TiendaPage() {
             font-size: 10px;
           }
 
-          .hero h1 {
-            font-size: 30px;
-          }
-
-          .hero-card {
-            padding: 18px;
-          }
-
           .login-banner {
             flex-direction: column;
             align-items: stretch;
@@ -1200,15 +1171,15 @@ export default function TiendaPage() {
           <div className="topbar-inner">
             <Link href="/tienda" className="brand">
               <div className="brand-mark">
-  <Image
-    src="/logo-vj-white-transparent.png"
-    alt="Grupo VJ"
-    width={120}
-    height={120}
-    className="brand-logo"
-    priority
-  />
-</div>
+                <Image
+                  src="/logo-vj-white-transparent.png"
+                  alt="Grupo VJ"
+                  width={120}
+                  height={120}
+                  className="brand-logo"
+                  priority
+                />
+              </div>
 
               <div className="brand-text">
                 <span className="brand-name">Grupo VJ</span>
@@ -1222,7 +1193,7 @@ export default function TiendaPage() {
               <Search className="search-icon" />
               <input
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Buscar productos, marcas o categorías..."
               />
             </div>
@@ -1261,8 +1232,6 @@ export default function TiendaPage() {
         </div>
 
         <main className="main">
-
-
           {!isLoggedIn && (
             <div className="login-banner">
               <div className="login-banner-text">
@@ -1291,7 +1260,7 @@ export default function TiendaPage() {
           {error && <div className="err-box">⚠ {error}</div>}
 
           <div className="mobile-categories">
-            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <select value={category} onChange={(e) => handleCategoryChange(e.target.value)}>
               <option value="">Todas las categorías</option>
               {categories.map((cat) => (
                 <option key={cat.id} value={cat.slug}>
@@ -1312,7 +1281,7 @@ export default function TiendaPage() {
               <div className="cat-list">
                 <button
                   className={`cat-btn ${category === '' ? 'active' : ''}`}
-                  onClick={() => setCategory('')}
+                  onClick={() => handleCategoryChange('')}
                 >
                   <span>Todas</span>
                   <span className="cat-dot" />
@@ -1322,7 +1291,7 @@ export default function TiendaPage() {
                   <button
                     key={cat.id}
                     className={`cat-btn ${category === cat.slug ? 'active' : ''}`}
-                    onClick={() => setCategory(cat.slug)}
+                    onClick={() => handleCategoryChange(cat.slug)}
                   >
                     <span>{cat.name}</span>
                     <span className="cat-dot" />
@@ -1343,7 +1312,8 @@ export default function TiendaPage() {
                     <div className="toolbar-title">
                       <h2>{selectedCategoryName}</h2>
                       <span>
-                        {products.length} {products.length === 1 ? 'producto encontrado' : 'productos encontrados'}
+                        {products.length}{' '}
+                        {products.length === 1 ? 'producto encontrado' : 'productos encontrados'}
                       </span>
                     </div>
 
@@ -1367,7 +1337,7 @@ export default function TiendaPage() {
                       </div>
                     )}
 
-                    {products.map((product: CatalogProduct) => (
+                    {products.map((product) => (
                       <article className="card" key={product.id}>
                         <div className="card-img">
                           {product.imageUrl ? (
@@ -1394,7 +1364,9 @@ export default function TiendaPage() {
                           <h2 className="card-name">{product.name}</h2>
 
                           <p className="card-unit">
-                            {product.saleUnit === 'KG' ? 'Venta por kilogramo' : 'Venta por unidad'}
+                            {product.saleUnit === 'KG'
+                              ? 'Venta por kilogramo'
+                              : 'Venta por unidad'}
                           </p>
 
                           <div className="card-footer">
@@ -1415,7 +1387,7 @@ export default function TiendaPage() {
                             ) : (
                               <button
                                 disabled={!product.canSell}
-                                onClick={() => add(product, 1)}
+                                onClick={() => handleAddToCart(product)}
                                 className="add-btn"
                                 title="Agregar al carrito"
                               >
@@ -1436,22 +1408,22 @@ export default function TiendaPage() {
         <footer className="footer">
           <div className="footer-inner">
             <div className="footer-brand">
-  <div className="footer-mark">
-    <Image
-      src="/logo-vj-white-transparent.png"
-      alt="Grupo VJ"
-      width={80}
-      height={80}
-      className="footer-logo"
-    />
-  </div>
-  GRUPO VJ
-</div>
+              <div className="footer-mark">
+                <Image
+                  src="/logo-vj-white-transparent.png"
+                  alt="Grupo VJ"
+                  width={80}
+                  height={80}
+                  className="footer-logo"
+                />
+              </div>
+              GRUPO VJ
+            </div>
 
             <div className="footer-links">
               <Link href="/tienda/login">Mi cuenta</Link>
               <Link href="/tienda/carrito">Carrito</Link>
-              <Link href="/tienda/register">Registrarse</Link> 
+              <Link href="/tienda/register">Registrarse</Link>
             </div>
           </div>
         </footer>

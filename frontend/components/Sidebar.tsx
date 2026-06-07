@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ElementType } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -21,7 +21,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   FolderTree,
-  ShieldCheck
+  ShieldCheck,
+  MapPin
 } from 'lucide-react';
 
 const NAV = [
@@ -107,9 +108,16 @@ const ADMIN_NAV = [
     color: '#fbbf24',
   },
   {
-  href: "/configuracion/arca",
+  href: '/configuracion/business-locations',
+  icon: MapPin,
+  label: 'Sucursales y depósitos',
+  color: '#38bdf8',
+},
+{
+  href: '/configuracion/arca',
   icon: ShieldCheck,
-  label: "ARCA",
+  label: 'ARCA',
+  color: '#22c55e',
 }
 ];
 
@@ -131,15 +139,11 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout } = useAuthStore();
 
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+  if (typeof window === 'undefined') return false;
 
-  useEffect(() => {
-    const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-
-    if (saved === 'true') {
-      setCollapsed(true);
-    }
-  }, []);
+  return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
+});
 
   const toggleCollapsed = () => {
     const nextCollapsed = !collapsed;

@@ -15,6 +15,7 @@ import {
   Cell,
 } from 'recharts';
 import { TrendingUp, Award, DollarSign, Clock } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-AR', {
@@ -40,6 +41,7 @@ type ProductStat = {
   grossRevenue?: number;
   collectedRevenue?: number;
   pendingRevenue?: number;
+  grossProfit?: number;
 
   rankValue?: number;
 };
@@ -55,6 +57,22 @@ type Totals = {
   grossRevenue?: number;
   collectedRevenue?: number;
   pendingRevenue?: number;
+  grossProfit?: number;
+  profitMargin?: number;
+};
+
+const emptyTotals: Totals = {
+  totalRevenue: 0,
+  totalSales: 0,
+  totalItems: 0,
+  totalUnits: 0,
+  totalKg: 0,
+  productsCount: 0,
+  grossRevenue: 0,
+  collectedRevenue: 0,
+  pendingRevenue: 0,
+  grossProfit: 0,
+  profitMargin: 0,
 };
 
 function n0(value: unknown) {
@@ -116,6 +134,7 @@ function normalizeProductStats(data: unknown): ProductStat[] {
     const grossRevenue = n0(item.grossRevenue ?? item.totalRevenue ?? item.revenue ?? item.total);
     const collectedRevenue = n0(item.collectedRevenue);
     const pendingRevenue = n0(item.pendingRevenue);
+    const grossProfit = n0(item.grossProfit ?? item.profit);
 
     return {
       productId: String(item.productId ?? product?.id ?? ''),
@@ -131,6 +150,7 @@ function normalizeProductStats(data: unknown): ProductStat[] {
       grossRevenue,
       collectedRevenue,
       pendingRevenue,
+      grossProfit,
       rankValue: n0(item.rankValue ?? totalSold),
     };
   });
@@ -143,6 +163,8 @@ function normalizeTotals(data: unknown): Totals {
     const grossRevenue = n0(unwrapped.grossRevenue ?? unwrapped.totalRevenue);
     const collectedRevenue = n0(unwrapped.collectedRevenue);
     const pendingRevenue = n0(unwrapped.pendingRevenue);
+    const grossProfit = n0(unwrapped.grossProfit ?? unwrapped.profit);
+    const profitMargin = grossRevenue > 0 ? (grossProfit / grossRevenue) * 100 : 0;
 
     return {
       totalRevenue: n0(unwrapped.totalRevenue ?? grossRevenue),
@@ -154,6 +176,8 @@ function normalizeTotals(data: unknown): Totals {
       grossRevenue,
       collectedRevenue,
       pendingRevenue,
+      grossProfit,
+      profitMargin,
     };
   }
 
@@ -163,6 +187,8 @@ function normalizeTotals(data: unknown): Totals {
     const grossRevenue = products.reduce((acc, p) => acc + n0(p.grossRevenue ?? p.totalRevenue), 0);
     const collectedRevenue = products.reduce((acc, p) => acc + n0(p.collectedRevenue), 0);
     const pendingRevenue = products.reduce((acc, p) => acc + n0(p.pendingRevenue), 0);
+    const grossProfit = products.reduce((acc, p) => acc + n0(p.grossProfit), 0);
+    const profitMargin = grossRevenue > 0 ? (grossProfit / grossRevenue) * 100 : 0;
 
     return {
       totalRevenue: grossRevenue,
@@ -174,39 +200,38 @@ function normalizeTotals(data: unknown): Totals {
       grossRevenue,
       collectedRevenue,
       pendingRevenue,
+      grossProfit,
+      profitMargin,
     };
   }
 
+  return emptyTotals;
+}
+
+async function fetchInitialReportData() {
+  const [topRes, totalsRes] = await Promise.all([
+    api.get('/product-stats/top?limit=10'),
+    api.get('/product-stats/totals'),
+  ]);
+
   return {
-    totalRevenue: 0,
-    totalSales: 0,
-    totalItems: 0,
-    totalUnits: 0,
-    totalKg: 0,
-    productsCount: 0,
-    grossRevenue: 0,
-    collectedRevenue: 0,
-    pendingRevenue: 0,
+    topProducts: normalizeProductStats(topRes.data),
+    totals: normalizeTotals(totalsRes.data),
   };
+}
+
+async function fetchRangeReportData(from: string, to: string) {
+  const res = await api.get(`/product-stats/top-range?start=${from}&end=${to}&limit=10`);
+  return normalizeProductStats(res.data);
 }
 
 export default function ReportesPage() {
   const [topProducts, setTopProducts] = useState<ProductStat[]>([]);
-  const [totals, setTotals] = useState<Totals>({
-    totalRevenue: 0,
-    totalSales: 0,
-    totalItems: 0,
-    totalUnits: 0,
-    totalKg: 0,
-    productsCount: 0,
-    grossRevenue: 0,
-    collectedRevenue: 0,
-    pendingRevenue: 0,
-  });
+  const [totals, setTotals] = useState<Totals>(emptyTotals);
 
   const [topRange, setTopRange] = useState<ProductStat[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeLoading, setRangeLoading] = useState(true);
 
   const [from, setFrom] = useState(() => {
     const d = new Date();
@@ -217,55 +242,72 @@ export default function ReportesPage() {
   const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
-    setLoading(true);
+    let alive = true;
 
-    Promise.all([
-      api
-        .get('/product-stats/top?limit=10')
-        .then((r) => {
-          setTopProducts(normalizeProductStats(r.data));
-        })
-        .catch((err) => {
-          console.error('❌ Error /product-stats/top:', err);
-          setTopProducts([]);
-        }),
+    fetchInitialReportData()
+      .then((data) => {
+        if (!alive) return;
 
-      api
-        .get('/product-stats/totals')
-        .then((r) => {
-          setTotals(normalizeTotals(r.data));
-        })
-        .catch((err) => {
-          console.error('❌ Error /product-stats/totals:', err);
-          setTotals({
-            totalRevenue: 0,
-            totalSales: 0,
-            totalItems: 0,
-            totalUnits: 0,
-            totalKg: 0,
-            productsCount: 0,
-            grossRevenue: 0,
-            collectedRevenue: 0,
-            pendingRevenue: 0,
-          });
-        }),
-    ]).finally(() => setLoading(false));
+        setTopProducts(data.topProducts);
+        setTotals(data.totals);
+      })
+      .catch((err) => {
+        console.error('❌ Error reportes iniciales:', err);
+
+        if (!alive) return;
+
+        setTopProducts([]);
+        setTotals(emptyTotals);
+        toast.error('Error al cargar reportes');
+      })
+      .finally(() => {
+        if (!alive) return;
+
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
-    setRangeLoading(true);
+    let alive = true;
 
-    api
-      .get(`/product-stats/top-range?start=${from}&end=${to}&limit=10`)
-      .then((r) => {
-        setTopRange(normalizeProductStats(r.data));
+    fetchRangeReportData(from, to)
+      .then((data) => {
+        if (!alive) return;
+
+        setTopRange(data);
       })
       .catch((err) => {
         console.error('❌ Error /product-stats/top-range:', err);
+
+        if (!alive) return;
+
         setTopRange([]);
+        toast.error('Error al cargar el rango de fechas');
       })
-      .finally(() => setRangeLoading(false));
+      .finally(() => {
+        if (!alive) return;
+
+        setRangeLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, [from, to]);
+
+  const handleFromChange = (value: string) => {
+    setRangeLoading(true);
+    setFrom(value);
+  };
+
+  const handleToChange = (value: string) => {
+    setRangeLoading(true);
+    setTo(value);
+  };
 
   const pieData = useMemo(
     () =>
@@ -289,11 +331,10 @@ export default function ReportesPage() {
         </div>
       ) : (
         <>
-          {/* Totales */}
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
               gap: 14,
               marginBottom: 24,
             }}
@@ -310,6 +351,12 @@ export default function ReportesPage() {
                 value: fmt(totals.grossRevenue ?? totals.totalRevenue),
                 icon: <TrendingUp size={18} />,
                 color: 'var(--accent2)',
+              },
+              {
+                label: 'Utilidad bruta',
+                value: `${fmt(totals.grossProfit ?? 0)} · ${Number(totals.profitMargin ?? 0).toFixed(1)}%`,
+                icon: <Award size={18} />,
+                color: '#34d399',
               },
               {
                 label: 'Pendiente CC',
@@ -334,9 +381,11 @@ export default function ReportesPage() {
                 >
                   {s.icon}
                 </div>
+
                 <div className="stat-value" style={{ color: s.color, fontSize: 24 }}>
                   {s.value}
                 </div>
+
                 <div className="stat-label">{s.label}</div>
               </div>
             ))}
@@ -350,7 +399,6 @@ export default function ReportesPage() {
               marginBottom: 20,
             }}
           >
-            {/* Top products bar chart */}
             <div className="card" style={{ padding: 24 }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
                 Top productos — unidades / kg vendidos
@@ -370,6 +418,7 @@ export default function ReportesPage() {
                       tickLine={false}
                       tickFormatter={(v) => `${v}`}
                     />
+
                     <YAxis
                       type="category"
                       dataKey="name"
@@ -378,6 +427,7 @@ export default function ReportesPage() {
                       tickLine={false}
                       width={150}
                     />
+
                     <Tooltip
                       contentStyle={{
                         background: 'var(--surface2)',
@@ -388,6 +438,7 @@ export default function ReportesPage() {
                       }}
                       formatter={(v: unknown) => [Number(v), 'Vendido']}
                     />
+
                     <Bar
                       dataKey="totalSold"
                       fill="var(--accent)"
@@ -405,7 +456,6 @@ export default function ReportesPage() {
               )}
             </div>
 
-            {/* Pie chart */}
             <div className="card" style={{ padding: 24 }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 20 }}>
                 Distribución de ingresos cobrados
@@ -428,6 +478,7 @@ export default function ReportesPage() {
                           <Cell key={`${d.name}-${i}`} fill={COLORS[i % COLORS.length]} />
                         ))}
                       </Pie>
+
                       <Tooltip
                         contentStyle={{
                           background: 'var(--surface2)',
@@ -456,6 +507,7 @@ export default function ReportesPage() {
                             flexShrink: 0,
                           }}
                         />
+
                         <span
                           style={{
                             color: 'var(--text2)',
@@ -467,6 +519,7 @@ export default function ReportesPage() {
                         >
                           {d.name}
                         </span>
+
                         <span
                           style={{
                             fontFamily: 'var(--mono)',
@@ -489,7 +542,6 @@ export default function ReportesPage() {
             </div>
           </div>
 
-          {/* Range filter */}
           <div className="card" style={{ padding: 24 }}>
             <div
               style={{
@@ -507,14 +559,16 @@ export default function ReportesPage() {
                 <input
                   type="date"
                   value={from}
-                  onChange={(e) => setFrom(e.target.value)}
+                  onChange={(e) => handleFromChange(e.target.value)}
                   style={{ width: 150 }}
                 />
+
                 <span style={{ color: 'var(--text3)', fontSize: 13 }}>hasta</span>
+
                 <input
                   type="date"
                   value={to}
-                  onChange={(e) => setTo(e.target.value)}
+                  onChange={(e) => handleToChange(e.target.value)}
                   style={{ width: 150 }}
                 />
               </div>
@@ -535,6 +589,7 @@ export default function ReportesPage() {
                       <th>Pendiente CC</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {topRange.map((p, i) => (
                       <tr key={`${p.productId ?? p.name}-${i}`}>

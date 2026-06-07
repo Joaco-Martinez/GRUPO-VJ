@@ -1,68 +1,110 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { MovementLocation, Product, StockMovement } from '@/types';
 import { fmtDate, normalizeArray, num, productMinStock, productStock } from '@/lib/helpers';
 import {
-  AlertTriangle,
   ArrowDownCircle,
   ArrowUpCircle,
   BarChart2,
-  CheckCircle2,
   Search,
-  X,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
-type ToastState = {
-  type: 'success' | 'error';
-  message: string;
-} | null;
+type StockForm = {
+  productId: string;
+  location: MovementLocation;
+  quantity: string;
+  quantityKg: string;
+  mode: string;
+};
+
+const emptyForm: StockForm = {
+  productId: '',
+  location: 'LOCAL',
+  quantity: '',
+  quantityKg: '',
+  mode: 'ADD',
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.error ??
+    fallback
+  );
+}
+
+async function fetchStockData() {
+  const [p, m] = await Promise.all([
+    api.get('/products'),
+    api.get('/products/movements').catch(() => ({ data: [] })),
+  ]);
+
+  return {
+    products: normalizeArray<Product>(p.data),
+    movements: normalizeArray<StockMovement>(m.data),
+  };
+}
 
 export default function StockPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [form, setForm] = useState({
-    productId: '',
-    location: 'LOCAL' as MovementLocation,
-    quantity: '',
-    quantityKg: '',
-    mode: 'ADD',
-  });
+  const [form, setForm] = useState<StockForm>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<ToastState>(null);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
-
-    window.setTimeout(() => {
-      setToast(null);
-    }, 3200);
-  };
-
-  const load = async () => {
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
     try {
-      const [p, m] = await Promise.all([
-        api.get('/products'),
-        api.get('/products/movements').catch(() => ({ data: [] })),
-      ]);
+      const data = await fetchStockData();
 
-      setProducts(normalizeArray<Product>(p.data));
-      setMovements(normalizeArray<StockMovement>(m.data));
+      setProducts(data.products);
+      setMovements(data.movements);
+
+      if (showSuccess) {
+        toast.success('Stock actualizado correctamente');
+      }
     } catch (e) {
       console.error(e);
-      showToast('error', 'Error al cargar stock');
+      toast.error('Error al cargar stock');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    let alive = true;
+
+    fetchStockData()
+      .then((data) => {
+        if (!alive) return;
+
+        setProducts(data.products);
+        setMovements(data.movements);
+      })
+      .catch((e) => {
+        console.error(e);
+
+        if (!alive) return;
+
+        toast.error('Error al cargar stock');
+      })
+      .finally(() => {
+        if (!alive) return;
+
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const filtered = products.filter(
@@ -75,40 +117,48 @@ export default function StockPage() {
   const selected = products.find((p) => p.id === form.productId);
 
   const save = async () => {
-    if (!selected) return;
+    if (!selected) {
+      toast.error('Seleccioná un producto');
+      return;
+    }
+
+    const quantity = num(form.quantity);
+    const quantityKg = num(form.quantityKg);
+
+    if (selected.saleUnit === 'KG' && quantityKg <= 0) {
+      toast.error('Ingresá una cantidad válida en kg');
+      return;
+    }
+
+    if (selected.saleUnit !== 'KG' && quantity <= 0) {
+      toast.error('Ingresá una cantidad válida');
+      return;
+    }
 
     setSaving(true);
+
+    const toastId = toast.loading('Agregando stock...');
 
     try {
       if (selected.saleUnit === 'KG') {
         await api.post(`/products/${selected.id}/add-stock-kg`, {
           to: form.location,
-          quantityKg: num(form.quantityKg),
+          quantityKg,
         });
       } else {
         await api.post('/products/add-stock', {
           productId: selected.id,
           to: form.location,
-          quantity: num(form.quantity),
+          quantity,
         });
       }
 
-      setForm({
-        productId: '',
-        location: 'LOCAL',
-        quantity: '',
-        quantityKg: '',
-        mode: 'ADD',
-      });
+      setForm(emptyForm);
 
-      showToast('success', 'Stock agregado correctamente');
+      toast.success('Stock agregado correctamente', { id: toastId });
       await load();
     } catch (e: unknown) {
-      showToast(
-        'error',
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          'Error al mover stock'
-      );
+      toast.error(getErrorMessage(e, 'Error al mover stock'), { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -116,59 +166,6 @@ export default function StockPage() {
 
   return (
     <AppLayout title="Stock" subtitle="Inventario local, depósito y movimientos">
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(15,23,42,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
-            style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
-            }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
       <div className="card" style={{ padding: 16, marginBottom: 18 }}>
         <div
           style={{
@@ -180,11 +177,14 @@ export default function StockPage() {
         >
           <div>
             <label className="form-label">Producto</label>
+
             <select
               value={form.productId}
               onChange={(e) => setForm((p) => ({ ...p, productId: e.target.value }))}
+              disabled={saving}
             >
               <option value="">Seleccionar...</option>
+
               {products
                 .filter((p) => p.type === 'SIMPLE')
                 .map((p) => (
@@ -197,11 +197,13 @@ export default function StockPage() {
 
           <div>
             <label className="form-label">Destino</label>
+
             <select
               value={form.location}
               onChange={(e) =>
                 setForm((p) => ({ ...p, location: e.target.value as MovementLocation }))
               }
+              disabled={saving}
             >
               <option value="LOCAL">Local</option>
               <option value="DEPOSITO">Depósito</option>
@@ -212,6 +214,7 @@ export default function StockPage() {
             <label className="form-label">
               Cantidad {selected?.saleUnit === 'KG' ? 'kg' : ''}
             </label>
+
             <input
               type="number"
               value={selected?.saleUnit === 'KG' ? form.quantityKg : form.quantity}
@@ -221,6 +224,7 @@ export default function StockPage() {
                   [selected?.saleUnit === 'KG' ? 'quantityKg' : 'quantity']: e.target.value,
                 }))
               }
+              disabled={saving}
             />
           </div>
 
@@ -241,6 +245,7 @@ export default function StockPage() {
             color: 'var(--text3)',
           }}
         />
+
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -361,6 +366,7 @@ export default function StockPage() {
                       ) : (
                         <ArrowDownCircle size={14} style={{ color: 'var(--accent)' }} />
                       )}
+
                       {m.type}
                     </span>
                   </td>

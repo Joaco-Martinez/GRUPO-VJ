@@ -14,9 +14,9 @@ import {
   Search,
   RefreshCcw,
   AlertTriangle,
-  CheckCircle2,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
+import toast from 'react-hot-toast';
 
 const emptyForm = {
   name: '',
@@ -34,10 +34,7 @@ const emptyForm = {
   isAccountEnabled: 'false',
 };
 
-type ToastState = {
-  type: 'success' | 'error';
-  message: string;
-} | null;
+type UserForm = typeof emptyForm;
 
 type ConfirmState = {
   title: string;
@@ -46,6 +43,30 @@ type ConfirmState = {
   danger?: boolean;
   onConfirm: () => Promise<void> | void;
 } | null;
+
+type CreateUserPayload = {
+  name: string;
+  email: string;
+  password: string;
+  role: Role;
+  isActive: boolean;
+
+  nombre?: string;
+  apellido?: string;
+  dni?: string;
+  telefono?: string | null;
+  category?: ClientCategory;
+  creditLimit?: number | null;
+  isAccountEnabled?: boolean;
+};
+
+type UpdateUserPayload = {
+  name: string;
+  email: string;
+  role: Role;
+  isActive: boolean;
+  password?: string;
+};
 
 function normalizeArray<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];
@@ -71,6 +92,21 @@ function normalizeArray<T>(value: unknown): T[] {
   return [];
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.error ??
+    fallback
+  );
+}
+
+async function fetchUsers() {
+  const response = await api.get('/users');
+  return normalizeArray<User>(response.data);
+}
+
 export default function UsuariosPage() {
   const { user: me } = useAuthStore();
 
@@ -82,35 +118,51 @@ export default function UsuariosPage() {
 
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
-  const [form, setForm] = useState<Record<string, string>>(emptyForm);
+  const [form, setForm] = useState<UserForm>(emptyForm);
 
-  const [toast, setToast] = useState<ToastState>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
-
-    window.setTimeout(() => {
-      setToast(null);
-    }, 3200);
-  };
-
-  const load = () => {
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
-    api
-      .get('/users')
-      .then((r) => setUsers(normalizeArray<User>(r.data)))
-      .catch((e) => {
-        console.error(e);
-        showToast('error', 'Error al cargar usuarios');
-      })
-      .finally(() => setLoading(false));
+    try {
+      const data = await fetchUsers();
+      setUsers(data);
+
+      if (showSuccess) {
+        toast.success('Usuarios actualizados');
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Error al cargar usuarios');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    load();
+    let alive = true;
+
+    fetchUsers()
+      .then((data) => {
+        if (!alive) return;
+        setUsers(data);
+      })
+      .catch((e) => {
+        console.error(e);
+
+        if (!alive) return;
+        toast.error('Error al cargar usuarios');
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -157,7 +209,13 @@ export default function UsuariosPage() {
     setForm(emptyForm);
   };
 
-  const field = (key: string, value: string) => {
+  const forceCloseModal = () => {
+    setModal(null);
+    setEditing(null);
+    setForm(emptyForm);
+  };
+
+  const field = (key: keyof UserForm, value: string) => {
     setForm((prev) => {
       const next = { ...prev, [key]: value };
 
@@ -181,14 +239,61 @@ export default function UsuariosPage() {
     });
   };
 
+  const validateForm = () => {
+    if (!form.name.trim()) {
+      toast.error('Ingresá el nombre completo');
+      return false;
+    }
+
+    if (!form.email.trim()) {
+      toast.error('Ingresá el email');
+      return false;
+    }
+
+    if (modal === 'create' && !form.password.trim()) {
+      toast.error('Ingresá una contraseña');
+      return false;
+    }
+
+    if (modal === 'create' && form.password.trim().length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres');
+      return false;
+    }
+
+    if (modal === 'create' && form.role === 'CLIENTE') {
+      if (!form.nombre.trim()) {
+        toast.error('Ingresá el nombre del cliente');
+        return false;
+      }
+
+      if (!form.apellido.trim()) {
+        toast.error('Ingresá el apellido del cliente');
+        return false;
+      }
+
+      if (!form.dni.trim()) {
+        toast.error('Ingresá el DNI/CUIT del cliente');
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const handleSave = async () => {
+    if (!validateForm()) return;
+
     setSaving(true);
+
+    const toastId = toast.loading(
+      modal === 'create' ? 'Creando usuario...' : 'Guardando usuario...'
+    );
 
     try {
       if (modal === 'create') {
         const role = form.role as Role;
 
-        const payload: any = {
+        const payload: CreateUserPayload = {
           name: form.name.trim(),
           email: form.email.trim().toLowerCase(),
           password: form.password,
@@ -207,14 +312,14 @@ export default function UsuariosPage() {
         }
 
         await api.post('/users', payload);
-        showToast('success', 'Usuario creado correctamente');
+        toast.success('Usuario creado correctamente', { id: toastId });
       }
 
       if (modal === 'edit' && editing) {
-        const payload: any = {
+        const payload: UpdateUserPayload = {
           name: form.name.trim(),
           email: form.email.trim().toLowerCase(),
-          role: form.role,
+          role: form.role as Role,
           isActive: form.isActive === 'true',
         };
 
@@ -223,17 +328,13 @@ export default function UsuariosPage() {
         }
 
         await api.put(`/users/${editing.id}`, payload);
-        showToast('success', 'Usuario actualizado correctamente');
+        toast.success('Usuario actualizado correctamente', { id: toastId });
       }
 
-      closeModal();
-      load();
+      forceCloseModal();
+      await load();
     } catch (error: unknown) {
-      showToast(
-        'error',
-        (error as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? 'Error al guardar usuario'
-      );
+      toast.error(getErrorMessage(error, 'Error al guardar usuario'), { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -241,7 +342,7 @@ export default function UsuariosPage() {
 
   const handleDelete = async (u: User) => {
     if (u.id === me?.id) {
-      showToast('error', 'No podés eliminarte a vos mismo');
+      toast.error('No podés eliminarte a vos mismo');
       return;
     }
 
@@ -251,16 +352,16 @@ export default function UsuariosPage() {
       confirmText: 'Eliminar',
       danger: true,
       onConfirm: async () => {
+        const toastId = toast.loading('Eliminando usuario...');
+
         try {
           await api.delete(`/users/${u.id}`);
-          load();
-          showToast('success', 'Usuario eliminado correctamente');
+          await load();
+          toast.success('Usuario eliminado correctamente', { id: toastId });
         } catch (error: unknown) {
-          showToast(
-            'error',
-            (error as { response?: { data?: { message?: string } } })?.response?.data
-              ?.message ?? 'No se pudo eliminar el usuario'
-          );
+          toast.error(getErrorMessage(error, 'No se pudo eliminar el usuario'), {
+            id: toastId,
+          });
         }
       },
     });
@@ -310,7 +411,7 @@ export default function UsuariosPage() {
       subtitle="Gestión de administradores, empleados y clientes ecommerce"
       actions={
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={load}>
+          <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
             <RefreshCcw size={14} />
             Actualizar
           </button>
@@ -322,59 +423,6 @@ export default function UsuariosPage() {
         </div>
       }
     >
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(15,23,42,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
-            style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
-            }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
       <div
         style={{
           display: 'grid',
@@ -604,6 +652,7 @@ export default function UsuariosPage() {
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={closeModal}
+                disabled={saving}
                 style={{ padding: 6 }}
               >
                 <X size={16} />
@@ -618,6 +667,7 @@ export default function UsuariosPage() {
                     value={form.name ?? ''}
                     onChange={(e) => field('name', e.target.value)}
                     placeholder="Nombre completo"
+                    disabled={saving}
                   />
                 </div>
 
@@ -628,6 +678,7 @@ export default function UsuariosPage() {
                     value={form.email ?? ''}
                     onChange={(e) => field('email', e.target.value)}
                     placeholder="correo@grupovj.com"
+                    disabled={saving}
                   />
                 </div>
               </div>
@@ -646,6 +697,7 @@ export default function UsuariosPage() {
                         ? 'Mínimo 6 caracteres'
                         : 'Dejar vacío para no cambiar'
                     }
+                    disabled={saving}
                   />
                 </div>
 
@@ -654,7 +706,7 @@ export default function UsuariosPage() {
                   <select
                     value={form.role ?? 'EMPLEADO'}
                     onChange={(e) => field('role', e.target.value)}
-                    disabled={modal === 'edit' && editing?.id === me?.id}
+                    disabled={saving || (modal === 'edit' && editing?.id === me?.id)}
                   >
                     <option value="EMPLEADO">EMPLEADO</option>
                     <option value="ADMIN">ADMIN</option>
@@ -669,7 +721,7 @@ export default function UsuariosPage() {
                   <select
                     value={form.isActive ?? 'true'}
                     onChange={(e) => field('isActive', e.target.value)}
-                    disabled={editing?.id === me?.id}
+                    disabled={saving || editing?.id === me?.id}
                   >
                     <option value="true">Activo</option>
                     <option value="false">Inactivo</option>
@@ -689,6 +741,7 @@ export default function UsuariosPage() {
                       <input
                         value={form.nombre ?? ''}
                         onChange={(e) => field('nombre', e.target.value)}
+                        disabled={saving}
                       />
                     </div>
 
@@ -697,6 +750,7 @@ export default function UsuariosPage() {
                       <input
                         value={form.apellido ?? ''}
                         onChange={(e) => field('apellido', e.target.value)}
+                        disabled={saving}
                       />
                     </div>
                   </div>
@@ -707,6 +761,7 @@ export default function UsuariosPage() {
                       <input
                         value={form.dni ?? ''}
                         onChange={(e) => field('dni', e.target.value)}
+                        disabled={saving}
                       />
                     </div>
 
@@ -715,6 +770,7 @@ export default function UsuariosPage() {
                       <input
                         value={form.telefono ?? ''}
                         onChange={(e) => field('telefono', e.target.value)}
+                        disabled={saving}
                       />
                     </div>
                   </div>
@@ -725,6 +781,7 @@ export default function UsuariosPage() {
                       <select
                         value={form.category ?? 'Price'}
                         onChange={(e) => field('category', e.target.value)}
+                        disabled={saving}
                       >
                         <option value="Price">Price / Público</option>
                         <option value="Cliente">Cliente</option>
@@ -738,6 +795,7 @@ export default function UsuariosPage() {
                         type="number"
                         value={form.creditLimit ?? ''}
                         onChange={(e) => field('creditLimit', e.target.value)}
+                        disabled={saving}
                       />
                     </div>
                   </div>
@@ -747,6 +805,7 @@ export default function UsuariosPage() {
                     <select
                       value={form.isAccountEnabled ?? 'false'}
                       onChange={(e) => field('isAccountEnabled', e.target.value)}
+                      disabled={saving}
                     >
                       <option value="false">Deshabilitada</option>
                       <option value="true">Habilitada</option>
@@ -757,7 +816,7 @@ export default function UsuariosPage() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeModal}>
+              <button className="btn btn-secondary" onClick={closeModal} disabled={saving}>
                 Cancelar
               </button>
 

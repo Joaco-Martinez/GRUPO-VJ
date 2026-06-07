@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { clientService } from "../services/client.service";
 import { getParamAsString } from "../utils/params";
+
 function toNumberOrNull(value: any) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
@@ -15,15 +16,25 @@ function toBoolean(value: any) {
   return Boolean(value);
 }
 
+function normalizeClientBody(body: any) {
+  const clean = { ...body };
+
+  clean.creditLimit = toNumberOrNull(body.creditLimit);
+
+  clean.isAccountEnabled = toBoolean(body.isAccountEnabled);
+  clean.createUser = toBoolean(body.createUser);
+  clean.unlinkUser = toBoolean(body.unlinkUser);
+
+  clean.latitude = toNumberOrNull(body.latitude);
+  clean.longitude = toNumberOrNull(body.longitude);
+
+  return clean;
+}
+
 export const clientController = {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const client = await clientService.createClient({
-        ...req.body,
-        creditLimit: toNumberOrNull(req.body.creditLimit),
-        isAccountEnabled: toBoolean(req.body.isAccountEnabled),
-        createUser: toBoolean(req.body.createUser),
-      });
+      const client = await clientService.createClient(normalizeClientBody(req.body));
 
       res.status(201).json({
         ok: true,
@@ -71,22 +82,10 @@ export const clientController = {
   async update(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const body = { ...req.body };
+      const body = normalizeClientBody(req.body);
 
       if (body.creditLimit !== undefined) {
-        body.creditLimit = toNumberOrNull(body.creditLimit) ?? null;
-      }
-
-      if (body.isAccountEnabled !== undefined) {
-        body.isAccountEnabled = toBoolean(body.isAccountEnabled);
-      }
-
-      if (body.createUser !== undefined) {
-        body.createUser = toBoolean(body.createUser);
-      }
-
-      if (body.unlinkUser !== undefined) {
-        body.unlinkUser = toBoolean(body.unlinkUser);
+        body.creditLimit = body.creditLimit ?? null;
       }
 
       const client = await clientService.updateClient(getParamAsString(id, "id"), body);

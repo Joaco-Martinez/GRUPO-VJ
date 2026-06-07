@@ -21,7 +21,11 @@ export default function AppLayout({ children, title, subtitle, actions }: AppLay
   const { user, loading, me } = useAuthStore();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+  if (typeof window === 'undefined') return false;
+
+  return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
+});
   const { toasts } = useToast();
 
   useEffect(() => {
@@ -32,21 +36,18 @@ export default function AppLayout({ children, title, subtitle, actions }: AppLay
     if (!loading && !user) router.replace('/login');
   }, [user, loading, router]);
 
-  useEffect(() => {
-    const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    setSidebarCollapsed(saved === 'true');
+useEffect(() => {
+  const handleSidebarChange = (event: Event) => {
+    const customEvent = event as CustomEvent<{ collapsed: boolean }>;
+    setSidebarCollapsed(customEvent.detail.collapsed);
+  };
 
-    const handleSidebarChange = (event: Event) => {
-      const customEvent = event as CustomEvent<{ collapsed: boolean }>;
-      setSidebarCollapsed(customEvent.detail.collapsed);
-    };
+  window.addEventListener('sidebar-collapsed-change', handleSidebarChange);
 
-    window.addEventListener('sidebar-collapsed-change', handleSidebarChange);
-
-    return () => {
-      window.removeEventListener('sidebar-collapsed-change', handleSidebarChange);
-    };
-  }, []);
+  return () => {
+    window.removeEventListener('sidebar-collapsed-change', handleSidebarChange);
+  };
+}, []);
 
   const desktopSidebarWidth = sidebarCollapsed ? 78 : 240;
 

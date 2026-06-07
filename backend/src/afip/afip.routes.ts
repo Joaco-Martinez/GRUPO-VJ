@@ -85,6 +85,100 @@ function getNombreCliente(
   return fullName || "A CONSUMIDOR FINAL ***********";
 }
 
+function getDocumentoCliente(client: any, facturaData: any) {
+  if (client?.dni) return String(client.dni);
+  if (facturaData?.nroDoc) return String(facturaData.nroDoc);
+  return undefined;
+}
+
+function getDomicilioCliente(client: any) {
+  return [client?.address, client?.locality, client?.province]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function numberOrZero(value: unknown) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function mapProductsFromSaleOrBody(reqBody: any, sale: any) {
+  if (reqBody.products && Array.isArray(reqBody.products)) {
+    return reqBody.products.map((item: any) => {
+      const quantity = numberOrZero(item.quantity);
+      const quantityKg =
+        item.quantityKg !== null && item.quantityKg !== undefined
+          ? numberOrZero(item.quantityKg)
+          : undefined;
+
+      const price = numberOrZero(item.price);
+
+      const subtotal =
+        item.subtotal !== undefined && item.subtotal !== null
+          ? numberOrZero(item.subtotal)
+          : quantityKg !== undefined && quantityKg > 0
+          ? quantityKg * price
+          : quantity * price;
+
+      return {
+        name: item.name ?? "Producto",
+        quantity,
+        ...(quantityKg !== undefined ? { quantityKg } : {}),
+        price,
+        subtotal,
+      };
+    });
+  }
+
+  return sale.items.map((item: any) => {
+    const quantity = numberOrZero(item.quantity);
+    const quantityKg =
+      item.quantityKg !== null && item.quantityKg !== undefined
+        ? numberOrZero(item.quantityKg)
+        : undefined;
+
+    const price = numberOrZero(item.price);
+
+    const subtotal =
+      item.subtotal !== undefined && item.subtotal !== null
+        ? numberOrZero(item.subtotal)
+        : quantityKg !== undefined && quantityKg > 0
+        ? quantityKg * price
+        : quantity * price;
+
+    return {
+      name: item.product?.name ?? "Producto",
+      quantity,
+      ...(quantityKg !== undefined ? { quantityKg } : {}),
+      price,
+      subtotal,
+    };
+  });
+}
+
+function getMetodoPago(reqBody: any, sale: any) {
+  if (reqBody.metodoPago) return reqBody.metodoPago;
+  if (reqBody.paymentMethod) return reqBody.paymentMethod;
+
+  if (sale.payments && sale.payments.length > 0) {
+    return sale.payments
+      .map(
+        (p: any) =>
+          `${p.method}: ${Number(p.amount).toLocaleString("es-AR", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`
+      )
+      .join(" | ");
+  }
+
+  return sale.paymentMethod || "EFECTIVO";
+}
+
+function getFacturaQrUrl(factura: any): string | undefined {
+  return factura?.urlQR ?? factura?.qrUrl ?? factura?.qrURL ?? undefined;
+}
+
 router.get("/token", async (_req, res) => {
   try {
     const data = await generarTokenAFIP();
@@ -134,7 +228,10 @@ router.post("/facturar", async (req, res) => {
     }
 
     if (sale.isInvoiced || sale.invoiceAfip || sale.invoiceStatus === "INVOICED") {
-      return res.status(400).json({ ok: false, error: "Esta venta ya fue facturada." });
+      return res.status(400).json({
+        ok: false,
+        error: "Esta venta ya fue facturada.",
+      });
     }
 
     if (sale.invoiceStatus === "PENDING_AFIP") {
@@ -175,26 +272,47 @@ router.post("/facturar", async (req, res) => {
         condicionIVAReceptor: facturaData.condicionIVAReceptor,
       });
     } else if (facturaData.tipoComprobante === 6) {
-      const docDetectado =
-        facturaData.nroDoc != null ? detectarTipoDocumento(facturaData.nroDoc) : null;
+  const docLimpio = normalizarDocumento(facturaData.nroDoc);
 
-      if (!docDetectado) {
-        return res.status(400).json({
-          ok: false,
-          error: "Para Factura B el documento del cliente es obligatorio y debe ser válido.",
-        });
-      }
+  const quiereConsumidorFinal =
+    Number(facturaData.tipoDoc) === 99 ||
+    docLimpio === "" ||
+    Number(docLimpio) === 0;
 
-      factura = await emitirFacturaB({
-        saleId,
-        cuit: facturaData.cuit,
-        tipoDoc: docDetectado.tipoDoc,
-        nroDoc: docDetectado.nroDoc,
-        importe: facturaData.importe,
-        condicionIVAReceptor: facturaData.condicionIVAReceptor,
+  if (quiereConsumidorFinal) {
+    factura = await emitirFacturaB({
+      saleId,
+      cuit: facturaData.cuit,
+      tipoDoc: 99,
+      nroDoc: 0,
+      importe: facturaData.importe,
+      condicionIVAReceptor: 5,
+    });
+  } else {
+    const docDetectado = detectarTipoDocumento(facturaData.nroDoc);
+
+    if (!docDetectado) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Para Factura B con cliente, el documento debe ser válido. Puede ser DNI, CUIT o CUIL.",
       });
+    }
+
+    console.log("🪪 Documento detectado para Factura B:", docDetectado);
+
+    factura = await emitirFacturaB({
+      saleId,
+      cuit: facturaData.cuit,
+      tipoDoc: docDetectado.tipoDoc,
+      nroDoc: docDetectado.nroDoc,
+      importe: facturaData.importe,
+      condicionIVAReceptor: facturaData.condicionIVAReceptor,
+    });
+  }
     } else if (facturaData.tipoComprobante === 11) {
       const docLimpio = normalizarDocumento(facturaData.nroDoc);
+
       const quiereConsumidorFinal =
         Number(facturaData.tipoDoc) === 99 ||
         docLimpio === "" ||
@@ -248,67 +366,35 @@ router.post("/facturar", async (req, res) => {
 
         const tipoCliente = mapTipoCliente(client?.category);
         const nombreCliente = getNombreCliente(client);
-        const documentoCliente = client?.dni
-          ? String(client.dni)
-          : facturaData?.nroDoc
-          ? String(facturaData.nroDoc)
-          : undefined;
-
+        const documentoCliente = getDocumentoCliente(client, facturaData);
         const telefonoCliente = client?.telefono ?? undefined;
+        const domicilioCliente = getDomicilioCliente(client);
 
-        const domicilioCliente = [
-          (client as any)?.address,
-          (client as any)?.locality,
-          (client as any)?.province,
-        ]
-          .filter(Boolean)
-          .join(", ");
+        const products = mapProductsFromSaleOrBody(req.body, sale);
+        const metodoPago = getMetodoPago(req.body, sale);
 
-        const products =
-          req.body.products && Array.isArray(req.body.products)
-            ? req.body.products
-            : sale.items.map((item: any) => {
-                const isKg = item.product?.saleUnit === "KG";
-                const quantity = isKg
-                  ? Number((item as any).quantityKg ?? 0)
-                  : Number(item.quantity ?? 0);
+        const qrUrl = getFacturaQrUrl(factura);
 
-                return {
-                  name: item.product?.name ?? "Producto",
-                  quantity,
-                  price: Number(item.price ?? 0),
-                };
-              });
-
-        const metodoPago =
-          req.body.metodoPago ||
-          (sale.payments && sale.payments.length > 0
-            ? sale.payments
-                .map(
-                  (p: any) =>
-                    `${p.method}: ${Number(p.amount).toLocaleString("es-AR", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}`
-                )
-                .join(" | ")
-            : sale.paymentMethod || "EFECTIVO");
+        console.log("🧾 QR URL enviado al agente:", qrUrl ?? "SIN QR URL");
 
         await generarFacturaAfipPDF({
-          tipoComprobante: factura.tipoComprobante,
-          puntoVenta: factura.puntoVenta,
+          tipoComprobante: Number(factura.tipoComprobante),
+          puntoVenta: Number(factura.puntoVenta),
           saleId,
-          numero: factura.numero,
-          fechaEmision: new Date(factura.fechaEmision),
+          numero: Number(factura.numero),
+          fechaEmision: factura.fechaEmision
+            ? new Date(factura.fechaEmision)
+            : new Date(),
           total: Number(factura.total),
           products,
           metodoPago,
-          cae: factura.cae,
+          cae: String(factura.cae),
           caeVto: factura.caeVto ? new Date(factura.caeVto) : new Date(),
-          cuit: factura.cuit,
-          qrBase64: factura.qrBase64 ?? null,
+          cuit: String(factura.cuit),
 
-          // 👇 nuevos campos para el PDF
+          qrBase64: factura.qrBase64 ?? null,
+          qrUrl,
+
           tipoCliente,
           nombreCliente,
           documentoCliente,
@@ -316,7 +402,7 @@ router.post("/facturar", async (req, res) => {
           domicilioCliente,
         });
 
-        console.log("✅ PDF generado correctamente");
+        console.log("✅ PDF generado, subido y ticket enviado correctamente");
       } catch (printErr: any) {
         posDisconnected = true;
 
@@ -326,8 +412,12 @@ router.post("/facturar", async (req, res) => {
 
         posErrorMessage =
           ngrokCode === "ERR_NGROK_3200" || status === 404
-            ? `AFIP aprobó y se facturó, pero el POS está desconectado. Endpoint: ${url ?? "desconocido"}`
-            : `AFIP aprobó y se facturó, pero falló la impresión en el POS. ${printErr?.message ?? ""}`;
+            ? `AFIP aprobó y se facturó, pero el POS está desconectado. Endpoint: ${
+                url ?? "desconocido"
+              }`
+            : `AFIP aprobó y se facturó, pero falló la impresión en el POS. ${
+                printErr?.message ?? ""
+              }`;
 
         console.warn("⚠️", posErrorMessage);
       }
@@ -436,7 +526,9 @@ router.post("/nota-credito", async (req, res) => {
     });
 
     const safeNotaCredito = JSON.parse(
-      JSON.stringify(notaCredito, (_, v) => (typeof v === "bigint" ? v.toString() : v))
+      JSON.stringify(notaCredito, (_, v) =>
+        typeof v === "bigint" ? v.toString() : v
+      )
     );
 
     let posDisconnected = false;
@@ -462,7 +554,9 @@ router.post("/nota-credito", async (req, res) => {
         products: facturaOriginal.sale?.items.map((i: any) => ({
           name: i.product.name,
           quantity: i.quantity,
+          quantityKg: i.quantityKg ?? undefined,
           price: i.price,
+          subtotal: i.subtotal,
         })),
       });
     } catch (printErr: any) {

@@ -1,23 +1,54 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { Alert } from '@/types';
 import { AlertTriangle, Bell } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function AlertasPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get('/alerts').then(r => setAlerts(r.data.content ?? r.data ?? [])).finally(() => setLoading(false));
+    let alive = true;
+
+    const loadAlerts = async () => {
+      try {
+        setLoading(true);
+
+        const r = await api.get('/alerts');
+
+        if (!alive) return;
+
+        setAlerts(r.data.content ?? r.data ?? []);
+      } catch (error) {
+        console.error(error);
+
+        if (!alive) return;
+
+        toast.error('No se pudieron cargar las alertas de stock');
+        setAlerts([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+
+    loadAlerts();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   return (
     <AppLayout title="Alertas de stock" subtitle="Productos con stock bajo el mínimo">
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {[...Array(5)].map((_, i) => <div key={i} className="skeleton" style={{ height: 72 }} />)}
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 72 }} />
+          ))}
         </div>
       ) : alerts.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '80px 20px' }}>
@@ -28,7 +59,19 @@ export default function AlertasPage() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {alerts.map(a => (
-            <div key={a.id} style={{ background: 'var(--surface)', border: '1px solid rgba(239,68,68,0.25)', borderLeft: '3px solid var(--danger)', borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div
+              key={a.id}
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid rgba(239,68,68,0.25)',
+                borderLeft: '3px solid var(--danger)',
+                borderRadius: 12,
+                padding: '16px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                 <AlertTriangle size={20} style={{ color: 'var(--danger)', flexShrink: 0 }} />
                 <div>
@@ -38,9 +81,14 @@ export default function AlertasPage() {
                   </div>
                 </div>
               </div>
+
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 900, color: 'var(--danger)' }}>{a.stockLocal}</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>mínimo: {a.minStock}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 900, color: 'var(--danger)' }}>
+                  {a.stockLocal}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>
+                  mínimo: {a.minStock}
+                </div>
               </div>
             </div>
           ))}

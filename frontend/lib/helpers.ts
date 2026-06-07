@@ -6,13 +6,30 @@ export const num = (value: unknown, fallback = 0) => { const n = Number(value); 
 export const normalizeArray = <T,>(response: unknown): T[] => {
   if (Array.isArray(response)) return response as T[];
   if (!response || typeof response !== 'object') return [];
+
   const record = response as Record<string, unknown>;
-  for (const key of ['content', 'data', 'items', 'results', 'rows', 'clients', 'products', 'movements', 'sales']) {
+
+  for (const key of [
+    'content',
+    'data',
+    'items',
+    'results',
+    'rows',
+    'clients',
+    'products',
+    'movements',
+    'sales',
+    'locations',
+    'businessLocations',
+  ]) {
     const value = record[key];
+
     if (Array.isArray(value)) return value as T[];
+
     const nested = normalizeArray<T>(value);
     if (nested.length) return nested;
   }
+
   return [];
 };
 export const clientName = (client?: Client | null) => client ? `${client.nombre ?? ''} ${client.apellido ?? ''}`.trim() || 'Cliente sin nombre' : 'Consumidor final';

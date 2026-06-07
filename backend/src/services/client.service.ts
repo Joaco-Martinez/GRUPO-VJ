@@ -15,6 +15,70 @@ function cleanEmail(value?: string | null) {
   return email || null;
 }
 
+function cleanString(value?: string | null) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+type ClientAddressData = {
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressFloor?: string | null;
+  addressApartment?: string | null;
+  addressCity?: string | null;
+  addressProvince?: string | null;
+  addressPostalCode?: string | null;
+  addressNotes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
+function buildAddressData(data: ClientAddressData) {
+  const cleanData: any = {};
+
+  if (data.addressStreet !== undefined) {
+    cleanData.addressStreet = cleanString(data.addressStreet);
+  }
+
+  if (data.addressNumber !== undefined) {
+    cleanData.addressNumber = cleanString(data.addressNumber);
+  }
+
+  if (data.addressFloor !== undefined) {
+    cleanData.addressFloor = cleanString(data.addressFloor);
+  }
+
+  if (data.addressApartment !== undefined) {
+    cleanData.addressApartment = cleanString(data.addressApartment);
+  }
+
+  if (data.addressCity !== undefined) {
+    cleanData.addressCity = cleanString(data.addressCity);
+  }
+
+  if (data.addressProvince !== undefined) {
+    cleanData.addressProvince = cleanString(data.addressProvince);
+  }
+
+  if (data.addressPostalCode !== undefined) {
+    cleanData.addressPostalCode = cleanString(data.addressPostalCode);
+  }
+
+  if (data.addressNotes !== undefined) {
+    cleanData.addressNotes = cleanString(data.addressNotes);
+  }
+
+  if (data.latitude !== undefined) {
+    cleanData.latitude = data.latitude ?? null;
+  }
+
+  if (data.longitude !== undefined) {
+    cleanData.longitude = data.longitude ?? null;
+  }
+
+  return cleanData;
+}
+
 export const clientService = {
   async createClient(data: {
     nombre: string;
@@ -25,6 +89,17 @@ export const clientService = {
     gmail?: string | null;
     creditLimit?: number | null;
     isAccountEnabled?: boolean;
+
+    addressStreet?: string | null;
+    addressNumber?: string | null;
+    addressFloor?: string | null;
+    addressApartment?: string | null;
+    addressCity?: string | null;
+    addressProvince?: string | null;
+    addressPostalCode?: string | null;
+    addressNotes?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
 
     createUser?: boolean;
     password?: string;
@@ -47,6 +122,7 @@ export const clientService = {
     }
 
     const category = normalizeCategory(data.category);
+    const addressData = buildAddressData(data);
 
     return prisma.$transaction(async (tx) => {
       let userId: string | null = null;
@@ -86,6 +162,7 @@ export const clientService = {
           creditLimit: data.creditLimit ?? null,
           isAccountEnabled: data.isAccountEnabled ?? false,
           userId,
+          ...addressData,
         },
         include: {
           user: {
@@ -148,6 +225,7 @@ export const clientService = {
           orderBy: { createdAt: "desc" },
           include: {
             payments: true,
+            businessLocation: true,
             items: {
               include: { product: true },
             },
@@ -182,6 +260,17 @@ export const clientService = {
       creditLimit: number | null;
       isAccountEnabled: boolean;
 
+      addressStreet: string | null;
+      addressNumber: string | null;
+      addressFloor: string | null;
+      addressApartment: string | null;
+      addressCity: string | null;
+      addressProvince: string | null;
+      addressPostalCode: string | null;
+      addressNotes: string | null;
+      latitude: number | null;
+      longitude: number | null;
+
       createUser: boolean;
       password: string;
       unlinkUser: boolean;
@@ -199,11 +288,13 @@ export const clientService = {
     if (data.nombre !== undefined) cleanData.nombre = String(data.nombre).trim();
     if (data.apellido !== undefined) cleanData.apellido = String(data.apellido).trim();
     if (data.dni !== undefined) cleanData.dni = String(data.dni).trim();
-    if (data.telefono !== undefined) cleanData.telefono = data.telefono;
+    if (data.telefono !== undefined) cleanData.telefono = cleanString(data.telefono);
     if (data.gmail !== undefined) cleanData.gmail = cleanEmail(data.gmail);
     if (data.category !== undefined) cleanData.category = normalizeCategory(data.category);
     if (data.creditLimit !== undefined) cleanData.creditLimit = data.creditLimit;
     if (data.isAccountEnabled !== undefined) cleanData.isAccountEnabled = data.isAccountEnabled;
+
+    Object.assign(cleanData, buildAddressData(data));
 
     return prisma.$transaction(async (tx) => {
       if (data.unlinkUser === true && existing.userId) {
@@ -259,6 +350,12 @@ export const clientService = {
               name: true,
               role: true,
               isActive: true,
+            },
+          },
+          _count: {
+            select: {
+              sales: true,
+              accountMovements: true,
             },
           },
         },

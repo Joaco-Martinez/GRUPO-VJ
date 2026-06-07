@@ -1,0 +1,31 @@
+export declare function emitirFacturaA({ saleId, cuit, nroDoc, importe, condicionIVAReceptor, }: {
+    saleId: string;
+    cuit?: string;
+    nroDoc: number;
+    importe: number;
+    condicionIVAReceptor?: number;
+}): Promise<{
+    id: string;
+    total: number;
+    createdAt: Date;
+    updatedAt: Date;
+    saleId: string | null;
+    relatedInvoiceId: string | null;
+    cuit: string;
+    puntoVenta: number;
+    tipoComprobante: number;
+    tipoDoc: number;
+    nroDoc: bigint;
+    numero: number;
+    fechaEmision: Date;
+    resultado: string;
+    cae: string | null;
+    caeVto: Date | null;
+    neto: number;
+    iva: number;
+    condicionIVAReceptor: number;
+    moneda: string;
+    urlQR: string | null;
+    qrBase64: string | null;
+}>;
+//# sourceMappingURL=wsfe-A.service.d.ts.map

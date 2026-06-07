@@ -1,999 +1,1380 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import AppLayout from '@/components/AppLayout';
-import api from '@/lib/api';
-import { FinanceEntry } from '@/types';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ElementType, ReactNode } from "react";
+import AppLayout from "@/components/AppLayout";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
 import {
+  AlertCircle,
+  Building2,
+  CheckCircle2,
+  Edit2,
+  HelpCircle,
+  Info,
+  Loader2,
+  MapPin,
   Plus,
-  TrendingUp,
-  TrendingDown,
-  Wallet,
-  X,
-  FileSpreadsheet,
-  FileText,
-  Trophy,
-  AlertTriangle,
-  Tags,
-  CalendarDays,
-  Filter,
-  RotateCcw,
-} from 'lucide-react';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
+  RefreshCcw,
+  Save,
+  Search,
+  Star,
+  Trash2,
+  Warehouse,
+  XCircle,
+} from "lucide-react";
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-    maximumFractionDigits: 0,
-  }).format(Number(n || 0));
+type BusinessLocationType = "BRANCH" | "WAREHOUSE" | "STORE";
 
-const FINANCE_CATEGORIES = [
-  { value: 'VENTA', label: 'Venta' },
-  { value: 'AlquilerL1', label: 'Alquiler Local 1' },
-  { value: 'AlquilerF1', label: 'Alquiler Fábrica / Fondo 1' },
-  { value: 'Alarma', label: 'Alarma' },
-  { value: 'Sueldos', label: 'Sueldos' },
-  { value: 'MateriaPrima', label: 'Materia prima' },
-  { value: 'Impuestos', label: 'Impuestos' },
-  { value: 'VEP', label: 'VEP' },
-  { value: 'Contadora', label: 'Contadora' },
-  { value: 'Arca', label: 'ARCA' },
-  { value: 'Eenvios', label: 'Envíos' },
-  { value: 'Publicidad', label: 'Publicidad' },
-  { value: 'Otro', label: 'Otro' },
-];
+type BusinessLocation = {
+  id: string;
+  name: string;
+  type: BusinessLocationType;
 
-const categoryLabel = (value?: string | null) => {
-  if (!value) return '—';
-  return FINANCE_CATEGORIES.find(c => c.value === value)?.label ?? value;
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressCity?: string | null;
+  addressProvince?: string | null;
+  addressPostalCode?: string | null;
+  addressNotes?: string | null;
+
+  latitude?: number | null;
+  longitude?: number | null;
+
+  isDefault: boolean;
+  isActive: boolean;
+
+  createdAt: string;
+  updatedAt: string;
 };
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
+type ApiListResponse =
+  | {
+      ok: boolean;
+      locations: BusinessLocation[];
+    }
+  | BusinessLocation[];
 
-const today = () => new Date().toISOString().slice(0, 10);
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+} | null;
 
-const firstDayOfCurrentMonth = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+type LocationForm = {
+  name: string;
+  type: BusinessLocationType;
+
+  addressStreet: string;
+  addressNumber: string;
+  addressCity: string;
+  addressProvince: string;
+  addressPostalCode: string;
+  addressNotes: string;
+
+  latitude: string;
+  longitude: string;
+
+  isDefault: boolean;
+  isActive: boolean;
 };
 
-const getPartsFromDate = (date: string) => {
-  const [year, month, day] = date.split('-').map(Number);
+const emptyForm: LocationForm = {
+  name: "",
+  type: "WAREHOUSE",
 
-  return {
-    year,
-    month,
-    day,
+  addressStreet: "",
+  addressNumber: "",
+  addressCity: "",
+  addressProvince: "",
+  addressPostalCode: "",
+  addressNotes: "",
+
+  latitude: "",
+  longitude: "",
+
+  isDefault: false,
+  isActive: true,
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  const e = error as {
+    response?: {
+      data?: {
+        message?: string;
+        error?: string;
+      };
+    };
   };
-};
 
-const startOfDay = (date: string) => new Date(`${date}T00:00:00.000`);
-const endOfDay = (date: string) => new Date(`${date}T23:59:59.999`);
+  return e?.response?.data?.message ?? e?.response?.data?.error ?? fallback;
+}
 
-type StatsState = {
-  week: number;
-  month: number;
-  year: number;
-};
+function normalizeArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
 
-type AnyObj = Record<string, any>;
+  if (
+    value &&
+    typeof value === "object" &&
+    "locations" in value &&
+    Array.isArray((value as { locations?: unknown }).locations)
+  ) {
+    return (value as { locations: T[] }).locations;
+  }
 
-const normalizeArray = <T,>(data: any): T[] => {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.content)) return data.content;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.items)) return data.items;
-  if (Array.isArray(data?.results)) return data.results;
+  if (
+    value &&
+    typeof value === "object" &&
+    "content" in value &&
+    Array.isArray((value as { content?: unknown }).content)
+  ) {
+    return (value as { content: T[] }).content;
+  }
+
   return [];
-};
+}
 
-const normalizeAmount = (data: any): number => {
-  if (typeof data === 'number') return data;
+async function fetchLocations() {
+  const res = await api.get<ApiListResponse>("/business-locations");
+  return normalizeArray<BusinessLocation>(res.data);
+}
 
-  if (typeof data?.total === 'number') return data.total;
-  if (typeof data?.amount === 'number') return data.amount;
-  if (typeof data?.income === 'number') return data.income;
-  if (typeof data?.totalIncome === 'number') return data.totalIncome;
-  if (typeof data?._sum?.amount === 'number') return data._sum.amount;
+function typeLabel(type: BusinessLocationType) {
+  if (type === "WAREHOUSE") return "Depósito";
+  if (type === "STORE") return "Local";
+  return "Sucursal";
+}
 
-  return 0;
-};
+function typeDescription(type: BusinessLocationType) {
+  if (type === "WAREHOUSE")
+    return "Lugar principal de stock o guardado de mercadería.";
+  if (type === "STORE") return "Local de atención o punto de venta físico.";
+  return "Sucursal secundaria o punto operativo.";
+}
 
-const getProductName = (p: AnyObj) =>
-  p.name ??
-  p.productName ??
-  p.product?.name ??
-  p.product?.title ??
-  p.title ??
-  'Producto';
+function typeIcon(type: BusinessLocationType): ElementType {
+  if (type === "WAREHOUSE") return Warehouse;
+  if (type === "STORE") return Building2;
+  return MapPin;
+}
 
-const getProductQty = (p: AnyObj) =>
-  Number(
-    p.quantity ??
-      p.totalSold ??
-      p.totalQuantity ??
-      p.sold ??
-      p._sum?.quantity ??
-      p._sum?.quantityKg ??
-      0
+function buildAddress(location: BusinessLocation) {
+  const line1 = [location.addressStreet, location.addressNumber]
+    .filter(Boolean)
+    .join(" ");
+  const line2 = [
+    location.addressCity,
+    location.addressProvince,
+    location.addressPostalCode,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (!line1 && !line2) return "Sin dirección cargada";
+  if (line1 && line2) return `${line1} — ${line2}`;
+  return line1 || line2;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function cleanPayload(form: LocationForm) {
+  return {
+    name: form.name.trim(),
+    type: form.type,
+
+    addressStreet: form.addressStreet.trim() || null,
+    addressNumber: form.addressNumber.trim() || null,
+    addressCity: form.addressCity.trim() || null,
+    addressProvince: form.addressProvince.trim() || null,
+    addressPostalCode: form.addressPostalCode.trim() || null,
+    addressNotes: form.addressNotes.trim() || null,
+
+    latitude: form.latitude.trim() === "" ? null : Number(form.latitude),
+    longitude: form.longitude.trim() === "" ? null : Number(form.longitude),
+
+    isDefault: form.isDefault,
+    isActive: form.isActive,
+  };
+}
+
+function FieldHelp({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 6,
+        alignItems: "flex-start",
+        marginTop: 6,
+      }}
+    >
+      <Info
+        size={13}
+        style={{ color: "var(--text3)", marginTop: 1, flexShrink: 0 }}
+      />
+      <p style={{ color: "var(--text3)", fontSize: 12, lineHeight: 1.45 }}>
+        {children}
+      </p>
+    </div>
   );
+}
 
-export default function FinanzasPage() {
-  const [entries, setEntries] = useState<FinanceEntry[]>([]);
+function InputField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  help,
+  type = "text",
+  optional = false,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  help?: ReactNode;
+  type?: string;
+  optional?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <label style={{ display: "block" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          marginBottom: 7,
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 900, color: "var(--text2)" }}>
+          {label}
+        </span>
+
+        {optional && (
+          <span
+            className="badge badge-gray"
+            style={{ fontSize: 10, padding: "3px 7px" }}
+          >
+            OPCIONAL
+          </span>
+        )}
+      </div>
+
+      <input
+        value={value}
+        type={type}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="input"
+      />
+
+      {help && <FieldHelp>{help}</FieldHelp>}
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  help,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  help?: ReactNode;
+}) {
+  return (
+    <label style={{ display: "block" }}>
+      <div style={{ marginBottom: 7 }}>
+        <span style={{ fontSize: 12, fontWeight: 900, color: "var(--text2)" }}>
+          {label}
+        </span>
+      </div>
+
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={3}
+        className="input"
+        style={{
+          height: "auto",
+          minHeight: 88,
+          resize: "vertical",
+          paddingTop: 12,
+        }}
+      />
+
+      {help && <FieldHelp>{help}</FieldHelp>}
+    </label>
+  );
+}
+
+function SectionCard({
+  title,
+  subtitle,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ElementType;
+  children: ReactNode;
+}) {
+  return (
+    <section className="card" style={{ padding: 22 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+          marginBottom: 22,
+        }}
+      >
+        <span
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: 12,
+            background: "var(--surface2)",
+            border: "1px solid var(--border)",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon size={19} />
+        </span>
+
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 900 }}>{title}</h3>
+          <p style={{ color: "var(--text2)", fontSize: 13, marginTop: 3 }}>
+            {subtitle}
+          </p>
+        </div>
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  help,
+  badge,
+}: {
+  icon: ElementType;
+  label: string;
+  value: string | number;
+  help: string;
+  badge?: ReactNode;
+}) {
+  return (
+    <div className="card" style={{ padding: 18 }}>
+      <div
+        style={{ display: "flex", justifyContent: "space-between", gap: 14 }}
+      >
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              display: "grid",
+              placeItems: "center",
+              background: "var(--surface2)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <Icon size={18} />
+          </span>
+
+          <div>
+            <p style={{ color: "var(--text2)", fontSize: 12, fontWeight: 800 }}>
+              {label}
+            </p>
+            <p
+              style={{
+                color: "var(--text)",
+                fontSize: 22,
+                fontWeight: 950,
+                marginTop: 2,
+              }}
+            >
+              {value}
+            </p>
+          </div>
+        </div>
+
+        {badge}
+      </div>
+
+      <p
+        style={{
+          color: "var(--text3)",
+          fontSize: 12,
+          marginTop: 12,
+          lineHeight: 1.45,
+        }}
+      >
+        {help}
+      </p>
+    </div>
+  );
+}
+
+function ToggleBox({
+  title,
+  subtitle,
+  checked,
+  onChange,
+  icon: Icon,
+}: {
+  title: string;
+  subtitle: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  icon: ElementType;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 14,
+        padding: 14,
+        borderRadius: 16,
+        border: checked
+          ? "1px solid rgba(0,229,160,0.34)"
+          : "1px solid var(--border)",
+        background: checked ? "rgba(0,229,160,0.08)" : "var(--surface2)",
+      }}
+    >
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <span
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 11,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon size={16} />
+        </span>
+
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 900 }}>{title}</p>
+          <p style={{ color: "var(--text3)", fontSize: 12, marginTop: 2 }}>
+            {subtitle}
+          </p>
+        </div>
+      </div>
+
+      <span className={`badge ${checked ? "badge-green" : "badge-gray"}`}>
+        {checked ? "SÍ" : "NO"}
+      </span>
+    </button>
+  );
+}
+
+export default function BusinessLocationsPage() {
+  const [locations, setLocations] = useState<BusinessLocation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [dateFrom, setDateFrom] = useState(firstDayOfCurrentMonth());
-  const [dateTo, setDateTo] = useState(today());
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(true);
 
-  const [stats, setStats] = useState<StatsState>({
-    week: 0,
-    month: 0,
-    year: 0,
-  });
+  const [form, setForm] = useState<LocationForm>(emptyForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [categoryStats, setCategoryStats] = useState<AnyObj[]>([]);
-  const [topProducts, setTopProducts] = useState<AnyObj[]>([]);
-  const [worstProducts, setWorstProducts] = useState<AnyObj[]>([]);
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const [form, setForm] = useState({
-    type: 'INGRESO',
-    amount: '',
-    description: '',
-    category: 'Otro',
-    date: today(),
-  });
-
-const safeGet = async <T,>(
-  url: string,
-  fallback: T,
-  params?: AnyObj
-): Promise<T> => {
-  try {
-    const res = await api.get(url, { params });
-    return res.data;
-  } catch {
-    return fallback;
-  }
-};
-
-  const load = async () => {
-    setLoading(true);
-
+  const loadLocations = useCallback(async (showSuccess = false) => {
     try {
-      const selected = getPartsFromDate(dateTo);
+      setLoading(true);
 
-      const financeData = await safeGet<any>('/finance', []);
+      const data = await fetchLocations();
+      setLocations(data);
 
-      const weekData = await safeGet<any>('/finance/income/week', 0, {
-        year: selected.year,
-        month: selected.month,
-        day: selected.day,
-      });
-
-      const monthData = await safeGet<any>('/finance/income/month', 0, {
-        year: selected.year,
-        month: selected.month,
-      });
-
-      const yearData = await safeGet<any>('/finance/income/year', 0, {
-        year: selected.year,
-      });
-
-      const categoryData = await safeGet<any>('/finance/income/category', [], {
-        startDate: dateFrom,
-        endDate: dateTo,
-      });
-
-      const topRangeData = await safeGet<any>('/finance/products/top-range', [], {
-        startDate: dateFrom,
-        endDate: dateTo,
-      });
-
-      const topProductsData = await safeGet<any>('/finance/products/top-range', [], {
-  startDate: dateFrom,
-  endDate: dateTo,
-  limit: 5,
-});
-
-const worstProductsData = await safeGet<any>('/finance/products/worst-range', [], {
-  startDate: dateFrom,
-  endDate: dateTo,
-  limit: 5,
-});
-
-      setEntries(normalizeArray<FinanceEntry>(financeData));
-
-      setStats({
-        week: normalizeAmount(weekData),
-        month: normalizeAmount(monthData),
-        year: normalizeAmount(yearData),
-      });
-
-      setCategoryStats(normalizeArray<AnyObj>(categoryData));
-      setTopProducts(normalizeArray<AnyObj>(topProductsData));
-      setWorstProducts(normalizeArray<AnyObj>(worstProductsData));
+      if (showSuccess) {
+        toast.success("Ubicaciones actualizadas");
+      }
+    } catch (err) {
+      toast.error(
+        getErrorMessage(err, "No se pudieron cargar las ubicaciones."),
+      );
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredEntries = useMemo(() => {
-    const from = startOfDay(dateFrom);
-    const to = endOfDay(dateTo);
+  useEffect(() => {
+    let alive = true;
 
-    return entries.filter(e => {
-      const date = new Date(e.date);
-      return date >= from && date <= to;
-    });
-  }, [entries, dateFrom, dateTo]);
-
-  const ingresos = useMemo(
-    () =>
-      filteredEntries
-        .filter(e => e.type === 'INGRESO')
-        .reduce((a, e) => a + Number(e.amount || 0), 0),
-    [filteredEntries]
-  );
-
-  const egresos = useMemo(
-    () =>
-      filteredEntries
-        .filter(e => e.type === 'EGRESO')
-        .reduce((a, e) => a + Number(e.amount || 0), 0),
-    [filteredEntries]
-  );
-
-  const balance = ingresos - egresos;
-
-  const chartData = useMemo(() => {
-    const map: Record<string, { date: string; ingresos: number; egresos: number }> = {};
-
-    filteredEntries.forEach(e => {
-      const d = new Date(e.date).toLocaleDateString('es-AR', {
-        day: '2-digit',
-        month: '2-digit',
+    fetchLocations()
+      .then((data) => {
+        if (!alive) return;
+        setLocations(data);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!alive) return;
+        toast.error(
+          getErrorMessage(err, "No se pudieron cargar las ubicaciones."),
+        );
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
       });
 
-      if (!map[d]) {
-        map[d] = {
-          date: d,
-          ingresos: 0,
-          egresos: 0,
-        };
-      }
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-      if (e.type === 'INGRESO') {
-        map[d].ingresos += Number(e.amount || 0);
-      } else {
-        map[d].egresos += Number(e.amount || 0);
-      }
+  const filteredLocations = useMemo(() => {
+    const q = search.trim().toLowerCase();
+
+    return locations.filter((location) => {
+      const matchesActive = showInactive || location.isActive;
+
+      const matchesSearch =
+        !q ||
+        location.name.toLowerCase().includes(q) ||
+        typeLabel(location.type).toLowerCase().includes(q) ||
+        buildAddress(location).toLowerCase().includes(q);
+
+      return matchesActive && matchesSearch;
     });
+  }, [locations, search, showInactive]);
 
-    return Object.values(map);
-  }, [filteredEntries]);
-
-  const filteredWorstProducts = useMemo(() => {
-  const topNames = new Set(
-    topProducts.map(p => getProductName(p).toLowerCase().trim())
+  const defaultLocation = useMemo(
+    () => locations.find((location) => location.isDefault),
+    [locations],
   );
 
-  return worstProducts.filter(p => {
-    const name = getProductName(p).toLowerCase().trim();
-    return !topNames.has(name);
-  });
-}, [topProducts, worstProducts]);
+  const activeCount = useMemo(
+    () => locations.filter((location) => location.isActive).length,
+    [locations],
+  );
 
-  const field = (k: string, v: string) => {
-    setForm(p => ({
-      ...p,
-      [k]: v,
-    }));
-  };
+  function resetForm() {
+    setForm(emptyForm);
+    setEditingId(null);
+  }
 
-  const openCreate = () => {
+  function startEdit(location: BusinessLocation) {
+    setEditingId(location.id);
     setForm({
-      type: 'INGRESO',
-      amount: '',
-      description: '',
-      category: 'Otro',
-      date: today(),
+      name: location.name ?? "",
+      type: location.type ?? "WAREHOUSE",
+
+      addressStreet: location.addressStreet ?? "",
+      addressNumber: location.addressNumber ?? "",
+      addressCity: location.addressCity ?? "",
+      addressProvince: location.addressProvince ?? "",
+      addressPostalCode: location.addressPostalCode ?? "",
+      addressNotes: location.addressNotes ?? "",
+
+      latitude:
+        location.latitude === null || location.latitude === undefined
+          ? ""
+          : String(location.latitude),
+      longitude:
+        location.longitude === null || location.longitude === undefined
+          ? ""
+          : String(location.longitude),
+
+      isDefault: Boolean(location.isDefault),
+      isActive: Boolean(location.isActive),
     });
 
-    setModal(true);
-  };
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
-  const resetDates = async () => {
-    setDateFrom(firstDayOfCurrentMonth());
-    setDateTo(today());
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
 
-    setTimeout(() => {
-      load();
-    }, 0);
-  };
+    const payload = cleanPayload(form);
 
-  const applyFilters = async () => {
-    if (!dateFrom || !dateTo) {
-      alert('Seleccioná desde y hasta');
+    if (!payload.name) {
+      toast.error("El nombre es obligatorio.");
       return;
     }
 
-    if (new Date(dateFrom) > new Date(dateTo)) {
-      alert('La fecha desde no puede ser mayor a la fecha hasta');
+    if (
+      payload.latitude !== null &&
+      (!Number.isFinite(payload.latitude) ||
+        payload.latitude < -90 ||
+        payload.latitude > 90)
+    ) {
+      toast.error("La latitud debe estar entre -90 y 90.");
       return;
     }
 
-    await load();
-  };
-
-  const handleSave = async () => {
-    const amount = Number(form.amount);
-
-    if (!amount || amount <= 0) {
-      alert('Ingresá un importe válido');
-      return;
-    }
-
-    if (!form.description.trim()) {
-      alert('Ingresá una descripción');
+    if (
+      payload.longitude !== null &&
+      (!Number.isFinite(payload.longitude) ||
+        payload.longitude < -180 ||
+        payload.longitude > 180)
+    ) {
+      toast.error("La longitud debe estar entre -180 y 180.");
       return;
     }
 
     setSaving(true);
 
-    try {
-      await api.post('/finance', {
-        type: form.type,
-        amount,
-        description: form.description.trim(),
-        category: form.category || 'Otro',
-        date: `${form.date}T12:00:00.000Z`,
-      });
+    const toastId = toast.loading(
+      editingId ? "Guardando ubicación..." : "Creando ubicación...",
+    );
 
-      setModal(false);
-      await load();
-    } catch (error: any) {
-      alert(error?.response?.data?.error || 'Error guardando el movimiento financiero');
+    try {
+      if (editingId) {
+        await api.put(`/business-locations/${editingId}`, payload);
+        toast.success("Ubicación actualizada correctamente.", { id: toastId });
+      } else {
+        await api.post("/business-locations", payload);
+        toast.success("Ubicación creada correctamente.", { id: toastId });
+      }
+
+      resetForm();
+      await loadLocations();
+    } catch (err) {
+      toast.error(getErrorMessage(err, "No se pudo guardar la ubicación."), {
+        id: toastId,
+      });
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  const exportExcel = async () => {
+  async function handleSetDefault(id: string) {
     try {
-      const res = await api.get('/finance/export/excel', {
-        responseType: 'blob',
-        params: {
-          startDate: dateFrom,
-          endDate: dateTo,
-        },
-      });
-
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-
-      link.href = url;
-      link.setAttribute('download', `finanzas-${dateFrom}-a-${dateTo}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      window.URL.revokeObjectURL(url);
-    } catch {
-      alert('Error exportando Excel');
+      await api.patch(`/business-locations/${id}/default`);
+      toast.success("Ubicación predeterminada actualizada.");
+      await loadLocations();
+    } catch (err) {
+      toast.error(
+        getErrorMessage(err, "No se pudo marcar como predeterminada."),
+      );
     }
-  };
+  }
 
-  const exportPDF = async () => {
+  async function handleDelete(location: BusinessLocation) {
+    setConfirmModal({
+      title: "Eliminar ubicación",
+      message: `¿Eliminar o desactivar "${location.name}"? Si tiene ventas asociadas, el sistema la va a desactivar.`,
+      confirmText: "Eliminar",
+      danger: true,
+      onConfirm: async () => {
+        const toastId = toast.loading("Eliminando ubicación...");
+
+        try {
+          await api.delete(`/business-locations/${location.id}`);
+
+          if (editingId === location.id) resetForm();
+
+          await loadLocations();
+          toast.success("Ubicación eliminada o desactivada correctamente.", {
+            id: toastId,
+          });
+        } catch (err) {
+          toast.error(
+            getErrorMessage(err, "No se pudo eliminar la ubicación."),
+            { id: toastId },
+          );
+        }
+      },
+    });
+  }
+
+  async function confirmAction() {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
+
     try {
-      const res = await api.get('/finance/export/pdf', {
-        responseType: 'blob',
-        params: {
-          startDate: dateFrom,
-          endDate: dateTo,
-        },
-      });
-
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-
-      link.href = url;
-      link.setAttribute('download', `finanzas-${dateFrom}-a-${dateTo}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      window.URL.revokeObjectURL(url);
-    } catch {
-      alert('Error exportando PDF');
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
     }
-  };
+  }
 
   return (
     <AppLayout
-      title="Finanzas"
-      subtitle={`Movimientos desde ${dateFrom} hasta ${dateTo}`}
+      title="Sucursales y depósitos"
+      subtitle="Configurá desde dónde salen ventas, envíos, remitos y entregas."
       actions={
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-secondary btn-sm" onClick={exportExcel}>
-            <FileSpreadsheet size={14} /> Excel
-          </button>
-
-          <button className="btn btn-secondary btn-sm" onClick={exportPDF}>
-            <FileText size={14} /> PDF
-          </button>
-
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
-            <Plus size={14} /> Nueva entrada
-          </button>
-        </div>
+        <button
+          className="btn btn-secondary"
+          onClick={() => loadLocations(true)}
+          disabled={loading}
+        >
+          <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
+          Actualizar
+        </button>
       }
     >
-      <div className="card" style={{ padding: 16, marginBottom: 20 }}>
-        <div
+      <div style={{ display: "grid", gap: 18 }}>
+        <section
           style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr auto auto',
-            gap: 12,
-            alignItems: 'end',
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: 14,
           }}
         >
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Desde</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-            />
-          </div>
+          <StatCard
+            icon={MapPin}
+            label="Ubicaciones"
+            value={locations.length}
+            help="Cantidad total de locales, depósitos y sucursales cargadas."
+          />
 
-          <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label">Hasta</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-            />
-          </div>
+          <StatCard
+            icon={CheckCircle2}
+            label="Activas"
+            value={activeCount}
+            help="Solo las ubicaciones activas deberían usarse en ventas nuevas."
+            badge={<span className="badge badge-green">OPERATIVAS</span>}
+          />
 
-          <button className="btn btn-primary" onClick={applyFilters}>
-            <Filter size={15} /> Aplicar
-          </button>
+          <StatCard
+            icon={Star}
+            label="Predeterminada"
+            value={defaultLocation?.name || "Sin definir"}
+            help="Se puede usar por defecto para envíos y remitos."
+            badge={<span className="badge badge-yellow">DEFAULT</span>}
+          />
+        </section>
 
-          <button className="btn btn-secondary" onClick={resetDates}>
-            <RotateCcw size={15} /> Mes actual
-          </button>
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 14,
-          marginBottom: 20,
-        }}
-      >
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'rgba(0,229,160,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "430px minmax(0, 1fr)",
+            gap: 18,
+            alignItems: "start",
+          }}
+        >
+          <form onSubmit={handleSubmit} style={{ display: "grid", gap: 18 }}>
+            <SectionCard
+              title={editingId ? "Editar ubicación" : "Nueva ubicación"}
+              subtitle="Datos principales de la sucursal, depósito o local."
+              icon={editingId ? Edit2 : Plus}
             >
-              <TrendingUp size={16} style={{ color: 'var(--accent)' }} />
-            </div>
-
-            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-              Ingresos del rango
-            </span>
-          </div>
-
-          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
-            {fmt(ingresos)}
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'rgba(239,68,68,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <TrendingDown size={16} style={{ color: 'var(--danger)' }} />
-            </div>
-
-            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-              Egresos del rango
-            </span>
-          </div>
-
-          <div className="stat-value" style={{ color: 'var(--danger)', fontSize: 22 }}>
-            {fmt(egresos)}
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'rgba(79,142,255,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Wallet size={16} style={{ color: 'var(--accent2)' }} />
-            </div>
-
-            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-              Balance del rango
-            </span>
-          </div>
-
-          <div
-            className="stat-value"
-            style={{
-              color: balance >= 0 ? 'var(--accent)' : 'var(--danger)',
-              fontSize: 22,
-            }}
-          >
-            {fmt(balance)}
-          </div>
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 14,
-          marginBottom: 20,
-        }}
-      >
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <CalendarDays size={16} style={{ color: 'var(--accent)' }} />
-
-            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-              Semana de la fecha hasta
-            </span>
-          </div>
-
-          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
-            {fmt(stats.week)}
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <CalendarDays size={16} style={{ color: 'var(--accent)' }} />
-
-            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-              Mes de la fecha hasta
-            </span>
-          </div>
-
-          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
-            {fmt(stats.month)}
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <CalendarDays size={16} style={{ color: 'var(--accent)' }} />
-
-            <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-              Año de la fecha hasta
-            </span>
-          </div>
-
-          <div className="stat-value" style={{ color: 'var(--accent)', fontSize: 22 }}>
-            {fmt(stats.year)}
-          </div>
-        </div>
-      </div>
-
-      {chartData.length > 0 && (
-        <div className="card" style={{ padding: 24, marginBottom: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>
-            Flujo de caja del rango
-          </div>
-
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartData} margin={{ left: -20 }}>
-              <XAxis
-                dataKey="date"
-                tick={{
-                  fill: 'var(--text3)',
-                  fontSize: 11,
-                  fontFamily: 'var(--mono)',
-                }}
-                axisLine={false}
-                tickLine={false}
-              />
-
-              <YAxis
-                tick={{
-                  fill: 'var(--text3)',
-                  fontSize: 10,
-                  fontFamily: 'var(--mono)',
-                }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`}
-              />
-
-              <Tooltip
-                contentStyle={{
-                  background: 'var(--surface2)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  fontFamily: 'var(--mono)',
-                  fontSize: 12,
-                }}
-                formatter={(v: unknown) => fmt(Number(v))}
-              />
-
-              <Bar
-                dataKey="ingresos"
-                fill="var(--accent)"
-                radius={[3, 3, 0, 0]}
-                opacity={0.85}
-                name="Ingresos"
-              />
-
-              <Bar
-                dataKey="egresos"
-                fill="var(--danger)"
-                radius={[3, 3, 0, 0]}
-                opacity={0.7}
-                name="Egresos"
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {categoryStats.length > 0 && (
-        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-            <Tags size={16} style={{ color: 'var(--accent2)' }} />
-
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              Ingresos por categoría del rango
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gap: 10 }}>
-            {categoryStats.map((item: AnyObj, index: number) => {
-              const category = item.category ?? item.name ?? item.label ?? 'Sin categoría';
-
-              const total =
-                item.total ??
-                item.amount ??
-                item.income ??
-                item.totalIncome ??
-                item._sum?.amount ??
-                0;
-
-              return (
-                <div
-                  key={`${category}-${index}`}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '10px 12px',
-                    border: '1px solid var(--border)',
-                    borderRadius: 10,
-                    background: 'var(--surface2)',
-                  }}
-                >
-                  <span style={{ fontSize: 13, fontWeight: 700 }}>
-                    {categoryLabel(category)}
-                  </span>
-
-                  <span style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
-                    {fmt(Number(total || 0))}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: 14,
-          marginBottom: 20,
-        }}
-      >
-        <div className="card" style={{ padding: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-            <Trophy size={16} style={{ color: 'var(--accent)' }} />
-
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              Productos más vendidos
-            </div>
-          </div>
-
-          {topProducts.length ? (
-            <div style={{ display: 'grid', gap: 10 }}>
-              {topProducts.slice(0, 5).map((p: AnyObj, index: number) => (
-                <div
-                  key={p.id ?? `${getProductName(p)}-${index}`}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    fontSize: 13,
-                  }}
-                >
-                  <span style={{ fontWeight: 700 }}>
-                    {index + 1}. {getProductName(p)}
-                  </span>
-
-                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
-                    {getProductQty(p)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>
-              Sin datos todavía
-            </p>
-          )}
-        </div>
-
-        <div className="card" style={{ padding: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-            <AlertTriangle size={16} style={{ color: 'var(--danger)' }} />
-
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              Productos con menor venta
-            </div>
-          </div>
-
-          {filteredWorstProducts.length ? (
-            <div style={{ display: 'grid', gap: 10 }}>
-              {filteredWorstProducts.slice(0, 5).map((p: AnyObj, index: number) => (
-                <div
-                  key={p.id ?? `${getProductName(p)}-${index}`}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    fontSize: 13,
-                  }}
-                >
-                  <span style={{ fontWeight: 700 }}>
-                    {index + 1}. {getProductName(p)}
-                  </span>
-
-                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--danger)' }}>
-                    {getProductQty(p)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>
-              Sin datos todavía
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="table-wrap">
-          {loading ? (
-            <div style={{ padding: 20 }}>
-              {[...Array(5)].map((_, i) => (
-                <div
-                  key={i}
-                  className="skeleton"
-                  style={{ height: 44, marginBottom: 8 }}
+              <div style={{ display: "grid", gap: 14 }}>
+                <InputField
+                  label="Nombre"
+                  value={form.name}
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, name: value }))
+                  }
+                  placeholder="Ej: Depósito principal"
+                  help="Este nombre va a aparecer al seleccionar desde dónde sale una venta."
                 />
-              ))}
-            </div>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Tipo</th>
-                  <th>Descripción</th>
-                  <th>Categoría</th>
-                  <th>Importe</th>
-                </tr>
-              </thead>
 
-              <tbody>
-                {filteredEntries.map(e => (
-                  <tr key={e.id}>
-                    <td
+                <label style={{ display: "block" }}>
+                  <div style={{ marginBottom: 7 }}>
+                    <span
                       style={{
                         fontSize: 12,
-                        color: 'var(--text2)',
-                        fontFamily: 'var(--mono)',
+                        fontWeight: 900,
+                        color: "var(--text2)",
                       }}
                     >
-                      {new Date(e.date).toLocaleDateString('es-AR')}
-                    </td>
+                      Tipo de ubicación
+                    </span>
+                  </div>
 
-                    <td>
-                      <span
-                        className={`badge ${
-                          e.type === 'INGRESO' ? 'badge-green' : 'badge-red'
-                        }`}
-                      >
-                        {e.type === 'INGRESO' ? '↑' : '↓'} {e.type}
-                      </span>
-                    </td>
+                  <select
+                    value={form.type}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        type: e.target.value as BusinessLocationType,
+                      }))
+                    }
+                    className="input"
+                  >
+                    <option value="WAREHOUSE">Depósito</option>
+                    <option value="STORE">Local</option>
+                    <option value="BRANCH">Sucursal</option>
+                  </select>
 
-                    <td style={{ fontSize: 13, fontWeight: 600 }}>
-                      {e.description || '—'}
-                    </td>
+                  <FieldHelp>{typeDescription(form.type)}</FieldHelp>
+                </label>
 
-                    <td>
-                      <span className="badge badge-gray">
-                        {categoryLabel(e.category)}
-                      </span>
-                    </td>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 110px",
+                    gap: 12,
+                  }}
+                >
+                  <InputField
+                    label="Calle"
+                    value={form.addressStreet}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, addressStreet: value }))
+                    }
+                    placeholder="San Martín"
+                    optional
+                  />
 
-                    <td
-                      style={{
-                        fontFamily: 'var(--mono)',
-                        fontWeight: 700,
-                        color: e.type === 'INGRESO' ? 'var(--accent)' : 'var(--danger)',
-                      }}
+                  <InputField
+                    label="Número"
+                    value={form.addressNumber}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, addressNumber: value }))
+                    }
+                    placeholder="810"
+                    optional
+                  />
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 12,
+                  }}
+                >
+                  <InputField
+                    label="Localidad"
+                    value={form.addressCity}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, addressCity: value }))
+                    }
+                    placeholder="Villa General Belgrano"
+                    optional
+                  />
+
+                  <InputField
+                    label="Provincia"
+                    value={form.addressProvince}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, addressProvince: value }))
+                    }
+                    placeholder="Córdoba"
+                    optional
+                  />
+                </div>
+
+                <InputField
+                  label="Código postal"
+                  value={form.addressPostalCode}
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, addressPostalCode: value }))
+                  }
+                  placeholder="5194"
+                  optional
+                />
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title="Coordenadas y uso"
+              subtitle="Datos necesarios para calcular envíos automáticamente."
+              icon={MapPin}
+            >
+              <div style={{ display: "grid", gap: 14 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 12,
+                  }}
+                >
+                  <InputField
+                    label="Latitud"
+                    value={form.latitude}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, latitude: value }))
+                    }
+                    placeholder="-31.978"
+                    optional
+                    help="Después podemos autocompletar esto con Google Geocoding."
+                  />
+
+                  <InputField
+                    label="Longitud"
+                    value={form.longitude}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, longitude: value }))
+                    }
+                    placeholder="-64.556"
+                    optional
+                  />
+                </div>
+
+                <TextAreaField
+                  label="Notas internas"
+                  value={form.addressNotes}
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, addressNotes: value }))
+                  }
+                  placeholder="Ej: entrada por portón lateral, depósito al fondo..."
+                  help="Esto es solo referencia interna para Grupo VJ."
+                />
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 12,
+                  }}
+                >
+                  <ToggleBox
+                    title="Predeterminada"
+                    subtitle="Usarla por defecto"
+                    checked={form.isDefault}
+                    onChange={(checked) =>
+                      setForm((prev) => ({ ...prev, isDefault: checked }))
+                    }
+                    icon={Star}
+                  />
+
+                  <ToggleBox
+                    title="Activa"
+                    subtitle="Disponible en ventas"
+                    checked={form.isActive}
+                    onChange={(checked) =>
+                      setForm((prev) => ({ ...prev, isActive: checked }))
+                    }
+                    icon={CheckCircle2}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button
+                    className="btn btn-primary"
+                    type="submit"
+                    disabled={saving}
+                  >
+                    {saving ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Save size={16} />
+                    )}
+                    {editingId ? "Guardar cambios" : "Crear ubicación"}
+                  </button>
+
+                  {editingId && (
+                    <button
+                      className="btn btn-secondary"
+                      type="button"
+                      onClick={resetForm}
                     >
-                      {e.type === 'INGRESO' ? '+' : '-'}
-                      {fmt(Number(e.amount || 0))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                      <XCircle size={16} />
+                      Cancelar
+                    </button>
+                  )}
+                </div>
+              </div>
+            </SectionCard>
+          </form>
 
-          {!loading && !filteredEntries.length && (
-            <div className="empty-state">
-              <Wallet size={36} />
-              <p>Sin movimientos en el rango seleccionado</p>
+          <section className="card" style={{ padding: 22 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 16,
+                alignItems: "flex-start",
+                marginBottom: 18,
+              }}
+            >
+              <div>
+                <h3 style={{ fontSize: 15, fontWeight: 900 }}>
+                  Ubicaciones cargadas
+                </h3>
+                <p
+                  style={{ color: "var(--text2)", fontSize: 13, marginTop: 3 }}
+                >
+                  Administrá los puntos desde donde salen ventas, remitos y
+                  envíos.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className={`badge ${showInactive ? "badge-blue" : "badge-gray"}`}
+                onClick={() => setShowInactive((prev) => !prev)}
+                style={{ cursor: "pointer" }}
+              >
+                {showInactive ? "MOSTRANDO INACTIVAS" : "SOLO ACTIVAS"}
+              </button>
             </div>
-          )}
-        </div>
+
+            <div style={{ position: "relative", marginBottom: 16 }}>
+              <Search
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 13,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  color: "var(--text3)",
+                  pointerEvents: "none",
+                }}
+              />
+
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por nombre, tipo o dirección..."
+                className="input"
+                style={{ paddingLeft: 40 }}
+              />
+            </div>
+
+            {loading ? (
+              <div
+                style={{
+                  minHeight: 280,
+                  border: "1px dashed var(--border)",
+                  borderRadius: 18,
+                  display: "grid",
+                  placeItems: "center",
+                  background: "var(--surface2)",
+                }}
+              >
+                <div
+                  style={{ display: "grid", justifyItems: "center", gap: 10 }}
+                >
+                  <Loader2 size={26} className="animate-spin" />
+                  <p
+                    style={{
+                      color: "var(--text2)",
+                      fontSize: 13,
+                      fontWeight: 800,
+                    }}
+                  >
+                    Cargando ubicaciones...
+                  </p>
+                </div>
+              </div>
+            ) : filteredLocations.length === 0 ? (
+              <div
+                style={{
+                  minHeight: 280,
+                  border: "1px dashed var(--border)",
+                  borderRadius: 18,
+                  display: "grid",
+                  placeItems: "center",
+                  textAlign: "center",
+                  padding: 30,
+                  background: "var(--surface2)",
+                }}
+              >
+                <div>
+                  <HelpCircle
+                    size={30}
+                    style={{ color: "var(--text3)", margin: "0 auto 10px" }}
+                  />
+                  <h4 style={{ fontSize: 15, fontWeight: 900 }}>
+                    No hay ubicaciones para mostrar
+                  </h4>
+                  <p
+                    style={{
+                      color: "var(--text3)",
+                      fontSize: 13,
+                      marginTop: 6,
+                    }}
+                  >
+                    Creá el primer depósito o local para usarlo en ventas y
+                    envíos.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 12 }}>
+                {filteredLocations.map((location) => {
+                  const Icon = typeIcon(location.type);
+
+                  return (
+                    <article
+                      key={location.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 18,
+                        background: location.isActive
+                          ? "var(--surface2)"
+                          : "rgba(255,255,255,0.025)",
+                        padding: 16,
+                        opacity: location.isActive ? 1 : 0.65,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 14,
+                          alignItems: "flex-start",
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              alignItems: "center",
+                              gap: 7,
+                              marginBottom: 10,
+                            }}
+                          >
+                            <span className="badge badge-gray">
+                              <Icon size={13} />
+                              {typeLabel(location.type)}
+                            </span>
+
+                            {location.isDefault && (
+                              <span className="badge badge-yellow">
+                                <Star size={13} />
+                                DEFAULT
+                              </span>
+                            )}
+
+                            <span
+                              className={`badge ${
+                                location.isActive ? "badge-green" : "badge-red"
+                              }`}
+                            >
+                              {location.isActive ? "ACTIVA" : "INACTIVA"}
+                            </span>
+                          </div>
+
+                          <h4
+                            style={{
+                              fontSize: 15,
+                              fontWeight: 950,
+                              color: "var(--text)",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {location.name}
+                          </h4>
+
+                          <p
+                            style={{
+                              color: "var(--text2)",
+                              fontSize: 13,
+                              marginTop: 5,
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {buildAddress(location)}
+                          </p>
+
+                          {(location.latitude !== null ||
+                            location.longitude !== null) && (
+                            <p
+                              style={{
+                                color: "var(--text3)",
+                                fontSize: 12,
+                                marginTop: 5,
+                              }}
+                            >
+                              Lat: {location.latitude ?? "—"} · Lng:{" "}
+                              {location.longitude ?? "—"}
+                            </p>
+                          )}
+
+                          {location.addressNotes && (
+                            <p
+                              style={{
+                                marginTop: 10,
+                                padding: "9px 11px",
+                                borderRadius: 13,
+                                border: "1px solid var(--border)",
+                                color: "var(--text3)",
+                                fontSize: 12,
+                                lineHeight: 1.45,
+                              }}
+                            >
+                              {location.addressNotes}
+                            </p>
+                          )}
+
+                          <p
+                            style={{
+                              color: "var(--text3)",
+                              fontSize: 11,
+                              marginTop: 10,
+                            }}
+                          >
+                            Actualizado: {formatDateTime(location.updatedAt)}
+                          </p>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 8,
+                            justifyContent: "flex-end",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {!location.isDefault && location.isActive && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => handleSetDefault(location.id)}
+                              style={{ height: 36, padding: "0 11px" }}
+                            >
+                              <Star size={14} />
+                              Default
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => startEdit(location)}
+                            style={{ height: 36, padding: "0 11px" }}
+                          >
+                            <Edit2 size={14} />
+                            Editar
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn btn-danger"
+                            onClick={() => handleDelete(location)}
+                            style={{ height: 36, padding: "0 11px" }}
+                          >
+                            <Trash2 size={14} />
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </section>
       </div>
 
-      {modal && (
+      {confirmModal && (
         <div
           className="modal-overlay"
-          onClick={e => e.target === e.currentTarget && setModal(false)}
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
         >
-          <div className="modal">
+          <div className="modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
-              <span style={{ fontWeight: 800 }}>Nueva entrada financiera</span>
+              <b>{confirmModal.title}</b>
 
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={() => setModal(false)}
-                style={{ padding: 6 }}
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
               >
-                <X size={16} />
+                <XCircle size={16} />
               </button>
             </div>
 
             <div className="modal-body">
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Tipo *</label>
-
-                  <select
-                    value={form.type}
-                    onChange={e => field('type', e.target.value)}
-                  >
-                    <option value="INGRESO">Ingreso</option>
-                    <option value="EGRESO">Egreso</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Fecha *</label>
-
-                  <input
-                    type="date"
-                    value={form.date}
-                    onChange={e => field('date', e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Importe *</label>
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.amount}
-                  onChange={e => field('amount', e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Descripción *</label>
-
-                <input
-                  value={form.description}
-                  onChange={e => field('description', e.target.value)}
-                  placeholder="Ej: Alquiler mayo, sueldo empleado, pago proveedor..."
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Categoría *</label>
-
-                <select
-                  value={form.category}
-                  onChange={e => field('category', e.target.value)}
+              <div
+                style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
+              >
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? "rgba(239,68,68,0.12)"
+                      : "var(--surface2)",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                  }}
                 >
-                  {FINANCE_CATEGORIES.map(cat => (
-                    <option key={cat.value} value={cat.value}>
-                      {cat.label}
-                    </option>
-                  ))}
-                </select>
+                  <AlertCircle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger
+                        ? "var(--danger)"
+                        : "var(--accent)",
+                    }}
+                  />
+                </span>
+
+                <p
+                  style={{
+                    color: "var(--text2)",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    margin: 0,
+                  }}
+                >
+                  {confirmModal.message}
+                </p>
               </div>
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setModal(false)}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
                 Cancelar
               </button>
 
               <button
-                className="btn btn-primary"
-                onClick={handleSave}
-                disabled={saving || !form.amount || !form.description || !form.category}
+                className={
+                  confirmModal.danger ? "btn btn-danger" : "btn btn-primary"
+                }
+                onClick={confirmAction}
+                disabled={confirmLoading}
               >
-                {saving ? <span className="spinner" /> : 'Guardar'}
+                {confirmLoading ? (
+                  <span className="spinner" />
+                ) : (
+                  (confirmModal.confirmText ?? "Confirmar")
+                )}
               </button>
             </div>
           </div>

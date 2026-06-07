@@ -5,33 +5,34 @@ import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { PaymentMethod, Sale } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
+import { remitoApi, type Remito } from '@/service/remito.service';
+import toast from 'react-hot-toast';
 import {
+  AlertTriangle,
   Check,
   FileText,
   Loader2,
+  Printer,
   ReceiptText,
   Search,
   Send,
+  Truck,
   X,
 } from 'lucide-react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 const badge = (s: string) =>
-  s === 'COMPLETED'
-    ? 'badge-green'
-    : s === 'PENDING'
-    ? 'badge-yellow'
-    : 'badge-red';
+  s === 'COMPLETED' ? 'badge-green' : s === 'PENDING' ? 'badge-yellow' : 'badge-red';
 
 const invoiceBadge = (s?: string | null) =>
   s === 'INVOICED'
     ? 'badge-green'
     : s === 'PENDING_AFIP'
-    ? 'badge-yellow'
-    : s === 'ERROR'
-    ? 'badge-red'
-    : 'badge-gray';
+      ? 'badge-yellow'
+      : s === 'ERROR'
+        ? 'badge-red'
+        : 'badge-gray';
 
 const methods: PaymentMethod[] = [
   'EFECTIVO',
@@ -53,6 +54,135 @@ type InvoiceModalState = {
   receiverDoc: string;
   condicionIVAReceptor: number;
 };
+
+type CreditNoteModalState = {
+  sale: Sale;
+  motivo: string;
+  importe: string;
+};
+
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+} | null;
+
+type PaymentView = {
+  method: PaymentMethod;
+  amount: number;
+  reference?: string | null;
+  notes?: string | null;
+};
+
+type ProductView = {
+  name?: string | null;
+};
+
+type SaleItemView = {
+  id?: string;
+  productNameSnapshot?: string | null;
+  product?: ProductView | null;
+  quantity?: number | null;
+  quantityKg?: number | null;
+  price: number;
+  subtotal?: number | null;
+};
+
+type InvoiceAfipView = {
+  id?: string;
+  tipoComprobante?: number | null;
+  relatedInvoiceId?: string | null;
+  creditNotes?: CreditNoteView[];
+  creditNote?: CreditNoteView | null;
+  relatedCreditNotes?: CreditNoteView[];
+};
+
+type CreditNoteView = {
+  id?: string;
+  saleId?: string;
+  sale?: {
+    id?: string;
+  } | null;
+};
+
+type SaleExtra = Sale & {
+  invoiceStatus?: string | null;
+  isInvoiced?: boolean | null;
+  isNoteCredit?: boolean | null;
+  hasCreditNote?: boolean | null;
+  receiptType?: 'TICKET' | 'FACTURA' | 'NOTA_CREDITO' | 'NOTA DE CREDITO' | 'NOTA DE CRÉDITO' | string | null;
+  invoiceAfip?: InvoiceAfipView | null;
+  invoiceAfipId?: string | null;
+  invoice?: InvoiceAfipView | null;
+  factura?: InvoiceAfipView | null;
+  creditNoteAfip?: CreditNoteView | null;
+  creditNote?: CreditNoteView | null;
+  creditNotes?: CreditNoteView[];
+  remitos?: Remito[];
+  remito?: Remito | null;
+  transportName?: string | null;
+  transportCuit?: string | null;
+  packagesCount?: number | null;
+  declaredValue?: number | null;
+  quotationExpiresAt?: string | null;
+  payments?: PaymentView[];
+  items?: SaleItemView[];
+  client?: (NonNullable<Sale['client']> & {
+    dni?: string | null;
+    category?: string | null;
+  }) | null;
+};
+
+type AfipInvoiceResponse = {
+  invoiceStatus?: string;
+  cae?: string;
+  factura?: {
+    cae?: string;
+  };
+  content?: {
+    cae?: string;
+  };
+  invoice?: {
+    cae?: string;
+  };
+};
+
+type CreditNoteResponse = {
+  message?: string;
+  notaCredito?: {
+    cae?: string;
+  };
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.error ??
+    (error as { message?: string })?.message ??
+    fallback
+  );
+}
+
+async function getBlobErrorMessage(error: unknown, fallback: string) {
+  const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+
+  if (responseData instanceof Blob) {
+    const text = await responseData.text();
+
+    try {
+      const parsed = JSON.parse(text) as { message?: string; error?: string };
+      return parsed.message || parsed.error || fallback;
+    } catch {
+      return text || fallback;
+    }
+  }
+
+  return getErrorMessage(error, fallback);
+}
 
 function onlyNumbers(value: unknown) {
   return String(value ?? '').replace(/\D/g, '');
@@ -95,7 +225,7 @@ function detectDocType(doc: string) {
 }
 
 function getSaleInvoiceStatus(sale: Sale) {
-  const s = sale as any;
+  const s = sale as SaleExtra;
 
   if (s.invoiceStatus) return s.invoiceStatus;
   if (s.isInvoiced) return 'INVOICED';
@@ -104,12 +234,93 @@ function getSaleInvoiceStatus(sale: Sale) {
 }
 
 function isSaleInvoiced(sale: Sale) {
-  const s = sale as any;
+  const s = sale as SaleExtra;
   return Boolean(s.isInvoiced) || s.invoiceStatus === 'INVOICED';
 }
 
+function isCreditNoteSale(sale: Sale) {
+  const saleExtra = sale as SaleExtra;
+  const receiptType = String(saleExtra.receiptType ?? '');
+
+  return Boolean(
+    saleExtra.isNoteCredit ||
+      receiptType === 'NOTA_CREDITO' ||
+      receiptType === 'NOTA DE CREDITO' ||
+      receiptType === 'NOTA DE CRÉDITO' ||
+      saleExtra.invoiceAfip?.relatedInvoiceId ||
+      [3, 8, 13].includes(Number(saleExtra.invoiceAfip?.tipoComprobante))
+  );
+}
+
+function hasCreditNote(sale: Sale) {
+  const saleExtra = sale as SaleExtra;
+
+  return Boolean(
+    saleExtra.hasCreditNote ||
+      saleExtra.creditNoteAfip ||
+      saleExtra.creditNote ||
+      (saleExtra.creditNotes?.length ?? 0) > 0 ||
+      (saleExtra.invoiceAfip?.creditNotes?.length ?? 0) > 0 ||
+      saleExtra.invoiceAfip?.creditNote ||
+      (saleExtra.invoiceAfip?.relatedCreditNotes?.length ?? 0) > 0
+  );
+}
+
+function canEmitCreditNote(sale: Sale) {
+  return (
+    isSaleInvoiced(sale) &&
+    sale.status !== 'CANCELLED' &&
+    !isCreditNoteSale(sale) &&
+    !hasCreditNote(sale)
+  );
+}
+
+function getCreditNoteSaleId(sale: Sale) {
+  const saleExtra = sale as SaleExtra;
+
+  if (isCreditNoteSale(sale)) {
+    return sale.id;
+  }
+
+  const firstCreditNote =
+    saleExtra.invoiceAfip?.creditNotes?.[0] ||
+    saleExtra.creditNotes?.[0] ||
+    saleExtra.creditNoteAfip ||
+    saleExtra.creditNote ||
+    saleExtra.invoiceAfip?.creditNote ||
+    saleExtra.invoiceAfip?.relatedCreditNotes?.[0];
+
+  return firstCreditNote?.saleId || firstCreditNote?.sale?.id || firstCreditNote?.id || null;
+}
+
+function canDownloadCreditNote(sale: Sale) {
+  return Boolean(isCreditNoteSale(sale) || getCreditNoteSaleId(sale));
+}
+
+function getSaleRemitos(sale: Sale): Remito[] {
+  const saleExtra = sale as SaleExtra;
+
+  if (Array.isArray(saleExtra.remitos)) {
+    return saleExtra.remitos.filter((r) => r.status !== 'CANCELLED');
+  }
+
+  if (saleExtra.remito && saleExtra.remito.status !== 'CANCELLED') {
+    return [saleExtra.remito];
+  }
+
+  return [];
+}
+
+function hasRemito(sale: Sale) {
+  return getSaleRemitos(sale).length > 0;
+}
+
+function canEmitRemito(sale: Sale) {
+  return sale.status === 'COMPLETED' || isSaleInvoiced(sale);
+}
+
 function defaultInvoiceTypeForSale(sale: Sale): InvoiceType {
-  const client = (sale as any).client;
+  const client = (sale as SaleExtra).client;
 
   if (!client) return 11;
 
@@ -123,38 +334,49 @@ function defaultInvoiceTypeForSale(sale: Sale): InvoiceType {
 }
 
 function getSaleProductsForAfip(sale: Sale) {
-  const items = (sale as any).items || [];
+  const items = (sale as SaleExtra).items ?? [];
 
-  return items.map((item: any) => {
-    const quantity = item.quantityKg ? num(item.quantityKg) : num(item.quantity || 1);
+  return items.map((item) => {
+    const quantityKg =
+      item.quantityKg !== null && item.quantityKg !== undefined ? num(item.quantityKg) : undefined;
+
+    const quantity = quantityKg !== undefined && quantityKg > 0 ? quantityKg : num(item.quantity || 1);
     const price = num(item.price);
 
     return {
       name: item.productNameSnapshot || item.product?.name || 'Producto',
       quantity,
+      quantityKg,
       price,
+      subtotal:
+        item.subtotal !== undefined && item.subtotal !== null ? num(item.subtotal) : quantity * price,
     };
   });
 }
 
 function getSalePaymentLabel(sale: Sale) {
-  const saleAny = sale as any;
+  const saleExtra = sale as SaleExtra;
 
-  if (saleAny.payments?.length) {
-    return saleAny.payments
-      .map((p: any) => `${p.method}: ${fmtMoney(num(p.amount))}`)
+  if (saleExtra.payments?.length) {
+    return saleExtra.payments
+      .map((p) => `${p.method}: ${fmtMoney(num(p.amount))}`)
       .join(' | ');
   }
 
-  return saleAny.paymentMethod;
+  return sale.paymentMethod;
 }
 
 function getQuotationExpirationLabel(sale: Sale) {
-  const saleAny = sale as any;
+  const saleExtra = sale as SaleExtra;
 
-  if (!saleAny.quotationExpiresAt) return null;
+  if (!saleExtra.quotationExpiresAt) return null;
 
-  return fmtDate(saleAny.quotationExpiresAt);
+  return fmtDate(String(saleExtra.quotationExpiresAt));
+}
+
+async function fetchSales() {
+  const r = await api.get('/sales');
+  return normalizeArray<Sale>(r.data);
 }
 
 export default function VentasPage() {
@@ -164,27 +386,62 @@ export default function VentasPage() {
   const [status, setStatus] = useState('');
   const [detail, setDetail] = useState<Sale | null>(null);
   const [payEdit, setPayEdit] = useState<Sale | null>(null);
-  const [payments, setPayments] = useState<
-    { method: PaymentMethod; amount: number; reference?: string; notes?: string }[]
-  >([]);
+
+  const [payments, setPayments] = useState<PaymentView[]>([]);
 
   const [invoiceModal, setInvoiceModal] = useState<InvoiceModalState | null>(null);
-  const [invoicingId, setInvoicingId] = useState<string | null>(null);
-  const [quotationLoadingId, setQuotationLoadingId] = useState<string | null>(null);
+  const [creditNoteModal, setCreditNoteModal] = useState<CreditNoteModalState | null>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const load = async () => {
+  const [invoicingId, setInvoicingId] = useState<string | null>(null);
+  const [creditNoteLoadingId, setCreditNoteLoadingId] = useState<string | null>(null);
+  const [quotationLoadingId, setQuotationLoadingId] = useState<string | null>(null);
+  const [printingTicketId, setPrintingTicketId] = useState<string | null>(null);
+
+  const [remitoLoadingId, setRemitoLoadingId] = useState<string | null>(null);
+  const [openingRemitoId, setOpeningRemitoId] = useState<string | null>(null);
+
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
     try {
-      const r = await api.get('/sales');
-      setSales(normalizeArray<Sale>(r.data));
+      const data = await fetchSales();
+      setSales(data);
+
+      if (showSuccess) {
+        toast.success('Ventas actualizadas');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Error al cargar ventas');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    let alive = true;
+
+    fetchSales()
+      .then((data) => {
+        if (!alive) return;
+        setSales(data);
+      })
+      .catch((error) => {
+        console.error(error);
+
+        if (!alive) return;
+        toast.error('Error al cargar ventas');
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const filtered = sales.filter(
@@ -201,89 +458,206 @@ export default function VentasPage() {
 
   const debt = sales.reduce((a, s) => a + num(s.accountDebtAmount), 0);
 
+  const confirmAction = async () => {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
+
+    try {
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
+    }
+  };
+
   const setSaleStatus = async (s: Sale, next: Sale['status']) => {
-    if (next === 'CANCELLED' && !confirm('¿Cancelar venta y revertir stock/deuda?')) {
+    if (next === 'CANCELLED') {
+      setConfirmModal({
+        title: 'Cancelar venta',
+        message: `¿Cancelar venta #${s.id.slice(-8)} y revertir stock/deuda?`,
+        confirmText: 'Cancelar venta',
+        danger: true,
+        onConfirm: async () => {
+          const toastId = toast.loading('Cancelando venta...');
+
+          try {
+            await api.patch(`/sales/${s.id}/status`, { status: next });
+            await load();
+            toast.success('Venta cancelada correctamente', { id: toastId });
+          } catch (error) {
+            toast.error(getErrorMessage(error, 'No se pudo cancelar la venta'), { id: toastId });
+          }
+        },
+      });
+
       return;
     }
 
-    await api.patch(`/sales/${s.id}/status`, { status: next });
-    await load();
+    const toastId = toast.loading('Actualizando venta...');
+
+    try {
+      await api.patch(`/sales/${s.id}/status`, { status: next });
+      await load();
+      toast.success('Venta actualizada correctamente', { id: toastId });
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'No se pudo actualizar la venta'), { id: toastId });
+    }
   };
 
-const downloadQuotation = async (sale: Sale) => {
-  if (sale.status !== 'PENDING') {
-    alert('Solo se puede descargar cotización de una venta pendiente.');
-    return;
-  }
+  const printTicket = async (sale: Sale) => {
+    try {
+      setPrintingTicketId(sale.id);
 
-  try {
-    setQuotationLoadingId(sale.id);
+      const toastId = toast.loading('Enviando ticket a impresión...');
+      await api.post(`/tickets/sale/${sale.id}/print`);
+      toast.success('Ticket enviado a impresión', { id: toastId });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'No se pudo imprimir el ticket'));
+    } finally {
+      setPrintingTicketId(null);
+    }
+  };
 
-    const response = await api.get(`/sales/${sale.id}/cotizacion-pdf`, {
-      responseType: 'blob',
-    });
-
-    const contentType = response.headers['content-type'];
-
-    if (!contentType?.includes('application/pdf')) {
-      const errorText = await response.data.text();
-
-      try {
-        const parsed = JSON.parse(errorText);
-        throw new Error(parsed.message || parsed.error || 'El backend no devolvió un PDF');
-      } catch {
-        throw new Error(errorText || 'El backend no devolvió un PDF válido');
-      }
+  const createRemito = async (sale: Sale) => {
+    if (!canEmitRemito(sale)) {
+      toast.error('El remito solo se puede emitir si la venta está completada o facturada');
+      return;
     }
 
-    const blob = new Blob([response.data], {
-      type: 'application/pdf',
-    });
-
-    const url = window.URL.createObjectURL(blob);
-
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `cotizacion-${sale.id}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-
-    link.remove();
-    window.URL.revokeObjectURL(url);
-
-    await load();
-  } catch (error: any) {
-    let message = 'No se pudo descargar la cotización.';
-
-    if (error?.response?.data instanceof Blob) {
-      const text = await error.response.data.text();
-
-      try {
-        const parsed = JSON.parse(text);
-        message = parsed.message || parsed.error || message;
-      } catch {
-        message = text || message;
-      }
-    } else {
-      message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        message;
+    if (sale.status === 'CANCELLED') {
+      toast.error('No se puede emitir remito de una venta cancelada');
+      return;
     }
 
-    alert(message);
-  } finally {
-    setQuotationLoadingId(null);
-  }
-};
+    setConfirmModal({
+      title: 'Generar remito',
+      message:
+        `¿Generar remito para la venta #${sale.id.slice(-8)}?\n\n` +
+        `Cliente: ${clientName(sale.client)}\n` +
+        `Total declarado: ${fmtMoney(num(sale.total))}`,
+      confirmText: 'Generar remito',
+      danger: false,
+      onConfirm: async () => {
+        const saleExtra = sale as SaleExtra;
+        const toastId = toast.loading('Generando remito...');
+
+        try {
+          setRemitoLoadingId(sale.id);
+
+          const remito = await remitoApi.createFromSale(sale.id, {
+            placeOfIssue: 'VILLA GENERAL BELGRANO',
+            saleCondition: getSalePaymentLabel(sale),
+            transportName: saleExtra.transportName || '',
+            transportCuit: saleExtra.transportCuit || '',
+            packagesCount: saleExtra.packagesCount ?? 1,
+            declaredValue: saleExtra.declaredValue ?? sale.total,
+            observations: 'Remito generado desde venta',
+          });
+
+          await load();
+
+          toast.success(`Remito generado correctamente: ${remito.fullNumber}`, { id: toastId });
+        } catch (error: unknown) {
+          toast.error(getErrorMessage(error, 'No se pudo generar el remito'), { id: toastId });
+        } finally {
+          setRemitoLoadingId(null);
+        }
+      },
+    });
+  };
+
+  const openRemitoPdf = async (sale: Sale) => {
+    try {
+      setOpeningRemitoId(sale.id);
+
+      const localRemitos = getSaleRemitos(sale);
+      const localRemito = localRemitos.find((r) => r.status !== 'CANCELLED');
+
+      if (localRemito?.id) {
+        await remitoApi.downloadPdf(localRemito.id);
+        toast.success('Descargando remito');
+        return;
+      }
+
+      const remitos = await remitoApi.getBySaleId(sale.id);
+      const remito = remitos.find((r) => r.status !== 'CANCELLED');
+
+      if (!remito) {
+        toast.error('Esta venta todavía no tiene remito emitido');
+        return;
+      }
+
+      await remitoApi.downloadPdf(remito.id);
+      toast.success('Descargando remito');
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'No se pudo descargar el remito'));
+    } finally {
+      setOpeningRemitoId(null);
+    }
+  };
+
+  const downloadQuotation = async (sale: Sale) => {
+    if (sale.status !== 'PENDING') {
+      toast.error('Solo se puede descargar cotización de una venta pendiente');
+      return;
+    }
+
+    try {
+      setQuotationLoadingId(sale.id);
+
+      const toastId = toast.loading('Generando cotización...');
+
+      const response = await api.get(`/sales/${sale.id}/cotizacion-pdf`, {
+        responseType: 'blob',
+      });
+
+      const contentType = String(response.headers['content-type'] ?? '');
+
+if (!contentType.includes('application/pdf')) {
+        const errorText = await response.data.text();
+
+        try {
+          const parsed = JSON.parse(errorText) as { message?: string; error?: string };
+          throw new Error(parsed.message || parsed.error || 'El backend no devolvió un PDF');
+        } catch {
+          throw new Error(errorText || 'El backend no devolvió un PDF válido');
+        }
+      }
+
+      const blob = new Blob([response.data], {
+        type: 'application/pdf',
+      });
+
+      const url = window.URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `cotizacion-${sale.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      await load();
+      toast.success('Cotización descargada', { id: toastId });
+    } catch (error: unknown) {
+      const message = await getBlobErrorMessage(error, 'No se pudo descargar la cotización.');
+      toast.error(message);
+    } finally {
+      setQuotationLoadingId(null);
+    }
+  };
 
   const openPayments = (s: Sale) => {
+    const saleExtra = s as SaleExtra;
+
     setPayEdit(s);
 
     setPayments(
-      (s.payments?.length
-        ? s.payments
+      (saleExtra.payments?.length
+        ? saleExtra.payments
         : [
             {
               method: s.paymentMethod,
@@ -302,18 +676,26 @@ const downloadQuotation = async (sale: Sale) => {
   const savePayments = async () => {
     if (!payEdit) return;
 
-    await api.patch(`/sales/${payEdit.id}/payments`, {
-      setAsPrimary: true,
-      payments,
-    });
+    const toastId = toast.loading('Guardando pagos...');
 
-    setPayEdit(null);
-    await load();
+    try {
+      await api.patch(`/sales/${payEdit.id}/payments`, {
+        setAsPrimary: true,
+        payments,
+      });
+
+      setPayEdit(null);
+      await load();
+
+      toast.success('Pagos actualizados correctamente', { id: toastId });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'No se pudieron guardar los pagos'), { id: toastId });
+    }
   };
 
   const openInvoiceModal = (sale: Sale) => {
-    const saleAny = sale as any;
-    const clientDoc = saleAny.client?.dni || '';
+    const saleExtra = sale as SaleExtra;
+    const clientDoc = saleExtra.client?.dni || '';
 
     setInvoiceModal({
       sale,
@@ -327,82 +709,227 @@ const downloadQuotation = async (sale: Sale) => {
     if (!invoiceModal) return;
 
     const { sale, tipoComprobante, receiverDoc, condicionIVAReceptor } = invoiceModal;
+
+    const cleanDoc = onlyNumbers(receiverDoc);
     const detectedDoc = detectDocType(receiverDoc);
 
+    const isConsumidorFinal = !cleanDoc || cleanDoc === '0' || condicionIVAReceptor === 5;
+
     if (sale.status === 'CANCELLED') {
-      alert('No se puede facturar una venta cancelada.');
+      toast.error('No se puede facturar una venta cancelada');
       return;
     }
 
     if (isSaleInvoiced(sale)) {
-      alert('Esta venta ya está facturada.');
+      toast.error('Esta venta ya está facturada');
       return;
     }
 
     if (tipoComprobante === 1) {
-      if (!detectedDoc || String(detectedDoc.nroDoc).length !== 11) {
-        alert('Para Factura A tenés que cargar CUIT del receptor.');
+      if (!detectedDoc || detectedDoc.tipoDoc !== 80 || String(detectedDoc.nroDoc).length !== 11) {
+        toast.error('Para Factura A tenés que cargar CUIT del receptor');
         return;
       }
     }
 
-    if (tipoComprobante === 6) {
-      if (!detectedDoc || detectedDoc.nroDoc === 0) {
-        alert('Para Factura B tenés que cargar DNI, CUIL o CUIT del receptor.');
-        return;
-      }
+    if ((tipoComprobante === 6 || tipoComprobante === 11) && !isConsumidorFinal && !detectedDoc) {
+      toast.error('El documento del receptor no es válido. Podés dejarlo vacío para Consumidor Final');
+      return;
     }
 
     const payload = {
       saleId: sale.id,
       tipoComprobante,
-      tipoDoc: tipoComprobante === 1 ? 80 : detectedDoc?.tipoDoc || 99,
-      nroDoc: tipoComprobante === 1 ? detectedDoc?.nroDoc : detectedDoc?.nroDoc || 0,
+
+      tipoDoc:
+        tipoComprobante === 1 ? 80 : isConsumidorFinal ? 99 : detectedDoc?.tipoDoc ?? 99,
+
+      nroDoc:
+        tipoComprobante === 1
+          ? detectedDoc?.nroDoc
+          : isConsumidorFinal
+            ? 0
+            : detectedDoc?.nroDoc ?? 0,
+
       importe: num(sale.total),
-      condicionIVAReceptor,
+
+      condicionIVAReceptor: isConsumidorFinal ? 5 : condicionIVAReceptor,
+
       products: getSaleProductsForAfip(sale),
       metodoPago: getSalePaymentLabel(sale),
     };
+
+    const toastId = toast.loading('Facturando en ARCA...');
 
     try {
       setInvoicingId(sale.id);
 
       const response = await api.post('/afip/facturar', payload);
 
-      const data = response.data;
+      const data = response.data as AfipInvoiceResponse;
       const factura = data?.factura || data?.content || data?.invoice;
 
       setInvoiceModal(null);
       await load();
 
       if (data?.invoiceStatus === 'PENDING_AFIP') {
-        alert(
-          'ARCA no respondió correctamente. La factura quedó pendiente para reintento automático.'
-        );
+        toast.error('ARCA no respondió correctamente. La factura quedó pendiente para reintento automático.', {
+          id: toastId,
+        });
         return;
       }
 
       if (factura?.cae) {
-        alert(`Factura generada correctamente. CAE: ${factura.cae}`);
+        toast.success(`Factura generada correctamente. CAE: ${factura.cae}`, { id: toastId });
         return;
       }
 
       if (data?.cae) {
-        alert(`Factura generada correctamente. CAE: ${data.cae}`);
+        toast.success(`Factura generada correctamente. CAE: ${data.cae}`, { id: toastId });
         return;
       }
 
-      alert('Factura generada correctamente.');
-    } catch (error: any) {
-      alert(
-        error?.response?.data?.error ||
-          error?.response?.data?.message ||
-          error?.message ||
-          'No se pudo facturar la venta.'
-      );
+      toast.success('Factura generada correctamente', { id: toastId });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'No se pudo facturar la venta'), { id: toastId });
     } finally {
       setInvoicingId(null);
     }
+  };
+
+  const getFacturaOriginalId = async (sale: Sale) => {
+    const saleExtra = sale as SaleExtra;
+
+    const localId =
+      saleExtra.invoiceAfip?.id ||
+      saleExtra.invoiceAfipId ||
+      saleExtra.invoice?.id ||
+      saleExtra.factura?.id;
+
+    if (localId) return localId;
+
+    const response = await api.get(`/afip/factura-by-sale/${sale.id}`);
+
+    return response.data?.id as string | undefined;
+  };
+
+  const openCreditNoteModal = (sale: Sale) => {
+    if (!isSaleInvoiced(sale)) {
+      toast.error('La venta tiene que estar facturada para emitir una nota de crédito');
+      return;
+    }
+
+    if (isCreditNoteSale(sale)) {
+      toast.error('No se puede emitir una nota de crédito sobre otra nota de crédito');
+      return;
+    }
+
+    if (hasCreditNote(sale)) {
+      toast.error('Esta factura ya tiene una nota de crédito emitida');
+      return;
+    }
+
+    if (sale.status === 'CANCELLED') {
+      toast.error('No se puede generar nota de crédito sobre una venta cancelada');
+      return;
+    }
+
+    setCreditNoteModal({
+      sale,
+      motivo: 'Devolución de productos',
+      importe: String(num(sale.total)),
+    });
+  };
+
+  const submitCreditNote = async () => {
+    if (!creditNoteModal) return;
+
+    const { sale, motivo, importe } = creditNoteModal;
+
+    const importeNumber = num(importe);
+
+    if (!motivo.trim()) {
+      toast.error('Tenés que indicar un motivo');
+      return;
+    }
+
+    if (importeNumber <= 0) {
+      toast.error('El importe tiene que ser mayor a 0');
+      return;
+    }
+
+    if (importeNumber > num(sale.total)) {
+      setConfirmModal({
+        title: 'Confirmar importe',
+        message:
+          'El importe de la nota de crédito es mayor al total de la venta. ¿Querés continuar igual?',
+        confirmText: 'Continuar',
+        danger: true,
+        onConfirm: submitCreditNoteConfirmed,
+      });
+
+      return;
+    }
+
+    await submitCreditNoteConfirmed();
+  };
+
+  const submitCreditNoteConfirmed = async () => {
+    if (!creditNoteModal) return;
+
+    const { sale, motivo, importe } = creditNoteModal;
+    const importeNumber = num(importe);
+
+    const toastId = toast.loading('Emitiendo nota de crédito...');
+
+    try {
+      setCreditNoteLoadingId(sale.id);
+
+      const facturaOriginalId = await getFacturaOriginalId(sale);
+
+      if (!facturaOriginalId) {
+        toast.error('No encontré la factura original de esta venta', { id: toastId });
+        return;
+      }
+
+      const response = await api.post('/afip/nota-credito', {
+        saleId: sale.id,
+        facturaOriginalId,
+        motivo: motivo.trim(),
+        importe: importeNumber,
+      });
+
+      setCreditNoteModal(null);
+      await load();
+
+      const data = response.data as CreditNoteResponse;
+      const notaCredito = data?.notaCredito;
+
+      if (notaCredito?.cae) {
+        toast.success(`Nota de crédito emitida correctamente. CAE: ${notaCredito.cae}`, {
+          id: toastId,
+        });
+        return;
+      }
+
+      toast.success(data?.message || 'Nota de crédito emitida correctamente', { id: toastId });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'No se pudo emitir la nota de crédito'), { id: toastId });
+    } finally {
+      setCreditNoteLoadingId(null);
+    }
+  };
+
+  const openCreditNotePdf = (sale: Sale) => {
+    const creditNoteSaleId = getCreditNoteSaleId(sale);
+
+    if (!creditNoteSaleId) {
+      toast.error('No encontré la nota de crédito asociada');
+      return;
+    }
+
+    toast.success('Abriendo nota de crédito');
+    window.open(`${API_URL}/nota-credito-pdf/${creditNoteSaleId}/descargar`, '_blank');
   };
 
   return (
@@ -410,7 +937,7 @@ const downloadQuotation = async (sale: Sale) => {
       title="Ventas"
       subtitle="Historial, pagos y comprobantes"
       actions={
-        <button className="btn btn-secondary btn-sm" onClick={load}>
+        <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
           Actualizar
         </button>
       }
@@ -512,6 +1039,12 @@ const downloadQuotation = async (sale: Sale) => {
                 {filtered.map((s) => {
                   const invoiceStatus = getSaleInvoiceStatus(s);
                   const quotationExpirationLabel = getQuotationExpirationLabel(s);
+                  const saleIsCreditNote = isCreditNoteSale(s);
+                  const saleHasCreditNote = hasCreditNote(s);
+                  const saleCanEmitCreditNote = canEmitCreditNote(s);
+                  const saleCanDownloadCreditNote = canDownloadCreditNote(s);
+                  const saleHasRemito = hasRemito(s);
+                  const saleCanEmitRemito = canEmitRemito(s);
 
                   return (
                     <tr
@@ -529,7 +1062,7 @@ const downloadQuotation = async (sale: Sale) => {
 
                       <td>
                         <span className="badge badge-gray">
-                          {s.payments?.length ? 'MIXTO' : s.paymentMethod}
+                          {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
                         </span>
                       </td>
 
@@ -566,9 +1099,19 @@ const downloadQuotation = async (sale: Sale) => {
                       </td>
 
                       <td>
-                        <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
-                          {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
+                            {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
+                          </span>
+
+                          {saleIsCreditNote ? (
+                            <span className="badge badge-red">NOTA CRÉDITO</span>
+                          ) : saleHasCreditNote ? (
+                            <span className="badge badge-red">NC EMITIDA</span>
+                          ) : null}
+
+                          {saleHasRemito && <span className="badge badge-green">REMITO</span>}
+                        </div>
                       </td>
 
                       <td onClick={(e) => e.stopPropagation()}>
@@ -597,6 +1140,68 @@ const downloadQuotation = async (sale: Sale) => {
                           >
                             Pagos
                           </button>
+
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            disabled={printingTicketId === s.id}
+                            onClick={() => printTicket(s)}
+                            title="Imprimir ticket no fiscal"
+                          >
+                            {printingTicketId === s.id ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Printer size={13} />
+                            )}
+                            Ticket
+                          </button>
+
+                          {saleCanEmitRemito && !saleHasRemito && s.status !== 'CANCELLED' && (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              disabled={remitoLoadingId === s.id}
+                              onClick={() => createRemito(s)}
+                              title="Generar remito"
+                            >
+                              {remitoLoadingId === s.id ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <Truck size={13} />
+                              )}
+                              Remito
+                            </button>
+                          )}
+
+                          {saleHasRemito && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={openingRemitoId === s.id}
+                              onClick={() => openRemitoPdf(s)}
+                              title="Descargar remito PDF"
+                            >
+                              {openingRemitoId === s.id ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <FileText size={13} />
+                              )}
+                              Ver remito
+                            </button>
+                          )}
+
+                          {saleCanEmitRemito && !saleHasRemito && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={openingRemitoId === s.id}
+                              onClick={() => openRemitoPdf(s)}
+                              title="Buscar remito existente"
+                            >
+                              {openingRemitoId === s.id ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <FileText size={13} />
+                              )}
+                              Ver remito
+                            </button>
+                          )}
 
                           {s.status === 'PENDING' && (
                             <button
@@ -631,18 +1236,46 @@ const downloadQuotation = async (sale: Sale) => {
                           )}
 
                           {isSaleInvoiced(s) && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() =>
-                                window.open(
-                                  `${API_URL}/factura-pdf/${s.id}/descargar`,
-                                  '_blank'
-                                )
-                              }
-                              title="Descargar comprobante PDF"
-                            >
-                              <FileText size={13} />
-                            </button>
+                            <>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => {
+                                  toast.success('Abriendo factura');
+                                  window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank');
+                                }}
+                                title="Descargar factura PDF"
+                              >
+                                <FileText size={13} />
+                                Factura
+                              </button>
+
+                              {saleCanDownloadCreditNote && (
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  onClick={() => openCreditNotePdf(s)}
+                                  title="Descargar nota de crédito PDF"
+                                >
+                                  <FileText size={13} />
+                                  NC PDF
+                                </button>
+                              )}
+
+                              {saleCanEmitCreditNote && (
+                                <button
+                                  className="btn btn-danger btn-sm"
+                                  disabled={creditNoteLoadingId === s.id}
+                                  onClick={() => openCreditNoteModal(s)}
+                                  title="Emitir nota de crédito en ARCA"
+                                >
+                                  {creditNoteLoadingId === s.id ? (
+                                    <Loader2 size={13} className="animate-spin" />
+                                  ) : (
+                                    <ReceiptText size={13} />
+                                  )}
+                                  Nota crédito
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
@@ -701,7 +1334,7 @@ const downloadQuotation = async (sale: Sale) => {
                 </div>
               </div>
 
-              {(detail as any).quotationExpiresAt && detail.status === 'PENDING' && (
+              {(detail as SaleExtra).quotationExpiresAt && detail.status === 'PENDING' && (
                 <div
                   style={{
                     border: '1px solid var(--border)',
@@ -717,7 +1350,7 @@ const downloadQuotation = async (sale: Sale) => {
                   <div>
                     <small>Cotización válida hasta</small>
                     <b style={{ display: 'block' }}>
-                      {fmtDate((detail as any).quotationExpiresAt)}
+                      {fmtDate((detail as SaleExtra).quotationExpiresAt)}
                     </b>
                   </div>
 
@@ -748,25 +1381,25 @@ const downloadQuotation = async (sale: Sale) => {
                   </thead>
 
                   <tbody>
-                    {detail.items?.map((i) => (
-                      <tr key={i.id}>
+                    {(detail as SaleExtra).items?.map((i, index) => (
+                      <tr key={i.id ?? `${i.productNameSnapshot ?? 'producto'}-${index}`}>
                         <td>{i.productNameSnapshot ?? i.product?.name ?? 'Producto'}</td>
                         <td>{i.quantityKg ? `${i.quantityKg} kg` : i.quantity}</td>
                         <td>{fmtMoney(i.price)}</td>
-                        <td>{fmtMoney(i.subtotal ?? i.price * (i.quantityKg ?? i.quantity))}</td>
+                        <td>{fmtMoney(i.subtotal ?? i.price * (i.quantityKg ?? i.quantity ?? 1))}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
 
-              {detail.payments?.length ? (
+              {(detail as SaleExtra).payments?.length ? (
                 <div style={{ marginTop: 16 }}>
                   <b>Pagos</b>
 
-                  {detail.payments.map((p, i) => (
+                  {(detail as SaleExtra).payments?.map((p, i) => (
                     <div
-                      key={i}
+                      key={`${p.method}-${i}`}
                       style={{
                         display: 'flex',
                         justifyContent: 'space-between',
@@ -780,6 +1413,74 @@ const downloadQuotation = async (sale: Sale) => {
                   ))}
                 </div>
               ) : null}
+
+              <div style={{ marginTop: 16 }}>
+                <b>Remitos</b>
+
+                <div
+                  style={{
+                    marginTop: 10,
+                    border: '1px solid var(--border)',
+                    borderRadius: 14,
+                    padding: 12,
+                    display: 'flex',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    {hasRemito(detail) ? (
+                      <>
+                        <small style={{ color: 'var(--text3)' }}>Remito emitido</small>
+                        <b style={{ display: 'block' }}>
+                          {getSaleRemitos(detail)[0]?.fullNumber || 'Remito generado'}
+                        </b>
+                      </>
+                    ) : (
+                      <>
+                        <small style={{ color: 'var(--text3)' }}>Estado</small>
+                        <b style={{ display: 'block' }}>
+                          {canEmitRemito(detail)
+                            ? 'Disponible para emitir'
+                            : 'La venta debe estar completada o facturada'}
+                        </b>
+                      </>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {canEmitRemito(detail) && !hasRemito(detail) && detail.status !== 'CANCELLED' && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={remitoLoadingId === detail.id}
+                        onClick={() => createRemito(detail)}
+                      >
+                        {remitoLoadingId === detail.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Truck size={13} />
+                        )}
+                        Generar remito
+                      </button>
+                    )}
+
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      disabled={openingRemitoId === detail.id}
+                      onClick={() => openRemitoPdf(detail)}
+                    >
+                      {openingRemitoId === detail.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <FileText size={13} />
+                      )}
+                      Ver remito
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -829,7 +1530,7 @@ const downloadQuotation = async (sale: Sale) => {
               <div className="form-group">
                 <label className="form-label">
                   Documento receptor{' '}
-                  {invoiceModal.tipoComprobante === 11 ? '(opcional)' : '(obligatorio)'}
+                  {invoiceModal.tipoComprobante === 1 ? '(CUIT obligatorio)' : '(opcional)'}
                 </label>
 
                 <input
@@ -840,15 +1541,15 @@ const downloadQuotation = async (sale: Sale) => {
                     )
                   }
                   placeholder={
-                    invoiceModal.tipoComprobante === 11
-                      ? 'Consumidor final sin documento'
-                      : 'DNI / CUIL / CUIT'
+                    invoiceModal.tipoComprobante === 1
+                      ? 'CUIT del receptor'
+                      : 'Vacío = Consumidor Final / o cargá DNI, CUIL o CUIT'
                   }
                 />
 
                 <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
-                  Factura A requiere CUIT. Factura B requiere DNI, CUIL o CUIT.
-                  Factura C puede salir como consumidor final.
+                  Factura A requiere CUIT. Factura B y C pueden salir como Consumidor Final
+                  sin documento. Si cargás documento, debe ser DNI, CUIL o CUIT válido.
                 </div>
               </div>
 
@@ -912,6 +1613,99 @@ const downloadQuotation = async (sale: Sale) => {
         </div>
       )}
 
+      {creditNoteModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setCreditNoteModal(null)}
+        >
+          <div className="modal" style={{ maxWidth: 560 }}>
+            <div className="modal-header">
+              <b>Emitir nota de crédito</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setCreditNoteModal(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ color: 'var(--text2)', marginBottom: 14 }}>
+                Venta #{creditNoteModal.sale.id.slice(-8)} — Total original:{' '}
+                <b>{fmtMoney(creditNoteModal.sale.total)}</b>
+              </p>
+
+              <div className="form-group">
+                <label className="form-label">Motivo</label>
+
+                <textarea
+                  value={creditNoteModal.motivo}
+                  onChange={(e) =>
+                    setCreditNoteModal((prev) =>
+                      prev ? { ...prev, motivo: e.target.value } : prev
+                    )
+                  }
+                  placeholder="Ej: Devolución de productos"
+                  style={{
+                    minHeight: 90,
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Importe a acreditar</label>
+
+                <input
+                  type="number"
+                  value={creditNoteModal.importe}
+                  onChange={(e) =>
+                    setCreditNoteModal((prev) =>
+                      prev ? { ...prev, importe: e.target.value } : prev
+                    )
+                  }
+                  placeholder="Importe"
+                />
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 14,
+                  padding: 12,
+                  color: 'var(--text2)',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                Este botón llama a <b>POST /afip/nota-credito</b>. ARCA genera una nota
+                de crédito vinculada a la factura original de esta venta.
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setCreditNoteModal(null)}>
+                Cancelar
+              </button>
+
+              <button
+                className="btn btn-danger"
+                disabled={creditNoteLoadingId === creditNoteModal.sale.id}
+                onClick={submitCreditNote}
+              >
+                {creditNoteLoadingId === creditNoteModal.sale.id ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Send size={16} />
+                )}
+                Emitir nota de crédito
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {payEdit && (
         <div
           className="modal-overlay"
@@ -928,13 +1722,13 @@ const downloadQuotation = async (sale: Sale) => {
 
             <div className="modal-body">
               <p style={{ color: 'var(--text2)', marginBottom: 12 }}>
-                Total venta: {fmtMoney(payEdit.total)}. Si la suma es menor, la
-                diferencia queda en cuenta corriente.
+                Total venta: {fmtMoney(payEdit.total)}. Si la suma es menor, la diferencia
+                queda en cuenta corriente.
               </p>
 
               {payments.map((p, idx) => (
                 <div
-                  key={idx}
+                  key={`${p.method}-${idx}`}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '1fr 120px 36px',
@@ -1009,6 +1803,77 @@ const downloadQuotation = async (sale: Sale) => {
               <button className="btn btn-primary" onClick={savePayments}>
                 <Check size={16} />
                 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? 'rgba(239,68,68,0.12)'
+                      : 'var(--surface2)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+
+                <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.55, margin: 0, whiteSpace: 'pre-line' }}>
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
               </button>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type {
+  BusinessLocation,
   CartItem,
   Client,
   DiscountType,
@@ -21,16 +22,18 @@ import {
   num,
   productPrice,
 } from '@/lib/helpers';
+import toast from 'react-hot-toast';
 import {
   AlertTriangle,
   Check,
-  CheckCircle2,
   Minus,
   Package,
   Plus,
+  RefreshCcw,
   Search,
   ShoppingCart,
   Trash2,
+  Truck,
   Warehouse,
   X,
 } from 'lucide-react';
@@ -48,13 +51,44 @@ const methods: PaymentMethod[] = [
 ];
 
 type StockLocation = 'LOCAL' | 'DEPOSITO';
+type DeliveryMode = 'PICKUP' | 'LOCAL_DELIVERY';
 
-type ToastState = {
-  type: 'success' | 'error';
+type DeliveryCalculation = {
+  distanceKm: number;
+  pricePerKm: number;
+  deliveryCost: number;
+  source?: 'GOOGLE_ROUTES' | 'COORDINATES_FALLBACK';
+  businessLocationId: string;
+  businessLocationName: string;
+  clientId: string;
+  clientName: string;
+  originAddress?: string;
+  destinationAddress?: string;
+  deliveryAddressSnapshot?: string;
+};
+
+type ConfirmState = {
+  title: string;
   message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
 } | null;
 
+const DELIVERY_SKU = 'ENVIO-FLETE2';
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.error ??
+    fallback
+  );
+}
+
 function productStockByLocation(product: Product, stockLocation: StockLocation) {
+  if (product.isService) return 999999;
   if (product.type === 'COMPUESTO') return 999999;
 
   if (product.saleUnit === 'KG') {
@@ -69,6 +103,7 @@ function productStockByLocation(product: Product, stockLocation: StockLocation) 
 }
 
 function stockLabel(product: Product, stockLocation: StockLocation) {
+  if (product.isService) return 'servicio';
   if (product.type === 'COMPUESTO') return 'por componentes';
 
   const stock = productStockByLocation(product, stockLocation);
@@ -76,10 +111,73 @@ function stockLabel(product: Product, stockLocation: StockLocation) {
   return product.saleUnit === 'KG' ? `${stock} kg` : `${stock}`;
 }
 
+function getItemPrice(item: CartItem, selectedPriceType: CartItem['priceType']) {
+  return num(item.manualPrice, productPrice(item.product, item.priceType || selectedPriceType));
+}
+
+function clientHasCoordinates(client?: Client | null) {
+  return (
+    client?.latitude !== null &&
+    client?.latitude !== undefined &&
+    client?.longitude !== null &&
+    client?.longitude !== undefined
+  );
+}
+
+function locationHasCoordinates(location?: BusinessLocation | null) {
+  return (
+    location?.latitude !== null &&
+    location?.latitude !== undefined &&
+    location?.longitude !== null &&
+    location?.longitude !== undefined
+  );
+}
+
+function buildClientAddress(client?: Client | null) {
+  if (!client) return '';
+
+  const street = [client.addressStreet, client.addressNumber].filter(Boolean).join(' ');
+
+  const floor = [
+    client.addressFloor ? `Piso ${client.addressFloor}` : '',
+    client.addressApartment ? `Dto ${client.addressApartment}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const city = [client.addressCity, client.addressProvince, client.addressPostalCode]
+    .filter(Boolean)
+    .join(', ');
+
+  return [street, floor, city, client.addressNotes].filter(Boolean).join(' - ');
+}
+
+async function fetchPosData() {
+  const [p, c, cl, bl] = await Promise.all([
+    api.get('/products'),
+    api.get('/categories'),
+    api.get('/clients'),
+    api.get('/business-locations'),
+  ]);
+
+  const products = normalizeArray<Product>(p.data).filter((x) => x.isActive !== false);
+  const categories = normalizeArray<ProductCategory>(c.data);
+  const clients = normalizeArray<Client>(cl.data);
+  const businessLocations = normalizeArray<BusinessLocation>(bl.data);
+
+  return {
+    products,
+    categories,
+    clients,
+    businessLocations,
+  };
+}
+
 export default function POSPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [businessLocations, setBusinessLocations] = useState<BusinessLocation[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
 
   const [search, setSearch] = useState('');
@@ -88,54 +186,104 @@ export default function POSPage() {
 
   const [stockLocation, setStockLocation] = useState<StockLocation>('LOCAL');
 
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('PICKUP');
+  const [businessLocationId, setBusinessLocationId] = useState('');
+  const [deliveryPricePerKm, setDeliveryPricePerKm] = useState('8000');
+  const [deliveryCalculation, setDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
+  const [calculatingDelivery, setCalculatingDelivery] = useState(false);
+
   const [receiptType, setReceiptType] = useState<ReceiptType>('TICKET');
   const [discountType, setDiscountType] = useState<DiscountType | ''>('');
   const [discountValue, setDiscountValue] = useState('');
 
   const [paymentMode, setPaymentMode] = useState<'single' | 'multi'>('single');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('EFECTIVO');
-  const [payments, setPayments] = useState<SalePayment[]>([
-    { method: 'EFECTIVO', amount: 0 },
-  ]);
+  const [payments, setPayments] = useState<SalePayment[]>([{ method: 'EFECTIVO', amount: 0 }]);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [toast, setToast] = useState<ToastState>(null);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
-    window.setTimeout(() => {
-      setToast(null);
-    }, 3200);
-  };
-
-  const load = async () => {
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
     try {
-      const [p, c, cl] = await Promise.all([
-        api.get('/products'),
-        api.get('/categories'),
-        api.get('/clients'),
-      ]);
+      const data = await fetchPosData();
 
-      setProducts(normalizeArray<Product>(p.data).filter((x) => x.isActive !== false));
-      setCategories(normalizeArray<ProductCategory>(c.data));
-      setClients(normalizeArray<Client>(cl.data));
+      setProducts(data.products);
+      setCategories(data.categories);
+      setClients(data.clients);
+      setBusinessLocations(data.businessLocations);
+
+      const defaultLocation =
+        data.businessLocations.find((x) => x.isDefault) ?? data.businessLocations[0];
+
+      if (defaultLocation) {
+        setBusinessLocationId((prev) => prev || defaultLocation.id);
+      }
+
+      if (showSuccess) {
+        toast.success('POS actualizado correctamente');
+      }
     } catch (e) {
       console.error(e);
-      showToast('error', 'Error al cargar datos del POS');
+      toast.error('Error al cargar datos del POS');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    let alive = true;
+
+    fetchPosData()
+      .then((data) => {
+        if (!alive) return;
+
+        setProducts(data.products);
+        setCategories(data.categories);
+        setClients(data.clients);
+        setBusinessLocations(data.businessLocations);
+
+        const defaultLocation =
+          data.businessLocations.find((x) => x.isDefault) ?? data.businessLocations[0];
+
+        if (defaultLocation) {
+          setBusinessLocationId((prev) => prev || defaultLocation.id);
+        }
+      })
+      .catch((e) => {
+        console.error(e);
+
+        if (!alive) return;
+
+        toast.error('Error al cargar datos del POS');
+      })
+      .finally(() => {
+        if (!alive) return;
+
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
+
+  const selectedBusinessLocation =
+    businessLocations.find((location) => location.id === businessLocationId) ?? null;
+
+  const deliveryProduct = useMemo(
+    () =>
+      products.find(
+        (p) => p.sku === DELIVERY_SKU || p.name.toUpperCase().includes('ENVÍO')
+      ),
+    [products]
+  );
 
   const priceType: CartItem['priceType'] =
     selectedClient?.category === 'Mayorista'
@@ -146,6 +294,8 @@ export default function POSPage() {
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
+      if (p.isService) return false;
+
       const q = search.toLowerCase();
 
       return (
@@ -160,9 +310,8 @@ export default function POSPage() {
   const add = (product: Product) => {
     const stock = productStockByLocation(product, stockLocation);
 
-    if (product.type !== 'COMPUESTO' && stock <= 0) {
-      showToast(
-        'error',
+    if (!product.isService && product.type !== 'COMPUESTO' && stock <= 0) {
+      toast.error(
         stockLocation === 'DEPOSITO'
           ? 'Sin stock disponible en depósito'
           : 'Sin stock disponible en local'
@@ -181,9 +330,8 @@ export default function POSPage() {
 
           const nextQty = i.quantity + 1;
 
-          if (product.type !== 'COMPUESTO' && nextQty > stock) {
-            showToast(
-              'error',
+          if (!product.isService && product.type !== 'COMPUESTO' && nextQty > stock) {
+            toast.error(
               stockLocation === 'DEPOSITO'
                 ? 'No hay más stock disponible en depósito'
                 : 'No hay más stock disponible en local'
@@ -216,12 +364,18 @@ export default function POSPage() {
       prev.map((i) => {
         if (i.product.id !== id) return i;
 
+        if (i.isDeliveryItem || i.product.isService) {
+          return {
+            ...i,
+            quantity: 1,
+          };
+        }
+
         const stock = productStockByLocation(i.product, stockLocation);
         const nextQty = Math.max(1, value);
 
         if (i.product.type !== 'COMPUESTO' && nextQty > stock) {
-          showToast(
-            'error',
+          toast.error(
             stockLocation === 'DEPOSITO'
               ? 'No hay suficiente stock en depósito'
               : 'No hay suficiente stock en local'
@@ -246,9 +400,8 @@ export default function POSPage() {
         const stock = productStockByLocation(i.product, stockLocation);
         const nextKg = Math.max(0.001, value);
 
-        if (i.product.type !== 'COMPUESTO' && nextKg > stock) {
-          showToast(
-            'error',
+        if (!i.product.isService && i.product.type !== 'COMPUESTO' && nextKg > stock) {
+          toast.error(
             stockLocation === 'DEPOSITO'
               ? 'No hay suficiente stock KG en depósito'
               : 'No hay suficiente stock KG en local'
@@ -267,13 +420,131 @@ export default function POSPage() {
 
   const remove = (id: string) => {
     setCart((prev) => prev.filter((i) => i.product.id !== id));
+
+    if (deliveryProduct?.id === id) {
+      setDeliveryCalculation(null);
+      setDeliveryMode('PICKUP');
+    }
+  };
+
+  const removeDeliveryFromCart = () => {
+    if (!deliveryProduct) return;
+
+    setCart((prev) => prev.filter((i) => i.product.id !== deliveryProduct.id));
+    setDeliveryCalculation(null);
+  };
+
+  const applyDeliveryToCart = (calculation: DeliveryCalculation) => {
+    if (!deliveryProduct) {
+      toast.error(`No encontré el producto ${DELIVERY_SKU}. Creá primero el producto ENVÍO / FLETE.`);
+      return;
+    }
+
+    setCart((prev) => {
+      const existing = prev.find((i) => i.product.id === deliveryProduct.id);
+
+      if (existing) {
+        return prev.map((i) =>
+          i.product.id === deliveryProduct.id
+            ? {
+                ...i,
+                quantity: 1,
+                quantityKg: undefined,
+                manualPrice: calculation.deliveryCost,
+                priceType: 'price',
+                isDeliveryItem: true,
+              }
+            : i
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          product: deliveryProduct,
+          quantity: 1,
+          quantityKg: undefined,
+          priceType: 'price',
+          manualPrice: calculation.deliveryCost,
+          isDeliveryItem: true,
+        },
+      ];
+    });
+  };
+
+  const calculateDelivery = async () => {
+    if (deliveryMode !== 'LOCAL_DELIVERY') return;
+
+    if (!clientId || !selectedClient) {
+      toast.error('Seleccioná un cliente para calcular el envío');
+      return;
+    }
+
+    if (!clientHasCoordinates(selectedClient)) {
+      toast.error('El cliente seleccionado no tiene coordenadas cargadas');
+      return;
+    }
+
+    if (!businessLocationId || !selectedBusinessLocation) {
+      toast.error('Seleccioná la sucursal o depósito de salida');
+      return;
+    }
+
+    if (!locationHasCoordinates(selectedBusinessLocation)) {
+      toast.error('La ubicación de salida no tiene coordenadas cargadas');
+      return;
+    }
+
+    const pricePerKm = num(deliveryPricePerKm);
+
+    if (pricePerKm <= 0) {
+      toast.error('El precio por km debe ser mayor a 0');
+      return;
+    }
+
+    setCalculatingDelivery(true);
+
+    const toastId = toast.loading('Calculando envío...');
+
+    try {
+      const response = await api.post('/delivery/calculate', {
+        businessLocationId,
+        clientId,
+        pricePerKm,
+      });
+
+      const calculation: DeliveryCalculation = {
+        distanceKm: num(response.data.distanceKm),
+        pricePerKm: num(response.data.pricePerKm),
+        deliveryCost: num(response.data.deliveryCost),
+        source: response.data.source,
+        businessLocationId: response.data.businessLocationId,
+        businessLocationName: response.data.businessLocationName,
+        clientId: response.data.clientId,
+        clientName: response.data.clientName,
+        originAddress: response.data.originAddress,
+        destinationAddress: response.data.destinationAddress,
+        deliveryAddressSnapshot: response.data.deliveryAddressSnapshot,
+      };
+
+      setDeliveryCalculation(calculation);
+      applyDeliveryToCart(calculation);
+
+      toast.success(
+        `Envío calculado: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`,
+        { id: toastId }
+      );
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'No se pudo calcular el envío'), { id: toastId });
+    } finally {
+      setCalculatingDelivery(false);
+    }
   };
 
   const subtotal = cart.reduce((a, item) => {
-    const qty =
-      item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
+    const qty = item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
 
-    return a + productPrice(item.product, priceType) * qty;
+    return a + getItemPrice(item, priceType) * qty;
   }, 0);
 
   const discount =
@@ -298,20 +569,19 @@ export default function POSPage() {
 
   const validateCartStock = () => {
     for (const item of cart) {
+      if (item.product.isService) continue;
       if (item.product.type === 'COMPUESTO') continue;
 
       const stock = productStockByLocation(item.product, stockLocation);
-      const qty =
-        item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
+      const qty = item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
 
       if (qty <= 0) {
-        showToast('error', `Cantidad inválida para ${item.product.name}`);
+        toast.error(`Cantidad inválida para ${item.product.name}`);
         return false;
       }
 
       if (qty > stock) {
-        showToast(
-          'error',
+        toast.error(
           `Stock insuficiente para ${item.product.name} en ${
             stockLocation === 'DEPOSITO' ? 'depósito' : 'local'
           }. Disponible: ${stock}${item.product.saleUnit === 'KG' ? ' kg' : ''}`
@@ -324,23 +594,57 @@ export default function POSPage() {
     return true;
   };
 
-  const submit = async () => {
+  const validateSale = () => {
     if (!cart.length) {
-      showToast('error', 'Agregá productos al carrito');
-      return;
+      toast.error('Agregá productos al carrito');
+      return false;
     }
 
-    if (!validateCartStock()) return;
+    if (!validateCartStock()) return false;
 
     if ((paymentMethod === 'CUENTA_CORRIENTE' || debt > 0) && !clientId) {
-      showToast(
-        'error',
-        'Para cuenta corriente o pago parcial tenés que seleccionar cliente'
-      );
-      return;
+      toast.error('Para cuenta corriente o pago parcial tenés que seleccionar cliente');
+      return false;
     }
 
+    if (deliveryMode === 'LOCAL_DELIVERY') {
+      if (!clientId) {
+        toast.error('Para envío tenés que seleccionar cliente');
+        return false;
+      }
+
+      if (!businessLocationId) {
+        toast.error('Seleccioná la sucursal o depósito de salida');
+        return false;
+      }
+
+      if (!deliveryCalculation) {
+        toast.error('Calculá el envío antes de finalizar la venta');
+        return false;
+      }
+
+      if (!deliveryProduct) {
+        toast.error(`No encontré el producto ${DELIVERY_SKU}`);
+        return false;
+      }
+
+      const hasDeliveryItem = cart.some((item) => item.product.id === deliveryProduct.id);
+
+      if (!hasDeliveryItem) {
+        toast.error('El envío no está agregado al carrito');
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const submitSale = async () => {
+    if (!validateSale()) return;
+
     setSubmitting(true);
+
+    const toastId = toast.loading('Registrando venta...');
 
     try {
       const payload = {
@@ -351,11 +655,31 @@ export default function POSPage() {
         discountType: discountType || undefined,
         discountValue: discountType ? num(discountValue) : undefined,
 
+        businessLocationId:
+          deliveryMode === 'LOCAL_DELIVERY' ? businessLocationId : businessLocationId || null,
+
+        deliveryMethod: deliveryMode,
+        deliveryStatus: deliveryMode === 'LOCAL_DELIVERY' ? 'PENDING' : 'NONE',
+        deliveryAddressSnapshot:
+          deliveryMode === 'LOCAL_DELIVERY'
+            ? deliveryCalculation?.deliveryAddressSnapshot ||
+              deliveryCalculation?.destinationAddress ||
+              buildClientAddress(selectedClient)
+            : null,
+        deliveryDistanceKm:
+          deliveryMode === 'LOCAL_DELIVERY' ? deliveryCalculation?.distanceKm : null,
+        deliveryPricePerKm:
+          deliveryMode === 'LOCAL_DELIVERY' ? num(deliveryPricePerKm) : null,
+        deliveryCost: deliveryMode === 'LOCAL_DELIVERY' ? deliveryCalculation?.deliveryCost ?? 0 : 0,
+
         items: cart.map((i) => ({
           productId: i.product.id,
           quantity: i.product.saleUnit === 'KG' ? undefined : i.quantity,
-          quantityKg:
-            i.product.saleUnit === 'KG' ? num(i.quantityKg) : undefined,
+          quantityKg: i.product.saleUnit === 'KG' ? num(i.quantityKg) : undefined,
+          price:
+            i.isDeliveryItem && deliveryMode === 'LOCAL_DELIVERY'
+              ? num(deliveryCalculation?.deliveryCost)
+              : getItemPrice(i, priceType),
         })),
 
         payments:
@@ -375,18 +699,43 @@ export default function POSPage() {
 
       setCart([]);
       setPayments([{ method: 'EFECTIVO', amount: 0 }]);
+      setDeliveryMode('PICKUP');
+      setDeliveryCalculation(null);
 
-      showToast('success', 'Venta registrada correctamente');
+      toast.success('Venta registrada correctamente', { id: toastId });
 
       await load();
     } catch (e: unknown) {
-      showToast(
-        'error',
-        (e as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? 'Error al registrar venta'
-      );
+      toast.error(getErrorMessage(e, 'Error al registrar venta'), { id: toastId });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const openSubmitConfirm = () => {
+    if (!validateSale()) return;
+
+    setConfirmModal({
+      title: 'Finalizar venta',
+      message: `¿Confirmás registrar esta venta por ${fmtMoney(total)}?${
+        debt > 0 ? ` Quedará en cuenta corriente: ${fmtMoney(debt)}.` : ''
+      }`,
+      confirmText: 'Finalizar venta',
+      danger: false,
+      onConfirm: submitSale,
+    });
+  };
+
+  const confirmAction = async () => {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
+
+    try {
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
     }
   };
 
@@ -395,67 +744,11 @@ export default function POSPage() {
   };
 
   return (
-    <AppLayout
-      title="POS"
-      subtitle="Ventas, promos, pagos parciales y cuenta corriente"
-    >
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(15,23,42,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
-            style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
-            }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
+    <AppLayout title="POS" subtitle="Ventas, promos, envíos, pagos parciales y cuenta corriente">
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 400px',
+          gridTemplateColumns: 'minmax(0, 1fr) 420px',
           gap: 18,
         }}
       >
@@ -488,11 +781,7 @@ export default function POSPage() {
               />
             </div>
 
-            <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              style={{ width: 220 }}
-            >
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} style={{ width: 220 }}>
               <option value="">Todas las categorías</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -510,6 +799,11 @@ export default function POSPage() {
               <option value="LOCAL">Descontar de Local</option>
               <option value="DEPOSITO">Descontar de Depósito</option>
             </select>
+
+            <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
+              <RefreshCcw size={14} />
+              Actualizar
+            </button>
           </div>
 
           <div
@@ -524,7 +818,7 @@ export default function POSPage() {
             ) : (
               filtered.map((p) => {
                 const stock = productStockByLocation(p, stockLocation);
-                const withoutStock = p.type !== 'COMPUESTO' && stock <= 0;
+                const withoutStock = !p.isService && p.type !== 'COMPUESTO' && stock <= 0;
 
                 return (
                   <button
@@ -539,13 +833,7 @@ export default function POSPage() {
                       cursor: withoutStock ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                      }}
-                    >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                       <span
                         style={{
                           width: 36,
@@ -559,11 +847,7 @@ export default function POSPage() {
                         <Package size={16} />
                       </span>
 
-                      <span
-                        className={`badge ${
-                          p.type === 'COMPUESTO' ? 'badge-blue' : 'badge-gray'
-                        }`}
-                      >
+                      <span className={`badge ${p.type === 'COMPUESTO' ? 'badge-blue' : 'badge-gray'}`}>
                         {p.type === 'COMPUESTO' ? 'PROMO' : p.saleUnit}
                       </span>
                     </div>
@@ -616,31 +900,12 @@ export default function POSPage() {
             overflow: 'hidden',
           }}
         >
-          <div
-            style={{
-              padding: 16,
-              overflow: 'auto',
-              flex: 1,
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: 12,
-              }}
-            >
+          <div style={{ padding: 16, overflow: 'auto', flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <ShoppingCart size={18} />
               <b>Carrito</b>
 
-              <span
-                style={{
-                  marginLeft: 'auto',
-                  color: 'var(--text3)',
-                  fontSize: 12,
-                }}
-              >
+              <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}>
                 {cart.length} items
               </span>
             </div>
@@ -661,10 +926,7 @@ export default function POSPage() {
 
             <div className="form-group">
               <label className="form-label">Depósito / origen de stock</label>
-              <select
-                value={stockLocation}
-                onChange={(e) => setStockLocation(e.target.value as StockLocation)}
-              >
+              <select value={stockLocation} onChange={(e) => setStockLocation(e.target.value as StockLocation)}>
                 <option value="LOCAL">Local</option>
                 <option value="DEPOSITO">Depósito</option>
               </select>
@@ -673,116 +935,248 @@ export default function POSPage() {
             <div className="form-group">
               <label className="form-label">Cliente</label>
 
-              <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
+              <select
+                value={clientId}
+                onChange={(e) => {
+                  setClientId(e.target.value);
+                  setDeliveryCalculation(null);
+
+                  if (deliveryMode === 'LOCAL_DELIVERY') {
+                    removeDeliveryFromCart();
+                  }
+                }}
+              >
                 <option value="">Consumidor final</option>
 
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {clientName(c)} · {c.category} · deuda{' '}
-                    {fmtMoney(c.currentBalance)}
+                    {clientName(c)} · {c.category} · deuda {fmtMoney(c.currentBalance)}
                   </option>
                 ))}
               </select>
+
+              {deliveryMode === 'LOCAL_DELIVERY' && selectedClient && (
+                <div
+                  style={{
+                    color: clientHasCoordinates(selectedClient) ? 'var(--text3)' : 'var(--danger)',
+                    fontSize: 11,
+                    marginTop: 5,
+                  }}
+                >
+                  {clientHasCoordinates(selectedClient)
+                    ? `Destino: ${buildClientAddress(selectedClient) || 'Dirección cargada'}`
+                    : 'Este cliente no tiene coordenadas para calcular envío'}
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                margin: '14px 0',
+                padding: 12,
+                borderRadius: 14,
+                border: '1px solid var(--border)',
+                background: 'var(--surface2)',
+              }}
+            >
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <Truck size={16} />
+                <b style={{ fontSize: 13 }}>Entrega</b>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Tipo</label>
+                  <select
+                    value={deliveryMode}
+                    onChange={(e) => {
+                      const next = e.target.value as DeliveryMode;
+                      setDeliveryMode(next);
+                      setDeliveryCalculation(null);
+
+                      if (next === 'PICKUP') {
+                        removeDeliveryFromCart();
+                      }
+                    }}
+                  >
+                    <option value="PICKUP">Retiro en sucursal</option>
+                    <option value="LOCAL_DELIVERY">Envío</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Sale desde</label>
+                  <select
+                    value={businessLocationId}
+                    onChange={(e) => {
+                      setBusinessLocationId(e.target.value);
+                      setDeliveryCalculation(null);
+
+                      if (deliveryMode === 'LOCAL_DELIVERY') {
+                        removeDeliveryFromCart();
+                      }
+                    }}
+                  >
+                    <option value="">
+                      {businessLocations.length ? 'Seleccionar' : 'Sin ubicaciones cargadas'}
+                    </option>
+
+                    {businessLocations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                        {location.isDefault ? ' · default' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {deliveryMode === 'LOCAL_DELIVERY' && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Precio por km</label>
+                    <input
+                      type="number"
+                      value={deliveryPricePerKm}
+                      onChange={(e) => {
+                        setDeliveryPricePerKm(e.target.value);
+                        setDeliveryCalculation(null);
+                        removeDeliveryFromCart();
+                      }}
+                      placeholder="Ej: 8000"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={calculateDelivery}
+                    disabled={calculatingDelivery || !clientId || !businessLocationId}
+                    style={{ width: '100%', marginBottom: 10 }}
+                  >
+                    {calculatingDelivery ? (
+                      <>
+                        <RefreshCcw size={14} className="animate-spin" />
+                        Calculando...
+                      </>
+                    ) : (
+                      <>
+                        <Truck size={14} />
+                        Calcular envío
+                      </>
+                    )}
+                  </button>
+
+                  {deliveryCalculation && (
+                    <div
+                      style={{
+                        border: '1px solid rgba(34,197,94,0.25)',
+                        background: 'rgba(34,197,94,0.08)',
+                        borderRadius: 12,
+                        padding: 10,
+                        fontSize: 12,
+                        color: 'var(--text2)',
+                      }}
+                    >
+                      <div style={{ fontWeight: 900, color: 'var(--success)' }}>
+                        Envío: {fmtMoney(deliveryCalculation.deliveryCost)}
+                      </div>
+                      <div>
+                        {deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}
+                      </div>
+                      <div style={{ color: 'var(--text3)', marginTop: 4 }}>
+                        Origen: {deliveryCalculation.businessLocationName}
+                      </div>
+                      <div style={{ color: 'var(--text3)' }}>
+                        Fuente:{' '}
+                        {deliveryCalculation.source === 'GOOGLE_ROUTES'
+                          ? 'Google Routes'
+                          : 'Coordenadas'}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div style={{ maxHeight: 260, overflow: 'auto', marginBottom: 12 }}>
-              {cart.map((item) => (
-                <div
-                  key={item.product.id}
-                  style={{
-                    borderBottom: '1px solid var(--border)',
-                    padding: '10px 0',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                    }}
-                  >
-                    <div>
-                      <b style={{ fontSize: 13 }}>{item.product.name}</b>
+              {cart.map((item) => {
+                const itemPrice = getItemPrice(item, priceType);
 
-                      <div
-                        style={{
-                          fontFamily: 'var(--mono)',
-                          color: 'var(--text3)',
-                          fontSize: 11,
-                        }}
-                      >
-                        {fmtMoney(productPrice(item.product, priceType))}
-                        {item.product.saleUnit === 'KG' ? '/kg' : ''}
+                return (
+                  <div key={item.product.id} style={{ borderBottom: '1px solid var(--border)', padding: '10px 0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <div>
+                        <b style={{ fontSize: 13 }}>
+                          {item.product.name}
+                          {item.isDeliveryItem ? ' 🚚' : ''}
+                        </b>
+
+                        <div style={{ fontFamily: 'var(--mono)', color: 'var(--text3)', fontSize: 11 }}>
+                          {fmtMoney(itemPrice)}
+                          {item.product.saleUnit === 'KG' ? '/kg' : ''}
+                        </div>
+
+                        {!item.product.isService && (
+                          <div style={{ color: 'var(--text3)', fontSize: 11 }}>
+                            Stock {stockLocation === 'DEPOSITO' ? 'depósito' : 'local'}:{' '}
+                            {stockLabel(item.product, stockLocation)}
+                          </div>
+                        )}
+
+                        {item.product.isService && (
+                          <div style={{ color: 'var(--accent)', fontSize: 11 }}>
+                            Servicio sin descuento de stock
+                          </div>
+                        )}
                       </div>
 
-                      <div style={{ color: 'var(--text3)', fontSize: 11 }}>
-                        Stock {stockLocation === 'DEPOSITO' ? 'depósito' : 'local'}:{' '}
-                        {stockLabel(item.product, stockLocation)}
-                      </div>
+                      <button className="btn btn-ghost btn-sm" onClick={() => remove(item.product.id)}>
+                        <Trash2 size={13} />
+                      </button>
                     </div>
 
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => remove(item.product.id)}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    {item.product.saleUnit === 'KG' ? (
+                      <input
+                        style={{ marginTop: 8 }}
+                        type="number"
+                        step="0.001"
+                        value={item.quantityKg ?? 0}
+                        onChange={(e) => setKg(item.product.id, num(e.target.value))}
+                      />
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setQty(item.product.id, item.quantity - 1)}
+                          disabled={item.isDeliveryItem || item.product.isService}
+                        >
+                          <Minus size={12} />
+                        </button>
+
+                        <span style={{ fontFamily: 'var(--mono)', minWidth: 32, textAlign: 'center' }}>
+                          {item.quantity}
+                        </span>
+
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setQty(item.product.id, item.quantity + 1)}
+                          disabled={item.isDeliveryItem || item.product.isService}
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                    )}
                   </div>
-
-                  {item.product.saleUnit === 'KG' ? (
-                    <input
-                      style={{ marginTop: 8 }}
-                      type="number"
-                      step="0.001"
-                      value={item.quantityKg ?? 0}
-                      onChange={(e) => setKg(item.product.id, num(e.target.value))}
-                    />
-                  ) : (
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 6,
-                        marginTop: 8,
-                        alignItems: 'center',
-                      }}
-                    >
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setQty(item.product.id, item.quantity - 1)}
-                      >
-                        <Minus size={12} />
-                      </button>
-
-                      <span
-                        style={{
-                          fontFamily: 'var(--mono)',
-                          minWidth: 32,
-                          textAlign: 'center',
-                        }}
-                      >
-                        {item.quantity}
-                      </span>
-
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => setQty(item.product.id, item.quantity + 1)}
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Comprobante</label>
 
-                <select
-                  value={receiptType}
-                  onChange={(e) => setReceiptType(e.target.value as ReceiptType)}
-                >
+                <select value={receiptType} onChange={(e) => setReceiptType(e.target.value as ReceiptType)}>
                   <option value="TICKET">Ticket</option>
                   <option value="FACTURA">Factura</option>
                 </select>
@@ -791,12 +1185,7 @@ export default function POSPage() {
               <div className="form-group">
                 <label className="form-label">Descuento</label>
 
-                <select
-                  value={discountType}
-                  onChange={(e) =>
-                    setDiscountType(e.target.value as DiscountType | '')
-                  }
-                >
+                <select value={discountType} onChange={(e) => setDiscountType(e.target.value as DiscountType | '')}>
                   <option value="">Sin descuento</option>
                   <option value="PERCENTAGE">%</option>
                   <option value="FIXED">$</option>
@@ -818,12 +1207,7 @@ export default function POSPage() {
             <div className="form-group">
               <label className="form-label">Modo de pago</label>
 
-              <select
-                value={paymentMode}
-                onChange={(e) =>
-                  setPaymentMode(e.target.value as 'single' | 'multi')
-                }
-              >
+              <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as 'single' | 'multi')}>
                 <option value="single">Un método</option>
                 <option value="multi">Múltiples / parcial</option>
               </select>
@@ -831,10 +1215,7 @@ export default function POSPage() {
 
             {paymentMode === 'single' ? (
               <div className="form-group">
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-                >
+                <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}>
                   {methods.map((m) => (
                     <option key={m} value={m}>
                       {m}
@@ -859,9 +1240,7 @@ export default function POSPage() {
                       onChange={(e) =>
                         setPayments((prev) =>
                           prev.map((x, i) =>
-                            i === idx
-                              ? { ...x, method: e.target.value as PaymentMethod }
-                              : x
+                            i === idx ? { ...x, method: e.target.value as PaymentMethod } : x
                           )
                         )
                       }
@@ -875,18 +1254,12 @@ export default function POSPage() {
 
                     <input
                       type="number"
-                      value={
-                        p.method === 'CUENTA_CORRIENTE'
-                          ? debt || ''
-                          : p.amount || ''
-                      }
+                      value={p.method === 'CUENTA_CORRIENTE' ? debt || '' : p.amount || ''}
                       disabled={p.method === 'CUENTA_CORRIENTE'}
                       onChange={(e) =>
                         setPayments((prev) =>
                           prev.map((x, i) =>
-                            i === idx
-                              ? { ...x, amount: num(e.target.value) }
-                              : x
+                            i === idx ? { ...x, amount: num(e.target.value) } : x
                           )
                         )
                       }
@@ -909,27 +1282,20 @@ export default function POSPage() {
               boxShadow: '0 -14px 40px rgba(0,0,0,0.22)',
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                color: 'var(--text2)',
-                marginBottom: 5,
-              }}
-            >
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text2)', marginBottom: 5 }}>
               <span>Subtotal</span>
               <span>{fmtMoney(subtotal)}</span>
             </div>
 
+            {deliveryCalculation && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent)', marginBottom: 5 }}>
+                <span>Envío incluido</span>
+                <span>{fmtMoney(deliveryCalculation.deliveryCost)}</span>
+              </div>
+            )}
+
             {discount > 0 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  color: 'var(--warn)',
-                  marginBottom: 5,
-                }}
-              >
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--warn)', marginBottom: 5 }}>
                 <span>Descuento</span>
                 <span>-{fmtMoney(discount)}</span>
               </div>
@@ -958,7 +1324,7 @@ export default function POSPage() {
             <button
               className="btn btn-primary"
               disabled={submitting || !cart.length}
-              onClick={submit}
+              onClick={openSubmitConfirm}
               style={{
                 width: '100%',
                 height: 48,
@@ -972,6 +1338,84 @@ export default function POSPage() {
           </div>
         </aside>
       </div>
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? 'rgba(239,68,68,0.12)'
+                      : 'var(--surface2)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+
+                <p
+                  style={{
+                    color: 'var(--text2)',
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    margin: 0,
+                  }}
+                >
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }

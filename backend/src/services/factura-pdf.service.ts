@@ -1,7 +1,11 @@
 import prisma from "../prisma";
 import fs from "fs";
 import path from "path";
-import { generarFacturaPDF, FacturaPDFData, TipoCliente } from "./facturaPdfGenerator.service";
+import {
+  generarFacturaPDF,
+  FacturaPDFData,
+  TipoCliente,
+} from "./facturaPdfGenerator.service";
 
 export async function regenerarFacturaPDFService(
   saleId: string,
@@ -50,6 +54,20 @@ export async function regenerarFacturaPDFService(
       urlQR: invoice.urlQR || undefined,
       saleId: sale.id,
     },
+
+    empresa: {
+      name: process.env.BUSINESS_NAME || "GRUPO VJ",
+      subtitle: process.env.BUSINESS_SUBTITLE || "SANTILLAN JULIO CESAR",
+      cuit: process.env.BUSINESS_CUIT || invoice.cuit,
+      address:
+        process.env.BUSINESS_ADDRESS ||
+        "PASO DE LOS ANDES 893, BARRIO OBSERVATORIO, 5000-CORDOBA",
+      phone: process.env.BUSINESS_PHONE || "+54 9 3513 79-0057",
+      ivaCondition:
+        process.env.BUSINESS_IVA_CONDITION ||
+        undefined,
+    },
+
     cliente: {
       nombre: sale.client?.nombre || "Consumidor Final",
       apellido: sale.client?.apellido || "",
@@ -59,11 +77,34 @@ export async function regenerarFacturaPDFService(
       category:
         (sale.client?.category as TipoCliente | undefined) || "Consumidor Final",
     },
-    products: sale.items.map((item) => ({
-      name: item.product?.name || "Producto",
-      quantity: Number(item.quantity || 0),
-      price: Number(item.price || 0),
-    })),
+
+    products: sale.items.map((item) => {
+      const quantity = Number(item.quantity || 0);
+      const quantityKg =
+        (item as any).quantityKg !== null && (item as any).quantityKg !== undefined
+          ? Number((item as any).quantityKg)
+          : undefined;
+
+      const price = Number(item.price || 0);
+
+      const subtotal =
+        (item as any).subtotal !== null && (item as any).subtotal !== undefined
+          ? Number((item as any).subtotal)
+          : quantityKg !== undefined && quantityKg > 0
+          ? quantityKg * price
+          : quantity * price;
+
+      return {
+        name:
+          item.product?.name ||
+          (item as any).productNameSnapshot ||
+          "Producto",
+        quantity,
+        quantityKg,
+        price,
+        subtotal,
+      };
+    }),
   };
 
   const result = await generarFacturaPDF(pdfData, uploadToCloudinary);
@@ -125,6 +166,7 @@ export async function obtenerTodasLasFacturasService() {
     updatedAt: factura.updatedAt,
     relatedInvoiceId: factura.relatedInvoiceId,
     pdfUrl: factura.sale?.pdfUrl || null,
+
     client: factura.sale?.client
       ? {
           id: factura.sale.client.id,
@@ -138,6 +180,7 @@ export async function obtenerTodasLasFacturasService() {
       : null,
   }));
 }
+
 export async function obtenerFacturaPDFPathService(saleId: string) {
   const result = await regenerarFacturaPDFService(saleId, false);
 

@@ -1,16 +1,42 @@
 import { Request, Response, NextFunction } from "express";
 import { saleService } from "../services/sale.service";
-import { PaymentMethod, SaleStatus } from "@prisma/client";
+import {
+  DeliveryMethod,
+  DeliveryStatus,
+  PaymentMethod,
+  SaleStatus,
+} from "@prisma/client";
 import { getParamAsString } from "../utils/params";
 
 const toNumber = (v: any) =>
   v === undefined || v === null || v === "" ? undefined : Number(v);
 
+const toIntOrNull = (v: any) => {
+  const n = toNumber(v);
+  if (n === undefined) return undefined;
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
+};
+
+function isDeliveryMethod(value: any): value is DeliveryMethod {
+  return Object.values(DeliveryMethod).includes(value);
+}
+
+function isDeliveryStatus(value: any): value is DeliveryStatus {
+  return Object.values(DeliveryStatus).includes(value);
+}
+
 export const saleController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const sales = await saleService.getAll();
-      res.json(sales);
+
+      const safeSales = JSON.parse(
+        JSON.stringify(sales, (_, value) =>
+          typeof value === "bigint" ? value.toString() : value
+        )
+      );
+
+      res.json(safeSales);
     } catch (err) {
       next(err);
     }
@@ -19,7 +45,14 @@ export const saleController = {
   async getPending(req: Request, res: Response, next: NextFunction) {
     try {
       const sales = await saleService.getPending();
-      res.json(sales);
+
+      const safeSales = JSON.parse(
+        JSON.stringify(sales, (_, value) =>
+          typeof value === "bigint" ? value.toString() : value
+        )
+      );
+
+      res.json(safeSales);
     } catch (err) {
       next(err);
     }
@@ -37,32 +70,38 @@ export const saleController = {
         });
       }
 
-      res.json(sale);
+      const safeSale = JSON.parse(
+        JSON.stringify(sale, (_, value) =>
+          typeof value === "bigint" ? value.toString() : value
+        )
+      );
+
+      res.json(safeSale);
     } catch (err) {
       next(err);
     }
   },
 
-async generarCotizacion(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { id } = req.params;
+  async generarCotizacion(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
 
-    const result = await saleService.generarCotizacion(
-      getParamAsString(id, "id")
-    );
+      const result = await saleService.generarCotizacion(
+        getParamAsString(id, "id")
+      );
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${result.filename}"`
-    );
-    res.setHeader("Content-Length", result.buffer.length);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`
+      );
+      res.setHeader("Content-Length", result.buffer.length);
 
-    return res.send(result.buffer);
-  } catch (err) {
-    next(err);
-  }
-},
+      return res.send(result.buffer);
+    } catch (err) {
+      next(err);
+    }
+  },
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
@@ -85,22 +124,56 @@ async generarCotizacion(req: Request, res: Response, next: NextFunction) {
           }))
         : [];
 
-      // Acepta stockLocation o stockSource por si el frontend lo manda con otro nombre.
-      // Si no se manda nada, descuenta del LOCAL.
       const stockLocation = body.stockLocation ?? body.stockSource ?? "LOCAL";
 
-        if (!["LOCAL", "DEPOSITO"].includes(stockLocation)) {
+      if (!["LOCAL", "DEPOSITO"].includes(stockLocation)) {
         return res.status(400).json({
           message: "Depósito/origen de stock inválido. Usá LOCAL o DEPOSITO",
         });
       }
 
-       const payload = {
+      const deliveryMethod = body.deliveryMethod ?? "PICKUP";
+
+      if (!isDeliveryMethod(deliveryMethod)) {
+        return res.status(400).json({
+          message:
+            "Método de entrega inválido. Usá PICKUP, LOCAL_DELIVERY o TRANSPORT",
+        });
+      }
+
+      const deliveryStatus = body.deliveryStatus ?? "NONE";
+
+      if (!isDeliveryStatus(deliveryStatus)) {
+        return res.status(400).json({
+          message:
+            "Estado de entrega inválido. Usá NONE, PENDING, PREPARING, IN_TRANSIT, DELIVERED o CANCELLED",
+        });
+      }
+
+      const payload = {
         ...body,
+
         stockLocation,
         quotationHours: toNumber(body.quotationHours),
         discountValue: toNumber(body.discountValue),
+
+        businessLocationId: body.businessLocationId ?? null,
+
+        deliveryMethod,
+        deliveryStatus,
+        deliveryAddressSnapshot: body.deliveryAddressSnapshot ?? null,
+        deliveryDistanceKm: toNumber(body.deliveryDistanceKm),
+deliveryPricePerKm: toNumber(body.deliveryPricePerKm),
+deliveryCost: toNumber(body.deliveryCost) ?? 0,
+
+        transportName: body.transportName ?? null,
+        transportCuit: body.transportCuit ?? null,
+
+        packagesCount: toIntOrNull(body.packagesCount),
+        declaredValue: toNumber(body.declaredValue),
+
         items,
+
         payments: Array.isArray(body.payments)
           ? body.payments.map((payment: any) => ({
               method: payment.method as PaymentMethod,
@@ -113,7 +186,13 @@ async generarCotizacion(req: Request, res: Response, next: NextFunction) {
 
       const newSale = await saleService.create(payload);
 
-      res.status(201).json(newSale);
+      const safeSale = JSON.parse(
+        JSON.stringify(newSale, (_, value) =>
+          typeof value === "bigint" ? value.toString() : value
+        )
+      );
+
+      res.status(201).json(safeSale);
     } catch (err) {
       next(err);
     }
@@ -140,9 +219,7 @@ async generarCotizacion(req: Request, res: Response, next: NextFunction) {
 
   async updateStatus(req: Request, res: Response, next: NextFunction) {
     try {
-      const { status } = req.body as {
-        status: SaleStatus;
-      };
+      const { status } = req.body as { status: SaleStatus };
 
       if (!status || !Object.values(SaleStatus).includes(status)) {
         return res.status(400).json({
@@ -164,9 +241,7 @@ async generarCotizacion(req: Request, res: Response, next: NextFunction) {
   async updatePaymentMethod(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const { paymentMethod } = req.body as {
-        paymentMethod: PaymentMethod;
-      };
+      const { paymentMethod } = req.body as { paymentMethod: PaymentMethod };
 
       if (!paymentMethod) {
         return res.status(400).json({

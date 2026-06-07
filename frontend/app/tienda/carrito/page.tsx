@@ -9,14 +9,39 @@ import {
   ArrowLeft,
   MessageCircle,
   ShoppingBag,
-  Store,
   MapPin,
   ShieldCheck,
   Plus,
   Minus,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 import { formatMoney, shopApi } from '@/lib/shop';
 import { useCartStore } from '@/store/cart';
+import toast from 'react-hot-toast';
+
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
+} | null;
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+
+  const apiError = error as {
+    response?: {
+      data?: {
+        message?: string;
+        error?: string;
+      };
+    };
+  };
+
+  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+}
 
 export default function TiendaCarritoPage() {
   const router = useRouter();
@@ -32,6 +57,9 @@ export default function TiendaCarritoPage() {
   const [saving, setSaving] = useState(false);
   const [customerCategory, setCustomerCategory] = useState<string | null>(null);
 
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
   const storeSuffix = useMemo(() => {
     if (customerCategory === 'Mayorista') return 'Mayorista';
     if (customerCategory === 'Cliente') return 'Clientes';
@@ -45,24 +73,39 @@ export default function TiendaCarritoPage() {
   }, [customerCategory]);
 
   useEffect(() => {
+    let alive = true;
+
     shopApi
       .getProducts({ limit: 1 })
       .then((result) => {
+        if (!alive) return;
         setCustomerCategory(result.customer?.category ?? null);
       })
       .catch(() => {
+        if (!alive) return;
         setCustomerCategory(null);
       });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   async function checkout() {
+    if (!items.length) {
+      toast.error('Tu carrito está vacío');
+      return;
+    }
+
     setSaving(true);
     setError('');
+
+    const toastId = toast.loading('Creando pedido...');
 
     try {
       const result = await shopApi.checkoutWhatsapp({
         paymentMethod: 'TRANSFERENCIA',
-        customerNotes: notes,
+        customerNotes: notes.trim(),
         items: items.map((item) => ({
           productId: item.product.id,
           quantity: item.product.saleUnit === 'KG' ? undefined : item.quantity,
@@ -73,22 +116,55 @@ export default function TiendaCarritoPage() {
       clear();
 
       if (result.whatsappUrl) {
+        toast.success('Pedido creado. Abriendo WhatsApp...', { id: toastId });
         window.location.href = result.whatsappUrl;
         return;
       }
 
-      setError('Pedido creado, pero falta configurar STORE_WHATSAPP_NUMBER en el backend.');
-    } catch (err: any) {
-      const message = err.message || 'No se pudo finalizar el pedido';
+      const message = 'Pedido creado, pero falta configurar STORE_WHATSAPP_NUMBER en el backend.';
+      setError(message);
+      toast.error(message, { id: toastId });
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, 'No se pudo finalizar el pedido');
 
       if (message.toLowerCase().includes('token') || message.toLowerCase().includes('sesión')) {
+        toast.error('Tu sesión venció. Iniciá sesión nuevamente', { id: toastId });
         router.push('/tienda/login');
         return;
       }
 
       setError(message);
+      toast.error(message, { id: toastId });
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openCheckoutConfirm() {
+    if (!items.length) {
+      toast.error('Tu carrito está vacío');
+      return;
+    }
+
+    setConfirmModal({
+      title: 'Finalizar pedido',
+      message: `¿Confirmás crear el pedido por ${formatMoney(total)} y abrir WhatsApp con el detalle?`,
+      confirmText: 'Finalizar por WhatsApp',
+      danger: false,
+      onConfirm: checkout,
+    });
+  }
+
+  async function confirmAction() {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
+
+    try {
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
+    } finally {
+      setConfirmLoading(false);
     }
   }
 
@@ -102,6 +178,23 @@ export default function TiendaCarritoPage() {
     const step = isKg ? 0.1 : 1;
     const nextQuantity = Number((currentQuantity + step).toFixed(2));
     setQuantity(productId, nextQuantity);
+  }
+
+  function handleQuantityInput(productId: string, value: string, isKg: boolean) {
+    const parsed = Number(value);
+    const min = isKg ? 0.1 : 1;
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setQuantity(productId, min);
+      return;
+    }
+
+    setQuantity(productId, parsed);
+  }
+
+  function handleRemove(productId: string) {
+    remove(productId);
+    toast.success('Producto quitado del carrito');
   }
 
   return (
@@ -772,6 +865,125 @@ export default function TiendaCarritoPage() {
           transform: translateY(-1px);
         }
 
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 9998;
+          background: rgba(15, 23, 42, 0.58);
+          backdrop-filter: blur(8px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+        }
+
+        .modal {
+          width: 100%;
+          max-width: 440px;
+          background: var(--white);
+          border: 1px solid var(--line);
+          border-radius: 24px;
+          box-shadow: 0 30px 90px rgba(15, 23, 42, 0.28);
+          overflow: hidden;
+        }
+
+        .modal-header {
+          padding: 18px 20px;
+          border-bottom: 1px solid var(--line);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .modal-header b {
+          color: var(--text);
+          font-size: 15px;
+          font-weight: 950;
+        }
+
+        .modal-close {
+          width: 34px;
+          height: 34px;
+          border: 0;
+          border-radius: 12px;
+          background: #f9fafb;
+          color: var(--muted);
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+        }
+
+        .modal-close:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .modal-body {
+          padding: 20px;
+        }
+
+        .modal-message-row {
+          display: flex;
+          gap: 12px;
+          align-items: flex-start;
+        }
+
+        .modal-icon {
+          width: 38px;
+          height: 38px;
+          border-radius: 14px;
+          background: var(--green-soft);
+          color: var(--green);
+          display: grid;
+          place-items: center;
+          flex-shrink: 0;
+        }
+
+        .modal-message {
+          margin: 0;
+          color: var(--muted);
+          font-size: 13px;
+          line-height: 1.55;
+          font-weight: 650;
+        }
+
+        .modal-footer {
+          padding: 16px 20px;
+          border-top: 1px solid var(--line);
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+        }
+
+        .modal-secondary,
+        .modal-primary {
+          height: 42px;
+          padding: 0 16px;
+          border-radius: 999px;
+          font-size: 13px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .modal-secondary {
+          background: var(--white);
+          color: var(--text);
+          border: 1px solid var(--line);
+        }
+
+        .modal-primary {
+          background: #25D366;
+          color: var(--white);
+          border: 1px solid #25D366;
+        }
+
+        .modal-secondary:disabled,
+        .modal-primary:disabled {
+          opacity: 0.65;
+          cursor: not-allowed;
+        }
+
         @media (max-width: 980px) {
           .cart-layout {
             grid-template-columns: 1fr;
@@ -927,8 +1139,6 @@ export default function TiendaCarritoPage() {
                 Retiro y atención en <strong>Paso de los Andes 893, Córdoba</strong>
               </span>
             </div>
-
-
           </div>
         </div>
 
@@ -1011,10 +1221,9 @@ export default function TiendaCarritoPage() {
                             min={isKg ? 0.1 : 1}
                             step={isKg ? 0.1 : 1}
                             value={item.quantity}
-                            onChange={(e) => {
-                              const value = Number(e.target.value);
-                              setQuantity(item.product.id, Number.isFinite(value) && value > 0 ? value : 1);
-                            }}
+                            onChange={(e) =>
+                              handleQuantityInput(item.product.id, e.target.value, isKg)
+                            }
                           />
 
                           <button
@@ -1033,7 +1242,7 @@ export default function TiendaCarritoPage() {
 
                         <button
                           className="btn-remove"
-                          onClick={() => remove(item.product.id)}
+                          onClick={() => handleRemove(item.product.id)}
                           title="Quitar"
                         >
                           <Trash2 size={17} />
@@ -1081,9 +1290,10 @@ export default function TiendaCarritoPage() {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Ej: retiro por local, envío, horario preferido, aclaraciones..."
+                  disabled={saving}
                 />
 
-                <button className="btn-checkout" disabled={saving} onClick={checkout}>
+                <button className="btn-checkout" disabled={saving} onClick={openCheckoutConfirm}>
                   <MessageCircle size={18} />
                   {saving ? 'Creando pedido...' : 'Finalizar por WhatsApp'}
                 </button>
@@ -1106,6 +1316,58 @@ export default function TiendaCarritoPage() {
           )}
         </main>
       </div>
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="modal-close"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-message-row">
+                <span className="modal-icon">
+                  <AlertTriangle size={18} />
+                </span>
+
+                <p className="modal-message">{confirmModal.message}</p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="modal-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className="modal-primary"
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? 'Creando...' : confirmModal.confirmText ?? 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

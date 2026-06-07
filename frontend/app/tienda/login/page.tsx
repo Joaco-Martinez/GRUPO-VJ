@@ -6,6 +6,22 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Lock, Mail } from 'lucide-react';
 import { shopApi } from '@/lib/shop';
+import toast from 'react-hot-toast';
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+
+  const apiError = error as {
+    response?: {
+      data?: {
+        message?: string;
+        error?: string;
+      };
+    };
+  };
+
+  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+}
 
 export default function TiendaLoginPage() {
   const router = useRouter();
@@ -15,17 +31,45 @@ export default function TiendaLoginPage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  function validateForm() {
+    if (!email.trim()) {
+      toast.error('Ingresá tu correo electrónico');
+      return false;
+    }
+
+    if (!password.trim()) {
+      toast.error('Ingresá tu contraseña');
+      return false;
+    }
+
+    return true;
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+
+    if (!validateForm()) return;
+
     setSaving(true);
     setError('');
 
+    const toastId = toast.loading('Iniciando sesión...');
+
     try {
-      await shopApi.login({ email, password });
+      await shopApi.login({
+        email: email.trim(),
+        password,
+      });
+
+      toast.success('Sesión iniciada correctamente', { id: toastId });
+
       router.push('/tienda/carrito');
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'No se pudo iniciar sesión');
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, 'No se pudo iniciar sesión');
+
+      setError(message);
+      toast.error(message, { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -202,6 +246,11 @@ export default function TiendaLoginPage() {
           box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.08);
         }
 
+        .field-input:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+
         .error-box {
           background: var(--red-soft);
           color: var(--red);
@@ -358,6 +407,7 @@ export default function TiendaLoginPage() {
                   autoComplete="email"
                   placeholder="cliente@empresa.com"
                   value={email}
+                  disabled={saving}
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
@@ -377,6 +427,7 @@ export default function TiendaLoginPage() {
                   autoComplete="current-password"
                   placeholder="Ingresá tu contraseña"
                   value={password}
+                  disabled={saving}
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>

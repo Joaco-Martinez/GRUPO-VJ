@@ -8,12 +8,15 @@ import prisma from "../../prisma";
 type Product = {
   name: string;
   quantity: number;
+  quantityKg?: number | null;
   price: number;
+  subtotal?: number;
 };
 
 type TipoCliente = "Consumidor Final" | "Cliente" | "Mayorista";
 
 const POS_LOCAL_URL = process.env.POS_LOCAL_URL;
+const POS_LOCAL_TOKEN = process.env.POS_LOCAL_TOKEN;
 const PAGE_WIDTH = 226;
 
 function getLetraComprobante(tipoComprobante: number): string {
@@ -32,6 +35,25 @@ function getLetraComprobante(tipoComprobante: number): string {
       return "C";
     default:
       return "?";
+  }
+}
+
+function getReceiptType(tipoComprobante: number): string {
+  switch (tipoComprobante) {
+    case 1:
+      return "FACTURA A";
+    case 6:
+      return "FACTURA B";
+    case 11:
+      return "FACTURA C";
+    case 3:
+      return "NOTA DE CRÉDITO A";
+    case 8:
+      return "NOTA DE CRÉDITO B";
+    case 13:
+      return "NOTA DE CRÉDITO C";
+    default:
+      return "COMPROBANTE";
   }
 }
 
@@ -60,7 +82,10 @@ function getClienteLabel(tipoCliente?: TipoCliente): string {
   }
 }
 
-function getCondicionIVAReceptorLabel(tipoComprobante: number, tipoCliente?: TipoCliente) {
+function getCondicionIVAReceptorLabel(
+  tipoComprobante: number,
+  tipoCliente?: TipoCliente
+) {
   if (tipoComprobante === 11 || tipoComprobante === 13) {
     return "CONDICIÓN IVA RECEPTOR: CONSUMIDOR FINAL";
   }
@@ -77,14 +102,166 @@ function formatCurrency(value: number) {
 }
 
 function formatDateAR(date: Date) {
-  return new Date(date).toLocaleDateString("es-AR");
+  return new Intl.DateTimeFormat("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(date));
 }
 
 function formatTimeAR(date: Date) {
-  return new Date(date).toLocaleTimeString("es-AR", {
+  return new Intl.DateTimeFormat("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
     hour: "2-digit",
     minute: "2-digit",
+  }).format(new Date(date));
+}
+
+function formatDateTimeTicket(date: Date) {
+  return `${formatDateAR(date)} ${formatTimeAR(date)}`;
+}
+
+function formatCaeDate(date: Date) {
+  return formatDateAR(date);
+}
+
+function formatPointOfSale(value: number) {
+  return String(value).padStart(4, "0");
+}
+
+function formatCbteNumber(value: number) {
+  return String(value).padStart(8, "0");
+}
+
+function numberOrZero(value: unknown) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildTicketPayload({
+  tipoComprobante,
+  puntoVenta,
+  numero,
+  fechaEmision,
+  nombreCliente,
+  total,
+  metodoPago,
+  cae,
+  caeVto,
+  products,
+  cuit,
+  razonSocial,
+  direccion,
+  documentoCliente,
+  telefonoCliente,
+  qrUrl,
+}: {
+  tipoComprobante: number;
+  puntoVenta: number;
+  numero: number;
+  fechaEmision: Date;
+  nombreCliente: string;
+  total: number;
+  metodoPago: string;
+  cae: string;
+  caeVto: Date;
+  products?: Product[];
+  cuit: string;
+  razonSocial: string;
+  direccion: string;
+  documentoCliente?: string | number;
+  telefonoCliente?: string;
+  qrUrl?: string | null;
+}) {
+  const items = (products ?? []).map((product) => {
+    const quantity = numberOrZero(product.quantity);
+
+    const quantityKg =
+      product.quantityKg !== null && product.quantityKg !== undefined
+        ? numberOrZero(product.quantityKg)
+        : undefined;
+
+    const price = numberOrZero(product.price);
+
+    const subtotal =
+      product.subtotal !== undefined && product.subtotal !== null
+        ? numberOrZero(product.subtotal)
+        : quantityKg !== undefined && quantityKg > 0
+        ? quantityKg * price
+        : quantity * price;
+
+    return {
+      name: product.name,
+      quantity,
+      ...(quantityKg !== undefined ? { quantityKg } : {}),
+      price,
+      subtotal,
+    };
   });
+
+  const subtotal = items.reduce((acc, item) => acc + numberOrZero(item.subtotal), 0);
+  const discount = subtotal > total ? subtotal - total : 0;
+
+  return {
+    saleId: `FAC-${formatCbteNumber(numero)}`,
+    receiptType: getReceiptType(tipoComprobante),
+    paymentMethod: metodoPago,
+    createdAt: formatDateTimeTicket(fechaEmision),
+
+    business: {
+      name: process.env.BUSINESS_NAME ?? razonSocial ?? "GRUPO VJ",
+      subtitle: process.env.BUSINESS_SUBTITLE ?? "ComarPOS",
+      cuit: process.env.BUSINESS_CUIT ?? cuit,
+      address: process.env.BUSINESS_ADDRESS ?? direccion,
+      phone: process.env.BUSINESS_PHONE ?? "Teléfono Grupo VJ",
+    },
+
+    client: {
+      name: nombreCliente || "Consumidor Final",
+      dni: documentoCliente ? String(documentoCliente) : "",
+      phone: telefonoCliente ?? "",
+    },
+
+    items,
+
+    subtotal,
+    discount,
+    total: numberOrZero(total),
+
+    afip: {
+      invoiceLetter: getLetraComprobante(tipoComprobante),
+      pointOfSale: formatPointOfSale(puntoVenta),
+      cbteNumber: formatCbteNumber(numero),
+      cae,
+      caeExpiresAt: formatCaeDate(caeVto),
+      qrUrl: qrUrl ?? "",
+    },
+
+    footer: "Gracias por su compra",
+  };
+}
+
+async function enviarTicketAlPOSLocal(payload: any) {
+  if (!POS_LOCAL_URL) {
+    console.warn("⚠️ POS_LOCAL_URL no configurado, no se imprimió localmente");
+    return;
+  }
+
+  const url = `${POS_LOCAL_URL.replace(/\/$/, "")}/print/ticket`;
+
+  console.log("🖨️ Enviando ticket JSON al POS local:", url);
+  console.log("📦 Payload enviado:", JSON.stringify(payload, null, 2));
+
+  await axios.post(url, payload, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(POS_LOCAL_TOKEN ? { "x-pos-token": POS_LOCAL_TOKEN } : {}),
+    },
+    timeout: 60000,
+  });
+
+  console.log("✅ Ticket enviado correctamente al POS local");
 }
 
 export async function generarFacturaAfipPDF({
@@ -104,8 +281,8 @@ export async function generarFacturaAfipPDF({
   razonSocial = "VON KÖNIG",
   direccion = "Av. Julio Argentino Roca 288, X5194 Villa Gral. Belgrano, Córdoba",
   qrBase64,
+  qrUrl,
 
-  // 👇 nuevos campos
   tipoCliente = "Consumidor Final",
   documentoCliente,
   telefonoCliente,
@@ -125,6 +302,7 @@ export async function generarFacturaAfipPDF({
   razonSocial?: string;
   direccion?: string;
   qrBase64?: string | null;
+  qrUrl?: string | null;
   products?: Product[];
 
   tipoCliente?: TipoCliente;
@@ -132,9 +310,11 @@ export async function generarFacturaAfipPDF({
   telefonoCliente?: string;
 }) {
   return new Promise<void>((resolve, reject) => {
+    let filePath = "";
+
     try {
       const basePath = path.resolve("./");
-      const filePath = path.join(basePath, `factura-${numero}.pdf`);
+      filePath = path.join(basePath, `factura-${numero}.pdf`);
       const logoPath = path.join(basePath, "assets/logo-von-konig-png-1.png");
 
       const letraComprobante = getLetraComprobante(tipoComprobante);
@@ -153,7 +333,6 @@ export async function generarFacturaAfipPDF({
       const stream = fs.createWriteStream(filePath);
       doc.pipe(stream);
 
-      // --- LOGO ---
       if (fs.existsSync(logoPath)) {
         const imgWidth = 80;
         const x = (PAGE_WIDTH - imgWidth) / 2;
@@ -161,7 +340,6 @@ export async function generarFacturaAfipPDF({
         doc.moveDown(4.8);
       }
 
-      // --- ENCABEZADO ---
       doc
         .font("Helvetica-Bold")
         .fontSize(11)
@@ -171,7 +349,10 @@ export async function generarFacturaAfipPDF({
         .font("Helvetica")
         .fontSize(9)
         .text(
-          `NRO: ${String(puntoVenta).padStart(4, "0")}-${String(numero).padStart(8, "0")}`,
+          `NRO: ${String(puntoVenta).padStart(4, "0")}-${String(numero).padStart(
+            8,
+            "0"
+          )}`,
           { align: "center" }
         )
         .text(`${formatDateAR(fechaEmision)} ${formatTimeAR(fechaEmision)}`, {
@@ -179,7 +360,6 @@ export async function generarFacturaAfipPDF({
         })
         .moveDown(0.8);
 
-      // --- DATOS DEL EMISOR ---
       doc.fontSize(9).text(razonSocial, { align: "center" });
 
       doc
@@ -189,7 +369,6 @@ export async function generarFacturaAfipPDF({
         .text(condicionIVAEmisor, { align: "center" })
         .moveDown(0.8);
 
-      // --- CLIENTE ---
       const yCliente = doc.y;
       doc.rect(5, yCliente, 216, 70).stroke();
 
@@ -237,7 +416,6 @@ export async function generarFacturaAfipPDF({
 
       doc.moveDown(1.2);
 
-      // --- DETALLE ---
       doc.font("Helvetica-Bold").fontSize(10).text("DETALLE", {
         align: "center",
       });
@@ -251,10 +429,19 @@ export async function generarFacturaAfipPDF({
         const tableTop = doc.y;
 
         products.forEach((prod, index) => {
-          const importe = Number(prod.quantity) * Number(prod.price);
+          const quantityForImporte =
+            prod.quantityKg !== null && prod.quantityKg !== undefined
+              ? Number(prod.quantityKg)
+              : Number(prod.quantity);
+
+          const importe =
+            prod.subtotal !== undefined && prod.subtotal !== null
+              ? Number(prod.subtotal)
+              : quantityForImporte * Number(prod.price);
+
           const tableRowTop = tableTop + index * 10;
 
-          doc.text(`${prod.quantity}`, tableLeft, tableRowTop, {
+          doc.text(`${quantityForImporte}`, tableLeft, tableRowTop, {
             width: 25,
             align: "left",
           });
@@ -274,13 +461,14 @@ export async function generarFacturaAfipPDF({
             align: "right",
           });
         });
+
+        doc.y = tableTop + products.length * 10 + 10;
       } else {
         doc.fontSize(8).text("(sin productos)", { align: "center" });
       }
 
       doc.moveDown(1);
 
-      // --- TOTAL ---
       const yTotal = doc.y;
       doc.rect(5, yTotal, 216, 25).stroke();
 
@@ -292,9 +480,8 @@ export async function generarFacturaAfipPDF({
           width: PAGE_WIDTH,
         });
 
-      doc.moveDown(1.5);
+      doc.y = yTotal + 35;
 
-      // --- DATOS FISCALES ---
       const yDatos = doc.y;
       doc.rect(5, yDatos, 216, 70).stroke();
 
@@ -308,7 +495,7 @@ export async function generarFacturaAfipPDF({
         width: PAGE_WIDTH,
       });
       doc.text(`CAE: ${cae}`, { align: "center", width: PAGE_WIDTH });
-      doc.text(`FV: ${new Date(caeVto).toISOString().split("T")[0]}`, {
+      doc.text(`FV: ${formatCaeDate(caeVto)}`, {
         align: "center",
         width: PAGE_WIDTH,
       });
@@ -317,9 +504,8 @@ export async function generarFacturaAfipPDF({
         width: PAGE_WIDTH,
       });
 
-      doc.moveDown(1.5);
+      doc.y = yDatos + 85;
 
-      // --- QR ---
       if (qrBase64) {
         const qrPath = path.join(basePath, `qr-${numero}.png`);
         const base64Data = qrBase64.replace(/^data:image\/png;base64,/, "");
@@ -333,10 +519,19 @@ export async function generarFacturaAfipPDF({
         doc.image(qrPath, xQR, yQR + 5, { width: 110 });
 
         fs.unlinkSync(qrPath);
-        doc.moveDown(13);
+        doc.y = yQR + 135;
+      } else {
+        doc
+          .font("Helvetica")
+          .fontSize(7)
+          .text("QR no disponible en PDF", {
+            align: "center",
+            width: PAGE_WIDTH,
+          });
+
+        doc.moveDown(1);
       }
 
-      // --- PIE ---
       const yPie = doc.y;
       doc.rect(5, yPie, 216, 60).stroke();
 
@@ -362,65 +557,54 @@ export async function generarFacturaAfipPDF({
 
       doc.end();
 
-      // --- FINALIZAR PDF ---
       stream.on("finish", async () => {
         try {
           console.log("🧾 PDF generado correctamente:", filePath);
 
-          // 📨 Enviar al POS local
-          if (POS_LOCAL_URL) {
-            const pdfBuffer = await fs.promises.readFile(filePath);
-
-            await axios.post(
-              `${POS_LOCAL_URL}/print`,
-              {
-                pdfBase64: pdfBuffer.toString("base64"),
-                factura: {
-                  numero,
-                  total,
-                  metodoPago,
-                  fechaEmision,
-                  cae,
-                  tipoComprobante,
-                  letraComprobante,
-                  tipoCliente,
-                  nombreCliente,
-                  documentoCliente,
-                },
-              },
-              {
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                timeout: 60000,
-              }
-            );
-
-            console.log("🖨️ Factura enviada al POS local para impresión");
-          } else {
-            console.warn("⚠️ POS_LOCAL_URL no configurado, no se imprimió localmente");
-          }
-
-          // ☁️ Subir a Cloudinary
           const pdfUrl = await uploadPDFtoCloudinary(filePath);
 
-          // 💾 Guardar URL en la venta
           await prisma.sale.update({
             where: { id: saleId },
             data: { pdfUrl },
           });
 
           console.log("✅ Factura subida y asociada correctamente");
+
+          const ticketPayload = buildTicketPayload({
+            tipoComprobante,
+            puntoVenta,
+            numero,
+            fechaEmision,
+            nombreCliente,
+            total,
+            metodoPago,
+            cae,
+            caeVto,
+            products,
+            cuit,
+            razonSocial,
+            direccion,
+            documentoCliente,
+            telefonoCliente,
+            qrUrl,
+          });
+
+          await enviarTicketAlPOSLocal(ticketPayload);
+
           resolve();
         } catch (err: any) {
           console.error("⚠️ Error al procesar factura:", err.message);
           reject(err);
         } finally {
-          if (fs.existsSync(filePath)) {
+          if (filePath && fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
             console.log("🧹 Archivo temporal eliminado:", filePath);
           }
         }
+      });
+
+      stream.on("error", (err) => {
+        reject(err);
       });
     } catch (err) {
       reject(err);

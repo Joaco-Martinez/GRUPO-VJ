@@ -5,6 +5,7 @@ import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { ProductCategory } from '@/types';
 import { normalizeArray } from '@/lib/helpers';
+import toast from 'react-hot-toast';
 import {
   Tags,
   Plus,
@@ -18,7 +19,6 @@ import {
   Power,
   PowerOff,
   Package,
-  CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
 
@@ -29,11 +29,6 @@ type CategoryForm = {
   description: string;
   isActive: boolean;
 };
-
-type ToastState = {
-  type: 'success' | 'error';
-  message: string;
-} | null;
 
 type ConfirmState = {
   title: string;
@@ -63,6 +58,11 @@ function productsCount(category: ProductCategory) {
   return Number(category._count?.products ?? 0);
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  const e = error as { response?: { data?: { message?: string } } };
+  return e?.response?.data?.message ?? fallback;
+}
+
 export default function CategoriasPage() {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,35 +76,50 @@ export default function CategoriasPage() {
 
   const [form, setForm] = useState<CategoryForm>(emptyForm);
 
-  const [toast, setToast] = useState<ToastState>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
-
-    window.setTimeout(() => {
-      setToast(null);
-    }, 3200);
-  };
-
-  const load = async () => {
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
     try {
       const res = await api.get('/categories?includeInactive=true');
       setCategories(normalizeArray<ProductCategory>(res.data));
+
+      if (showSuccess) {
+        toast.success('Categorías actualizadas');
+      }
     } catch (e) {
       console.error(e);
-      showToast('error', 'Error al cargar categorías');
+      toast.error('Error al cargar categorías');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
-  }, []);
+  let alive = true;
+
+  api
+    .get('/categories?includeInactive=true')
+    .then((res) => {
+      if (!alive) return;
+      setCategories(normalizeArray<ProductCategory>(res.data));
+    })
+    .catch((e) => {
+      console.error(e);
+      if (!alive) return;
+      toast.error('Error al cargar categorías');
+    })
+    .finally(() => {
+      if (!alive) return;
+      setLoading(false);
+    });
+
+  return () => {
+    alive = false;
+  };
+}, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -164,8 +179,17 @@ export default function CategoriasPage() {
     setForm(emptyForm);
   };
 
+  const forceCloseModal = () => {
+    setModal(null);
+    setEditing(null);
+    setForm(emptyForm);
+  };
+
   const saveCategory = async () => {
-    if (!form.name.trim()) return;
+    if (!form.name.trim()) {
+      toast.error('Ingresá el nombre de la categoría');
+      return;
+    }
 
     setSaving(true);
 
@@ -177,24 +201,30 @@ export default function CategoriasPage() {
       };
 
       if (modal === 'create') {
-        await api.post('/categories', payload);
-        showToast('success', 'Categoría creada correctamente');
+        await toast.promise(api.post('/categories', payload), {
+          loading: 'Creando categoría...',
+          success: 'Categoría creada correctamente',
+          error: 'Error al crear categoría',
+        });
       }
 
       if (modal === 'edit' && editing) {
-        await api.put(`/categories/${editing.id}`, payload);
-        showToast('success', 'Categoría actualizada correctamente');
+        await toast.promise(api.put(`/categories/${editing.id}`, payload), {
+          loading: 'Guardando cambios...',
+          success: 'Categoría actualizada correctamente',
+          error: 'Error al actualizar categoría',
+        });
       }
 
-      closeModal();
+      forceCloseModal();
       await load();
     } catch (e: unknown) {
       const error = e as { response?: { status?: number; data?: { message?: string } } };
 
       if (error?.response?.status === 409) {
-        showToast('error', 'Ya existe una categoría con ese nombre');
+        toast.error('Ya existe una categoría con ese nombre');
       } else {
-        showToast('error', error?.response?.data?.message ?? 'Error al guardar categoría');
+        toast.error(error?.response?.data?.message ?? 'Error al guardar categoría');
       }
     } finally {
       setSaving(false);
@@ -216,18 +246,18 @@ export default function CategoriasPage() {
       danger: true,
       onConfirm: async () => {
         try {
-          await api.delete(`/categories/${category.id}`);
-          await load();
+          await toast.promise(api.delete(`/categories/${category.id}`), {
+            loading: count > 0 ? 'Desactivando categoría...' : 'Eliminando categoría...',
+            success:
+              count > 0
+                ? 'Categoría desactivada correctamente'
+                : 'Categoría eliminada correctamente',
+            error: 'Error al eliminar categoría',
+          });
 
-          showToast(
-            'success',
-            count > 0
-              ? 'Categoría desactivada correctamente'
-              : 'Categoría eliminada correctamente'
-          );
+          await load();
         } catch (e: unknown) {
-          const error = e as { response?: { data?: { message?: string } } };
-          showToast('error', error?.response?.data?.message ?? 'Error al eliminar categoría');
+          toast.error(getErrorMessage(e, 'Error al eliminar categoría'));
         }
       },
     });
@@ -235,12 +265,15 @@ export default function CategoriasPage() {
 
   const restoreCategory = async (category: ProductCategory) => {
     try {
-      await api.patch(`/categories/${category.id}/restore`);
+      await toast.promise(api.patch(`/categories/${category.id}/restore`), {
+        loading: 'Restaurando categoría...',
+        success: 'Categoría restaurada correctamente',
+        error: 'Error al restaurar categoría',
+      });
+
       await load();
-      showToast('success', 'Categoría restaurada correctamente');
     } catch (e: unknown) {
-      const error = e as { response?: { data?: { message?: string } } };
-      showToast('error', error?.response?.data?.message ?? 'Error al restaurar categoría');
+      toast.error(getErrorMessage(e, 'Error al restaurar categoría'));
     }
   };
 
@@ -263,7 +296,7 @@ export default function CategoriasPage() {
       subtitle="Clasificación dinámica para productos, promos y stock"
       actions={
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={load}>
+          <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
             <RefreshCcw size={14} />
             Actualizar
           </button>
@@ -275,58 +308,6 @@ export default function CategoriasPage() {
         </div>
       }
     >
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(15,23,42,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
-            style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
-            }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
       <div
         style={{
           display: 'grid',
@@ -387,7 +368,7 @@ export default function CategoriasPage() {
           <option value="inactive">Solo inactivas</option>
         </select>
 
-        <button className="btn btn-secondary btn-sm" onClick={load}>
+        <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
           <RefreshCcw size={14} />
           Actualizar
         </button>
@@ -628,7 +609,7 @@ export default function CategoriasPage() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeModal}>
+              <button className="btn btn-secondary" onClick={closeModal} disabled={saving}>
                 Cancelar
               </button>
 

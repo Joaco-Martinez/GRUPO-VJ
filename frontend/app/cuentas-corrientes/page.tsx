@@ -1,17 +1,12 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { AccountMovement, Client, PaymentMethod } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  RefreshCcw,
-  Search,
-  Wallet,
-  X,
-} from 'lucide-react';
+import toast from 'react-hot-toast';
+import { RefreshCcw, Search, Wallet, X } from 'lucide-react';
 
 const methods: PaymentMethod[] = [
   'EFECTIVO',
@@ -24,10 +19,27 @@ const methods: PaymentMethod[] = [
   'QR_NACION',
 ];
 
-type ToastState = {
-  type: 'success' | 'error';
-  message: string;
-} | null;
+function getErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.error ??
+    fallback
+  );
+}
+
+async function fetchAccountsData() {
+  const [d, m] = await Promise.all([
+    api.get('/accounts/debtors'),
+    api.get('/accounts/movements'),
+  ]);
+
+  return {
+    debtors: normalizeArray<Client>(d.data),
+    movements: normalizeArray<AccountMovement>(m.data),
+  };
+}
 
 export default function CuentasCorrientesPage() {
   const [debtors, setDebtors] = useState<Client[]>([]);
@@ -42,37 +54,53 @@ export default function CuentasCorrientesPage() {
     description: '',
   });
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<ToastState>(null);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
-
-    window.setTimeout(() => {
-      setToast(null);
-    }, 3200);
-  };
-
-  const load = async () => {
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
     try {
-      const [d, m] = await Promise.all([
-        api.get('/accounts/debtors'),
-        api.get('/accounts/movements'),
-      ]);
+      const data = await fetchAccountsData();
 
-      setDebtors(normalizeArray<Client>(d.data));
-      setMovements(normalizeArray<AccountMovement>(m.data));
+      setDebtors(data.debtors);
+      setMovements(data.movements);
+
+      if (showSuccess) {
+        toast.success('Cuentas corrientes actualizadas');
+      }
     } catch (e) {
       console.error(e);
-      showToast('error', 'Error al cargar cuentas corrientes');
+      toast.error('Error al cargar cuentas corrientes');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    let alive = true;
+
+    fetchAccountsData()
+      .then((data) => {
+        if (!alive) return;
+
+        setDebtors(data.debtors);
+        setMovements(data.movements);
+      })
+      .catch((e) => {
+        console.error(e);
+
+        if (!alive) return;
+
+        toast.error('Error al cargar cuentas corrientes');
+      })
+      .finally(() => {
+        if (!alive) return;
+
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const total = debtors.reduce((a, c) => a + num(c.currentBalance), 0);
@@ -109,23 +137,35 @@ export default function CuentasCorrientesPage() {
   const savePayment = async () => {
     if (!client) return;
 
+    const amount = num(payment.amount);
+
+    if (!payment.amount || amount <= 0) {
+      toast.error('Ingresá un importe válido');
+      return;
+    }
+
     setSaving(true);
+
+    const toastId = toast.loading('Registrando abono...');
 
     try {
       await api.post(`/accounts/clients/${client.id}/payment`, {
         ...payment,
-        amount: num(payment.amount),
+        amount,
       });
 
       setClient(null);
-      showToast('success', 'Abono registrado correctamente');
+      setPayment({
+        amount: '',
+        method: 'EFECTIVO',
+        reference: '',
+        description: '',
+      });
+
+      toast.success('Abono registrado correctamente', { id: toastId });
       await load();
     } catch (e: unknown) {
-      showToast(
-        'error',
-        (e as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          'Error al registrar abono'
-      );
+      toast.error(getErrorMessage(e, 'Error al registrar abono'), { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -136,64 +176,11 @@ export default function CuentasCorrientesPage() {
       title="Cuentas corrientes"
       subtitle="Deudas, abonos e historial de saldos"
       actions={
-        <button className="btn btn-secondary btn-sm" onClick={load}>
+        <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
           <RefreshCcw size={14} /> Actualizar
         </button>
       }
     >
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(15,23,42,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
-            style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
-            }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
       <div
         style={{
           display: 'grid',
@@ -402,7 +389,7 @@ export default function CuentasCorrientesPage() {
             <div className="modal-header">
               <b>Registrar abono</b>
 
-              <button className="btn btn-ghost btn-sm" onClick={closePaymentModal}>
+              <button className="btn btn-ghost btn-sm" onClick={closePaymentModal} disabled={saving}>
                 <X size={16} />
               </button>
             </div>
@@ -475,7 +462,7 @@ export default function CuentasCorrientesPage() {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closePaymentModal}>
+              <button className="btn btn-secondary" onClick={closePaymentModal} disabled={saving}>
                 Cancelar
               </button>
 

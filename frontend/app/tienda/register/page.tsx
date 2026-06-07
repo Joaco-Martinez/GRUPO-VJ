@@ -6,38 +6,130 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Lock, Mail, User, Phone, IdCard } from 'lucide-react';
 import { shopApi } from '@/lib/shop';
+import toast from 'react-hot-toast';
+
+type RegisterForm = {
+  email: string;
+  password: string;
+  nombre: string;
+  apellido: string;
+  dni: string;
+  telefono: string;
+};
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+
+  const apiError = error as {
+    response?: {
+      data?: {
+        message?: string;
+        error?: string;
+      };
+    };
+  };
+
+  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+}
+
+const emptyForm: RegisterForm = {
+  email: '',
+  password: '',
+  nombre: '',
+  apellido: '',
+  dni: '',
+  telefono: '',
+};
 
 export default function TiendaRegisterPage() {
   const router = useRouter();
 
-  const [form, setForm] = useState({
-    email: '',
-    password: '',
-    nombre: '',
-    apellido: '',
-    dni: '',
-    telefono: '',
-  });
-
+  const [form, setForm] = useState<RegisterForm>(emptyForm);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  function setField(name: string, value: string) {
+  function setField(name: keyof RegisterForm, value: string) {
     setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  function validateForm() {
+    if (!form.nombre.trim()) {
+      toast.error('Ingresá tu nombre');
+      return false;
+    }
+
+    if (!form.apellido.trim()) {
+      toast.error('Ingresá tu apellido');
+      return false;
+    }
+
+    if (!form.dni.trim()) {
+      toast.error('Ingresá tu DNI o CUIT');
+      return false;
+    }
+
+    if (form.dni.trim().length < 7) {
+      toast.error('El DNI/CUIT no parece válido');
+      return false;
+    }
+
+    if (!form.telefono.trim()) {
+      toast.error('Ingresá tu teléfono');
+      return false;
+    }
+
+    if (!form.email.trim()) {
+      toast.error('Ingresá tu correo electrónico');
+      return false;
+    }
+
+    if (!form.password.trim()) {
+      toast.error('Ingresá una contraseña');
+      return false;
+    }
+
+    if (form.password.length < 8) {
+      toast.error('La contraseña debe tener al menos 8 caracteres');
+      return false;
+    }
+
+    return true;
   }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+
+    if (!validateForm()) return;
+
     setSaving(true);
     setError('');
 
+    const toastId = toast.loading('Creando cuenta...');
+
     try {
-      await shopApi.register(form);
-      await shopApi.login({ email: form.email, password: form.password });
+      await shopApi.register({
+        email: form.email.trim(),
+        password: form.password,
+        nombre: form.nombre.trim(),
+        apellido: form.apellido.trim(),
+        dni: form.dni.trim(),
+        telefono: form.telefono.trim(),
+      });
+
+      await shopApi.login({
+        email: form.email.trim(),
+        password: form.password,
+      });
+
+      toast.success('Cuenta creada correctamente', { id: toastId });
+
       router.push('/tienda/carrito');
       router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'No se pudo registrar');
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, 'No se pudo registrar');
+
+      setError(message);
+      toast.error(message, { id: toastId });
     } finally {
       setSaving(false);
     }
@@ -230,13 +322,18 @@ export default function TiendaRegisterPage() {
           box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.08);
         }
 
+        .field-input:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+
         .field-help {
-  margin: 7px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-  font-weight: 600;
-}
+          margin: 7px 0 0;
+          color: var(--muted);
+          font-size: 12px;
+          line-height: 1.4;
+          font-weight: 600;
+        }
 
         .error-box {
           background: var(--red-soft);
@@ -410,6 +507,7 @@ export default function TiendaRegisterPage() {
                     className="field-input"
                     placeholder="Juan"
                     value={form.nombre}
+                    disabled={saving}
                     onChange={(e) => setField('nombre', e.target.value)}
                   />
                 </div>
@@ -427,6 +525,7 @@ export default function TiendaRegisterPage() {
                     className="field-input"
                     placeholder="García"
                     value={form.apellido}
+                    disabled={saving}
                     onChange={(e) => setField('apellido', e.target.value)}
                   />
                 </div>
@@ -434,27 +533,28 @@ export default function TiendaRegisterPage() {
             </div>
 
             <div className="field-grid">
-<div className="field-group">
-  <label className="field-label" htmlFor="dni">
-    DNI / CUIT
-  </label>
+              <div className="field-group">
+                <label className="field-label" htmlFor="dni">
+                  DNI / CUIT
+                </label>
 
-  <div className="input-wrap">
-    <IdCard className="input-icon" />
-    <input
-      id="dni"
-      className="field-input"
-      placeholder="Ej: 20123456789"
-      value={form.dni}
-      inputMode="numeric"
-      onChange={(e) => setField('dni', e.target.value.replace(/\D/g, ''))}
-    />
-  </div>
+                <div className="input-wrap">
+                  <IdCard className="input-icon" />
+                  <input
+                    id="dni"
+                    className="field-input"
+                    placeholder="Ej: 20123456789"
+                    value={form.dni}
+                    inputMode="numeric"
+                    disabled={saving}
+                    onChange={(e) => setField('dni', e.target.value.replace(/\D/g, ''))}
+                  />
+                </div>
 
-  <p className="field-help">
-    Ingresá solo números, sin guiones ni espacios.
-  </p>
-</div>
+                <p className="field-help">
+                  Ingresá solo números, sin guiones ni espacios.
+                </p>
+              </div>
 
               <div className="field-group">
                 <label className="field-label" htmlFor="telefono">
@@ -468,6 +568,7 @@ export default function TiendaRegisterPage() {
                     className="field-input"
                     placeholder="11 1234-5678"
                     value={form.telefono}
+                    disabled={saving}
                     onChange={(e) => setField('telefono', e.target.value)}
                   />
                 </div>
@@ -490,6 +591,7 @@ export default function TiendaRegisterPage() {
                   autoComplete="email"
                   placeholder="cliente@empresa.com"
                   value={form.email}
+                  disabled={saving}
                   onChange={(e) => setField('email', e.target.value)}
                 />
               </div>
@@ -509,6 +611,7 @@ export default function TiendaRegisterPage() {
                   autoComplete="new-password"
                   placeholder="Mínimo 8 caracteres"
                   value={form.password}
+                  disabled={saving}
                   onChange={(e) => setField('password', e.target.value)}
                 />
               </div>

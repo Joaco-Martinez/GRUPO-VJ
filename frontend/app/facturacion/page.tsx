@@ -1,11 +1,12 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { clientName } from '@/lib/helpers';
+import toast from 'react-hot-toast';
 import {
   AlertTriangle,
-  CheckCircle2,
   FileText,
   Download,
   RefreshCcw,
@@ -23,12 +24,25 @@ interface Invoice {
   tipo: string;
   total: number;
   createdAt: string;
-  sale?: { client?: { name: string }; total: number; receiptType: string };
+  sale?: {
+    client?: {
+      id?: string;
+      name?: string;
+      nombre?: string;
+      apellido?: string;
+      dni?: string;
+    } | null;
+    total: number;
+    receiptType: string;
+  };
 }
 
-type ToastState = {
-  type: 'success' | 'error';
+type ConfirmState = {
+  title: string;
   message: string;
+  confirmText?: string;
+  danger?: boolean;
+  onConfirm: () => Promise<void> | void;
 } | null;
 
 const fmt = (n: number) =>
@@ -38,107 +52,131 @@ const fmt = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
+function normalizeInvoices(data: unknown): Invoice[] {
+  if (Array.isArray(data)) return data as Invoice[];
+
+  if (
+    data &&
+    typeof data === 'object' &&
+    'content' in data &&
+    Array.isArray((data as { content?: unknown }).content)
+  ) {
+    return (data as { content: Invoice[] }).content;
+  }
+
+  return [];
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return (
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      ?.error ??
+    fallback
+  );
+}
+
+async function fetchInvoices() {
+  const r = await api.get('/factura-pdf/all');
+  return normalizeInvoices(r.data);
+}
+
 export default function FacturacionPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState('');
-  const [toast, setToast] = useState<ToastState>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
-
-    window.setTimeout(() => {
-      setToast(null);
-    }, 3200);
-  };
-
-  const load = () => {
+  const load = async (showSuccess = false) => {
     setLoading(true);
 
-    api
-      .get('/factura-pdf/all')
-      .then((r) => setInvoices(r.data.content ?? r.data ?? []))
-      .catch((e) => {
-        console.error(e);
-        showToast('error', 'Error al cargar facturas');
-      })
-      .finally(() => setLoading(false));
+    try {
+      const data = await fetchInvoices();
+      setInvoices(data);
+
+      if (showSuccess) {
+        toast.success('Facturas actualizadas');
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Error al cargar facturas');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    load();
+    let alive = true;
+
+    fetchInvoices()
+      .then((data) => {
+        if (!alive) return;
+        setInvoices(data);
+      })
+      .catch((e) => {
+        console.error(e);
+
+        if (!alive) return;
+        toast.error('Error al cargar facturas');
+      })
+      .finally(() => {
+        if (!alive) return;
+        setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const handleRegenerar = async (saleId: string) => {
-    setRegenerating(saleId);
+  const handleDownload = (saleId: string) => {
+    toast.success('Abriendo PDF');
+    window.open(`${API_URL}/factura-pdf/${saleId}/descargar`, '_blank');
+  };
+
+  const handleRegenerar = (saleId: string) => {
+    setConfirmModal({
+      title: 'Regenerar PDF',
+      message:
+        '¿Querés regenerar el PDF de esta factura? Se volverá a crear el comprobante con los datos actuales de la venta.',
+      confirmText: 'Regenerar',
+      danger: false,
+      onConfirm: async () => {
+        setRegenerating(saleId);
+
+        const toastId = toast.loading('Regenerando PDF...');
+
+        try {
+          await api.post(`/factura-pdf/${saleId}/regenerar`);
+          toast.success('PDF regenerado correctamente', { id: toastId });
+          await load();
+        } catch (e) {
+          console.error(e);
+          toast.error(getErrorMessage(e, 'Error al regenerar el PDF'), { id: toastId });
+        } finally {
+          setRegenerating('');
+        }
+      },
+    });
+  };
+
+  const confirmAction = async () => {
+    if (!confirmModal) return;
+
+    setConfirmLoading(true);
 
     try {
-      await api.post(`/factura-pdf/${saleId}/regenerar`);
-      showToast('success', 'PDF regenerado correctamente');
-      load();
-    } catch (e) {
-      console.error(e);
-      showToast('error', 'Error al regenerar el PDF');
+      await confirmModal.onConfirm();
+      setConfirmModal(null);
     } finally {
-      setRegenerating('');
+      setConfirmLoading(false);
     }
   };
 
   return (
     <AppLayout title="AFIP / Facturación" subtitle="Facturas electrónicas y comprobantes">
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(15,23,42,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
-            style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
-            }}
-          >
-            <X size={15} />
-          </button>
-        </div>
-      )}
-
       <div className="card">
         <div
           style={{
@@ -199,7 +237,7 @@ export default function FacturacionPage() {
                     </td>
 
                     <td style={{ fontSize: 13, fontWeight: 600 }}>
-                      {clientName(inv.sale?.client as never)}
+                      {inv.sale?.client ? clientName(inv.sale.client as never) : '—'}
                     </td>
 
                     <td
@@ -236,9 +274,7 @@ export default function FacturacionPage() {
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button
                           className="btn btn-secondary btn-sm"
-                          onClick={() =>
-                            window.open(`${API_URL}/factura-pdf/${inv.saleId}/descargar`, '_blank')
-                          }
+                          onClick={() => handleDownload(inv.saleId)}
                         >
                           <Download size={12} /> PDF
                         </button>
@@ -273,6 +309,84 @@ export default function FacturacionPage() {
           )}
         </div>
       </div>
+
+      {confirmModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (confirmLoading) return;
+            if (e.target === e.currentTarget) setConfirmModal(null);
+          }}
+        >
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <b>{confirmModal.title}</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !confirmLoading && setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: confirmModal.danger
+                      ? 'rgba(239,68,68,0.12)'
+                      : 'var(--surface2)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle
+                    size={18}
+                    style={{
+                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                    }}
+                  />
+                </span>
+
+                <p
+                  style={{
+                    color: 'var(--text2)',
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    margin: 0,
+                  }}
+                >
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setConfirmModal(null)}
+                disabled={confirmLoading}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                onClick={confirmAction}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? <span className="spinner" /> : confirmModal.confirmText ?? 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }

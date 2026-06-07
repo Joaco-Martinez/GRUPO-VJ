@@ -480,6 +480,10 @@ components:
         total:
           type: number
           example: 18000
+        grossProfit:
+          type: number
+          description: Utilidad bruta total de la venta, con descuento proporcional aplicado a los items.
+          example: 4200
         discountType:
           $ref: "#/components/schemas/DiscountType"
         discountValue:
@@ -548,6 +552,12 @@ components:
           type: number
         subtotal:
           type: number
+        purchasePriceSnapshot:
+          type: number
+          description: Costo histórico unitario/KG al momento de la venta. En compuestos, costo de componentes por una unidad del padre.
+        profit:
+          type: number
+          description: Utilidad bruta del item con descuento proporcional aplicado.
         productNameSnapshot:
           type: string
           nullable: true

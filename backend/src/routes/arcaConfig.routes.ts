@@ -61,7 +61,9 @@ router.delete("/points-of-sale/:id", arcaConfigController.deletePointOfSale);
 
 router.get("/remitos-cai", arcaConfigController.listRemitoCais);
 router.post("/remitos-cai", arcaConfigController.upsertRemitoCai);
+router.put("/remitos-cai/:id", arcaConfigController.upsertRemitoCai);
 router.delete("/remitos-cai/:id", arcaConfigController.deleteRemitoCai);
+
 
 router.get("/auditoria", arcaConfigController.listAuditLogs);
 router.get("/audit", arcaConfigController.listAuditLogs);

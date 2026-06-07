@@ -83,46 +83,42 @@ export const productController = {
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const newProduct = await productService.create({
-          name: req.body.name,
-          description: req.body.description,
+  name: req.body.name,
+  description: req.body.description,
 
-          type: req.body.type,
+  type: req.body.type,
+  isService: normalizeBoolean(req.body.isService),
 
-          // Nueva categoría dinámica
-          categoryId: req.body.categoryId,
+  categoryId: req.body.categoryId,
+  category: req.body.category,
 
-          // Compatibilidad vieja, por si el frontend todavía manda category
-          category: req.body.category,
+  price: req.body.price,
+  wholesalePrice: req.body.wholesalePrice,
+  clientPrice: req.body.clientPrice,
+  purchasePrice: req.body.purchasePrice,
 
-          price: req.body.price,
-          wholesalePrice: req.body.wholesalePrice,
-          clientPrice: req.body.clientPrice,
+  saleUnit: req.body.saleUnit,
 
-          saleUnit: req.body.saleUnit,
+  pricePerKg: req.body.pricePerKg,
+  clientPricePerKg: req.body.clientPricePerKg,
+  wholesalePricePerKg: req.body.wholesalePricePerKg,
 
-          pricePerKg: req.body.pricePerKg,
-          clientPricePerKg: req.body.clientPricePerKg,
-          wholesalePricePerKg: req.body.wholesalePricePerKg,
+  sku: req.body.sku,
 
-          sku: req.body.sku,
+  stockLocal: req.body.stockLocal,
+  stockDeposito: req.body.stockDeposito,
 
-          stockLocal: req.body.stockLocal,
-          stockDeposito: req.body.stockDeposito,
+  stockLocalKg: req.body.stockLocalKg,
+  stockDepositoKg: req.body.stockDepositoKg,
 
-          stockLocalKg: req.body.stockLocalKg,
-          stockDepositoKg: req.body.stockDepositoKg,
+  minStock: req.body.minStock,
+  minStockKg: req.body.minStockKg,
 
-          minStock: req.body.minStock,
-          minStockKg: req.body.minStockKg,
+  file: req.file,
 
-          file: req.file,
-
-          // Nuevo formato
-          components: parseJsonArray(req.body.components),
-
-          // Compatibilidad vieja
-          boxContents: parseJsonArray(req.body.boxContents),
-        });
+  components: parseJsonArray(req.body.components),
+  boxContents: parseJsonArray(req.body.boxContents),
+});
 
         if ((newProduct as any)?.statusCode) {
           return res
@@ -163,6 +159,10 @@ export const productController = {
         cleanBody.isActive = normalizeBoolean(body.isActive);
       }
 
+      if (body.isService !== undefined) {
+        cleanBody.isService = normalizeBoolean(body.isService);
+      }
+
       if (body.price !== undefined) {
         cleanBody.price = toNumberOrUndefined(body.price);
       }
@@ -173,6 +173,10 @@ export const productController = {
 
       if (body.wholesalePrice !== undefined) {
         cleanBody.wholesalePrice = toNumberOrUndefined(body.wholesalePrice);
+      }
+
+      if (body.purchasePrice !== undefined) {
+        cleanBody.purchasePrice = toNumberOrUndefined(body.purchasePrice);
       }
 
       if (body.pricePerKg !== undefined) {

@@ -3,7 +3,17 @@ export type Role = 'ADMIN' | 'EMPLEADO' | 'CLIENTE';
 export type ProductType = 'SIMPLE' | 'COMPUESTO';
 export type SaleUnit = 'UNIT' | 'KG';
 export type ReceiptType = 'TICKET' | 'FACTURA';
+export type BusinessLocationType = 'BRANCH' | 'WAREHOUSE' | 'STORE';
 
+export type DeliveryMethod = 'PICKUP' | 'LOCAL_DELIVERY' | 'TRANSPORT';
+
+export type DeliveryStatus =
+  | 'NONE'
+  | 'PENDING'
+  | 'PREPARING'
+  | 'IN_TRANSIT'
+  | 'DELIVERED'
+  | 'CANCELLED';
 export type PaymentMethod =
   | 'EFECTIVO'
   | 'TARJETA'
@@ -83,6 +93,10 @@ export interface Product {
   clientPrice: number;
   wholesalePrice: number;
 
+  // Costo interno. No es precio de venta.
+  // En productos por KG se usa como costo por KG.
+  purchasePrice?: number | null;
+
   pricePerKg?: number | null;
   clientPricePerKg?: number | null;
   wholesalePricePerKg?: number | null;
@@ -99,11 +113,33 @@ export interface Product {
 
   imageUrl?: string | null;
   imageId?: string | null;
-
+isService?: boolean;
   isActive?: boolean;
 
   components?: ProductComponent[];
   usedIn?: ProductComponent[];
+
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BusinessLocation {
+  id: string;
+  name: string;
+  type: BusinessLocationType;
+
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressCity?: string | null;
+  addressProvince?: string | null;
+  addressPostalCode?: string | null;
+  addressNotes?: string | null;
+
+  latitude?: number | null;
+  longitude?: number | null;
+
+  isDefault: boolean;
+  isActive: boolean;
 
   createdAt?: string;
   updatedAt?: string;
@@ -116,6 +152,18 @@ export interface Client {
   dni: string;
   telefono?: string | null;
   gmail?: string | null;
+
+
+  addressStreet?: string | null;
+addressNumber?: string | null;
+addressFloor?: string | null;
+addressApartment?: string | null;
+addressCity?: string | null;
+addressProvince?: string | null;
+addressPostalCode?: string | null;
+addressNotes?: string | null;
+latitude?: number | null;
+longitude?: number | null;
 
   category: ClientCategory;
 
@@ -144,6 +192,11 @@ export interface SaleItem {
   quantityKg?: number | null;
   price: number;
   subtotal?: number;
+
+  // Snapshots económicos guardados al momento de la venta.
+  purchasePriceSnapshot?: number | null;
+  profit?: number | null;
+
   productNameSnapshot?: string | null;
   productSkuSnapshot?: string | null;
   boxContents?: {
@@ -168,6 +221,24 @@ export interface Sale {
   id: string;
   subtotal: number;
   total: number;
+  businessLocationId?: string | null;
+businessLocation?: BusinessLocation | null;
+
+deliveryMethod?: DeliveryMethod;
+deliveryStatus?: DeliveryStatus;
+deliveryAddressSnapshot?: string | null;
+deliveryDistanceKm?: number | null;
+deliveryPricePerKm?: number | null;
+deliveryCost?: number | null;
+
+transportName?: string | null;
+transportCuit?: string | null;
+packagesCount?: number | null;
+declaredValue?: number | null;
+
+  // Utilidad total calculada en backend.
+  grossProfit?: number | null;
+
   receiptType: ReceiptType;
   paymentMethod: PaymentMethod;
   status: SaleStatus;
@@ -248,5 +319,7 @@ export interface CartItem {
   product: Product;
   quantity: number;
   quantityKg?: number;
+  manualPrice?: number;
+isDeliveryItem?: boolean;
   priceType: 'price' | 'clientPrice' | 'wholesalePrice';
 }

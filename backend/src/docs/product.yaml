@@ -397,6 +397,10 @@ components:
         clientPrice:
           type: number
           example: 12000
+        purchasePrice:
+          type: number
+          description: Costo de compra. Para UNIT es costo por unidad; para KG es costo por kilogramo.
+          example: 7500
 
         pricePerKg:
           type: number
@@ -461,6 +465,8 @@ components:
           type: number
         clientPrice:
           type: number
+        purchasePrice:
+          type: number
         pricePerKg:
           type: number
         wholesalePricePerKg:
@@ -511,6 +517,9 @@ components:
           type: number
         clientPrice:
           type: number
+        purchasePrice:
+          type: number
+          description: Costo de compra actual del producto
 
         pricePerKg:
           type: number

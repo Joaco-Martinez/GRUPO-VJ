@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
-import { Printer, Calendar } from 'lucide-react';
+import { Printer } from 'lucide-react';
 
 export default function CierreCajaPage() {
   const [mode, setMode] = useState<'day' | 'range'>('day');

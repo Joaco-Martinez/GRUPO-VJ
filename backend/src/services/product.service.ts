@@ -33,6 +33,10 @@ function isValidPositiveNumber(v: any) {
   return Number.isFinite(n) && n > 0;
 }
 
+function isTrue(value: any) {
+  return value === true || value === "true";
+}
+
 function safeDeleteLocalFile(path?: string) {
   if (path && fs.existsSync(path)) {
     fs.unlinkSync(path);
@@ -54,6 +58,8 @@ type CreateProductInput = {
   price?: number | string;
   wholesalePrice?: number | string;
   clientPrice?: number | string;
+  purchasePrice?: number | string;
+  isService?: boolean | string;
 
   // Nueva categoría dinámica
   categoryId?: string;
@@ -195,6 +201,10 @@ async function validateComponents(
 }
 
 function validatePricesBySaleUnit(data: CreateProductInput | any) {
+  if (isTrue(data.isService)) {
+    return;
+  }
+
   const saleUnit: SaleUnit = (data.saleUnit as SaleUnit) ?? SaleUnit.UNIT;
   const type: ProductType = (data.type as ProductType) ?? ProductType.SIMPLE;
 
@@ -379,8 +389,10 @@ export const productService = {
         categoryId: data.categoryId || null,
         saleUnit,
         sku,
+        isService: isTrue(data.isService),
         minStock: toNumberOrNull(data.minStock),
         minStockKg: toNumberOrNull(data.minStockKg),
+        purchasePrice: toNumberOrZero(data.purchasePrice),
         imageUrl,
         imageId,
       };
@@ -545,6 +557,7 @@ export const productService = {
     setIfDefined("imageUrl", data.imageUrl);
     setIfDefined("imageId", data.imageId);
     setIfDefined("isActive", data.isActive);
+    setIfDefined("isService", data.isService !== undefined ? isTrue(data.isService) : undefined);
     setIfDefined("saleUnit", data.saleUnit);
 
     setIfDefined("price", data.price !== undefined ? Number(data.price) : undefined);
@@ -557,6 +570,11 @@ export const productService = {
     setIfDefined(
       "wholesalePrice",
       data.wholesalePrice !== undefined ? Number(data.wholesalePrice) : undefined
+    );
+
+    setIfDefined(
+      "purchasePrice",
+      data.purchasePrice !== undefined ? Number(data.purchasePrice) : undefined
     );
 
     setIfDefined(

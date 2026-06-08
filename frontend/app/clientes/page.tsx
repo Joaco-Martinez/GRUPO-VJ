@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { AccountMovement, Client, ClientCategory, PaymentMethod } from '@/types';
@@ -18,6 +19,10 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+
+type ClientFormStep = 'datos' | 'direccion' | 'cuenta';
+
+const MOBILE_CLIENTS_PAGE_SIZE = 6;
 
 type ClientWithAddress = Client & {
   addressStreet?: string | null;
@@ -145,6 +150,9 @@ export default function ClientesPage() {
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [mobileClientSheet, setMobileClientSheet] = useState<ClientWithAddress | null>(null);
+  const [mobileCurrentPage, setMobileCurrentPage] = useState(1);
+  const [clientFormStep, setClientFormStep] = useState<ClientFormStep>('datos');
 
   const isMobile = useIsMobile();
 
@@ -212,9 +220,32 @@ export default function ClientesPage() {
     [clients, search]
   );
 
+  const mobileTotalPages = Math.max(1, Math.ceil(filtered.length / MOBILE_CLIENTS_PAGE_SIZE));
+
+  const mobilePaginatedClients = useMemo(() => {
+    const start = (mobileCurrentPage - 1) * MOBILE_CLIENTS_PAGE_SIZE;
+    return filtered.slice(start, start + MOBILE_CLIENTS_PAGE_SIZE);
+  }, [filtered, mobileCurrentPage]);
+
+  const mobilePageStart = filtered.length
+    ? (mobileCurrentPage - 1) * MOBILE_CLIENTS_PAGE_SIZE + 1
+    : 0;
+  const mobilePageEnd = Math.min(mobileCurrentPage * MOBILE_CLIENTS_PAGE_SIZE, filtered.length);
+
+  useEffect(() => {
+    setMobileCurrentPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    if (mobileCurrentPage > mobileTotalPages) {
+      setMobileCurrentPage(mobileTotalPages);
+    }
+  }, [mobileCurrentPage, mobileTotalPages]);
+
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setClientFormStep('datos');
     setModal('create');
   };
 
@@ -241,6 +272,7 @@ export default function ClientesPage() {
       latitude: c.latitude === null || c.latitude === undefined ? '' : String(c.latitude),
       longitude: c.longitude === null || c.longitude === undefined ? '' : String(c.longitude),
     });
+    setClientFormStep('datos');
     setModal('edit');
   };
 
@@ -531,29 +563,29 @@ export default function ClientesPage() {
             </div>
           ) : isMobile ? (
             <div
+              className="clients-mobile-list"
               style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                padding: 12,
+                display: 'grid',
+                gap: 8,
+                padding: 10,
               }}
             >
-              {filtered.map((c) => {
+              {mobilePaginatedClients.map((c) => {
                 const address = clientAddress(c);
                 const balance = num(c.currentBalance);
                 const accountDisabled = c.isAccountEnabled === false;
 
                 return (
-                  <div
+                  <article
                     key={c.id}
+                    className="clients-mobile-card"
                     style={{
                       background: 'var(--surface)',
                       border: '1px solid var(--border)',
-                      borderRadius: 12,
-                      padding: 14,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 12,
+                      borderRadius: 14,
+                      padding: 10,
+                      display: 'grid',
+                      gap: 8,
                       minWidth: 0,
                     }}
                   >
@@ -561,17 +593,20 @@ export default function ClientesPage() {
                       style={{
                         display: 'flex',
                         justifyContent: 'space-between',
-                        gap: 10,
+                        gap: 8,
                         alignItems: 'flex-start',
+                        minWidth: 0,
                       }}
                     >
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div
                           style={{
                             fontWeight: 900,
-                            fontSize: 14,
-                            lineHeight: 1.25,
-                            overflowWrap: 'anywhere',
+                            fontSize: 13,
+                            lineHeight: 1.2,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                           }}
                         >
                           {clientName(c)}
@@ -580,12 +615,14 @@ export default function ClientesPage() {
                         <div
                           style={{
                             color: 'var(--text3)',
-                            fontSize: 11,
-                            marginTop: 3,
-                            overflowWrap: 'anywhere',
+                            fontSize: 10.5,
+                            marginTop: 2,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          {c.gmail ?? 'Sin email'}
+                          {c.dni || 'Sin DNI'} · {c.telefono || 'Sin teléfono'}
                         </div>
                       </div>
 
@@ -593,7 +630,7 @@ export default function ClientesPage() {
                         className={`badge ${
                           c.category === 'Mayorista' ? 'badge-blue' : 'badge-green'
                         }`}
-                        style={{ flexShrink: 0 }}
+                        style={{ flexShrink: 0, fontSize: 9, padding: '3px 6px' }}
                       >
                         {c.category}
                       </span>
@@ -602,138 +639,178 @@ export default function ClientesPage() {
                     <div
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                        gap: 8,
+                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                        gap: 6,
                       }}
                     >
-                      <div>
-                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>DNI/CUIT</div>
-                        <div style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{c.dni}</div>
-                      </div>
-
-                      <div>
-                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>Teléfono</div>
-                        <div style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
-                          {c.telefono ?? '—'}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>Saldo</div>
-                        <span
-                          className={`badge ${balance > 0 ? 'badge-yellow' : 'badge-green'}`}
-                          style={{ marginTop: 3 }}
+                      <div
+                        style={{
+                          background: 'var(--surface2)',
+                          borderRadius: 10,
+                          padding: '7px 8px',
+                          minWidth: 0,
+                        }}
+                      >
+                        <small
+                          style={{
+                            display: 'block',
+                            color: 'var(--text3)',
+                            fontSize: 9,
+                            fontWeight: 800,
+                            marginBottom: 3,
+                          }}
+                        >
+                          Saldo
+                        </small>
+                        <strong
+                          style={{
+                            display: 'block',
+                            color: balance > 0 ? 'var(--warn)' : 'var(--accent)',
+                            fontFamily: 'var(--mono)',
+                            fontSize: 10.5,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
                         >
                           {fmtMoney(balance)}
-                        </span>
+                        </strong>
                       </div>
 
-                      <div>
-                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>Límite</div>
-                        <div style={{ fontSize: 12 }}>
+                      <div
+                        style={{
+                          background: 'var(--surface2)',
+                          borderRadius: 10,
+                          padding: '7px 8px',
+                          minWidth: 0,
+                        }}
+                      >
+                        <small
+                          style={{
+                            display: 'block',
+                            color: 'var(--text3)',
+                            fontSize: 9,
+                            fontWeight: 800,
+                            marginBottom: 3,
+                          }}
+                        >
+                          Límite
+                        </small>
+                        <strong
+                          style={{
+                            display: 'block',
+                            fontFamily: 'var(--mono)',
+                            fontSize: 10.5,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           {c.creditLimit ? fmtMoney(c.creditLimit) : 'Sin límite'}
-                        </div>
+                        </strong>
+                      </div>
+
+                      <div
+                        style={{
+                          background: 'var(--surface2)',
+                          borderRadius: 10,
+                          padding: '7px 8px',
+                          minWidth: 0,
+                        }}
+                      >
+                        <small
+                          style={{
+                            display: 'block',
+                            color: 'var(--text3)',
+                            fontSize: 9,
+                            fontWeight: 800,
+                            marginBottom: 3,
+                          }}
+                        >
+                          Cuenta
+                        </small>
+                        <strong
+                          style={{
+                            display: 'block',
+                            color: accountDisabled ? 'var(--danger)' : 'var(--text)',
+                            fontSize: 10.5,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {accountDisabled ? 'No' : 'Sí'}
+                        </strong>
                       </div>
                     </div>
 
                     <div
                       style={{
                         display: 'flex',
-                        gap: 7,
-                        alignItems: 'flex-start',
-                        borderTop: '1px solid var(--border)',
-                        paddingTop: 12,
+                        alignItems: 'center',
+                        gap: 6,
+                        color: address ? 'var(--text2)' : 'var(--text3)',
+                        fontSize: 11,
+                        lineHeight: 1.25,
+                        minWidth: 0,
                       }}
                     >
                       <MapPin
-                        size={13}
+                        size={12}
                         style={{
                           color: address ? 'var(--accent)' : 'var(--text3)',
-                          marginTop: 2,
                           flexShrink: 0,
                         }}
                       />
-
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontSize: 12,
-                            color: address ? 'var(--text2)' : 'var(--text3)',
-                            lineHeight: 1.35,
-                            overflowWrap: 'anywhere',
-                          }}
-                        >
-                          {address || 'Sin dirección'}
-                        </div>
-
-                        {c.addressNotes && (
-                          <div
-                            style={{
-                              color: 'var(--text3)',
-                              fontSize: 11,
-                              marginTop: 2,
-                              overflowWrap: 'anywhere',
-                            }}
-                          >
-                            {c.addressNotes}
-                          </div>
-                        )}
-                      </div>
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          minWidth: 0,
+                        }}
+                      >
+                        {address || 'Sin dirección'}
+                      </span>
                     </div>
 
                     <div
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: 10,
-                        alignItems: 'center',
-                        borderTop: '1px solid var(--border)',
-                        paddingTop: 12,
+                        display: 'grid',
+                        gridTemplateColumns: balance > 0 ? '1fr 1fr 1fr' : '1fr 1fr',
+                        gap: 7,
                       }}
                     >
-                      <div
-                        style={{
-                          color: accountDisabled ? 'var(--danger)' : 'var(--text3)',
-                          fontSize: 11,
-                        }}
-                      >
-                        Cuenta corriente {accountDisabled ? 'deshabilitada' : 'habilitada'}
-                      </div>
-
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: 6,
-                          flexWrap: 'wrap',
-                          justifyContent: 'flex-end',
-                        }}
-                      >
+                      {balance > 0 && (
                         <button
                           className="btn btn-secondary btn-sm"
                           onClick={() => openPayment(c)}
-                          disabled={balance <= 0}
+                          style={{ width: '100%', justifyContent: 'center', minHeight: 31 }}
                         >
-                          <Wallet size={13} /> Abono
+                          <Wallet size={12} /> Abono
                         </button>
+                      )}
 
-                        <button className="btn btn-ghost btn-sm" onClick={() => openHistory(c)}>
-                          <CreditCard size={13} />
-                        </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setMobileClientSheet(c)}
+                        style={{ width: '100%', justifyContent: 'center', minHeight: 31 }}
+                      >
+                        Ver más
+                      </button>
 
-                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(c)}>
-                          <Edit2 size={13} />
-                        </button>
-
-                        <button className="btn btn-danger btn-sm" onClick={() => deleteClient(c)}>
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => openEdit(c)}
+                        style={{ width: '100%', justifyContent: 'center', minHeight: 31 }}
+                      >
+                        <Edit2 size={12} /> Editar
+                      </button>
                     </div>
-                  </div>
+                  </article>
                 );
               })}
-            </div>
-          ) : (
+            </div>          ) : (
             <table>
               <thead>
                 <tr>
@@ -863,17 +940,270 @@ export default function ClientesPage() {
             </div>
           )}
         </div>
+
+        {isMobile && !loading && filtered.length > 0 && (
+          <div
+            style={{
+              borderTop: '1px solid var(--border)',
+              padding: 10,
+              display: 'grid',
+              gap: 8,
+              background: 'var(--surface)',
+            }}
+          >
+            <div
+              style={{
+                color: 'var(--text3)',
+                fontSize: 11,
+                fontWeight: 800,
+                textAlign: 'center',
+              }}
+            >
+              Mostrando {mobilePageStart} - {mobilePageEnd} de {filtered.length} clientes
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={mobileCurrentPage === 1}
+                onClick={() => setMobileCurrentPage((prev) => Math.max(1, prev - 1))}
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                Anterior
+              </button>
+
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={mobileCurrentPage === mobileTotalPages}
+                onClick={() => setMobileCurrentPage((prev) => Math.min(mobileTotalPages, prev + 1))}
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                Siguiente
+              </button>
+            </div>
+
+            <div
+              style={{
+                color: 'var(--text2)',
+                fontSize: 11,
+                fontWeight: 900,
+                textAlign: 'center',
+              }}
+            >
+              Página {mobileCurrentPage} de {mobileTotalPages}
+            </div>
+          </div>
+        )}
       </div>
+
+      {mobileClientSheet && isMobile && typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="clients-mobile-sheet-backdrop"
+            onClick={() => setMobileClientSheet(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 10000,
+              display: 'flex',
+              alignItems: 'flex-end',
+              justifyContent: 'center',
+              background: 'rgba(0,0,0,0.48)',
+            }}
+          >
+            <div
+              className="clients-mobile-sheet"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxHeight: '82dvh',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                borderRadius: '22px 22px 0 0',
+                border: '1px solid var(--border)',
+                background: 'var(--surface)',
+                boxShadow: '0 -18px 60px rgba(0,0,0,0.35)',
+              }}
+            >
+              <div
+                style={{
+                  width: 44,
+                  height: 4,
+                  borderRadius: 999,
+                  background: 'var(--border)',
+                  margin: '10px auto 8px',
+                  flexShrink: 0,
+                }}
+              />
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  padding: '0 14px 12px',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <b
+                    style={{
+                      display: 'block',
+                      fontSize: 15,
+                      lineHeight: 1.2,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {clientName(mobileClientSheet)}
+                  </b>
+                  <small
+                    style={{
+                      display: 'block',
+                      color: 'var(--text3)',
+                      marginTop: 3,
+                      fontSize: 11,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {mobileClientSheet.dni || 'Sin DNI'} · {mobileClientSheet.telefono || 'Sin teléfono'}
+                  </small>
+                </div>
+
+                <button className="btn btn-ghost btn-sm" onClick={() => setMobileClientSheet(null)}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div
+                style={{
+                  overflowY: 'auto',
+                  padding: 14,
+                  display: 'grid',
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
+                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Categoría</small>
+                    <b style={{ display: 'block', marginTop: 5, fontSize: 12 }}>{mobileClientSheet.category}</b>
+                  </div>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
+                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Saldo</small>
+                    <b style={{ display: 'block', marginTop: 5, fontSize: 12, color: num(mobileClientSheet.currentBalance) > 0 ? 'var(--warn)' : 'var(--accent)' }}>
+                      {fmtMoney(num(mobileClientSheet.currentBalance))}
+                    </b>
+                  </div>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
+                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Límite</small>
+                    <b style={{ display: 'block', marginTop: 5, fontSize: 12 }}>{mobileClientSheet.creditLimit ? fmtMoney(mobileClientSheet.creditLimit) : 'Sin límite'}</b>
+                  </div>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
+                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Cuenta corriente</small>
+                    <b style={{ display: 'block', marginTop: 5, fontSize: 12, color: mobileClientSheet.isAccountEnabled === false ? 'var(--danger)' : 'var(--text)' }}>
+                      {mobileClientSheet.isAccountEnabled === false ? 'Deshabilitada' : 'Habilitada'}
+                    </b>
+                  </div>
+                </div>
+
+                <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
+                  <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Contacto</small>
+                  <p style={{ margin: '6px 0 0', color: 'var(--text2)', fontSize: 12, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+                    Teléfono: {mobileClientSheet.telefono || '—'}<br />
+                    Email: {mobileClientSheet.gmail || '—'}
+                  </p>
+                </div>
+
+                <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
+                  <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Dirección</small>
+                  <p style={{ margin: '6px 0 0', color: 'var(--text2)', fontSize: 12, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+                    {clientAddress(mobileClientSheet) || 'Sin dirección'}
+                    {mobileClientSheet.addressNotes ? ` — ${mobileClientSheet.addressNotes}` : ''}
+                  </p>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: num(mobileClientSheet.currentBalance) > 0 ? '1fr 1fr' : '1fr',
+                  gap: 8,
+                  padding: '12px 14px calc(12px + env(safe-area-inset-bottom))',
+                  borderTop: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                }}
+              >
+                {num(mobileClientSheet.currentBalance) > 0 && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      const client = mobileClientSheet;
+                      setMobileClientSheet(null);
+                      openPayment(client);
+                    }}
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    <Wallet size={15} /> Abono
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const client = mobileClientSheet;
+                    setMobileClientSheet(null);
+                    openEdit(client);
+                  }}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  <Edit2 size={15} /> Editar
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    const client = mobileClientSheet;
+                    setMobileClientSheet(null);
+                    openHistory(client);
+                  }}
+                  style={{ width: '100%', justifyContent: 'center', gridColumn: '1 / -1' }}
+                >
+                  <CreditCard size={15} /> Cuenta corriente
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    const client = mobileClientSheet;
+                    setMobileClientSheet(null);
+                    deleteClient(client);
+                  }}
+                  style={{ width: '100%', justifyContent: 'center', gridColumn: '1 / -1' }}
+                >
+                  <Trash2 size={15} /> Eliminar
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {(modal === 'create' || modal === 'edit') && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
           <div
             className="modal"
             style={{
-              maxWidth: isMobile ? 'calc(100vw - 24px)' : 860,
-              width: isMobile ? 'calc(100vw - 24px)' : undefined,
-              maxHeight: isMobile ? 'calc(100vh - 24px)' : undefined,
-              overflowY: isMobile ? 'auto' : undefined,
+              maxWidth: isMobile ? '100vw' : 860,
+              width: isMobile ? '100vw' : undefined,
+              height: isMobile ? 'min(94dvh, calc(100dvh - 8px))' : undefined,
+              maxHeight: isMobile ? 'min(94dvh, calc(100dvh - 8px))' : undefined,
+              margin: isMobile ? 'auto 0 0' : undefined,
+              borderRadius: isMobile ? '22px 22px 0 0' : undefined,
+              overflow: isMobile ? 'hidden' : undefined,
+              display: isMobile ? 'flex' : undefined,
+              flexDirection: isMobile ? 'column' : undefined,
             }}
           >
             <div className="modal-header">
@@ -884,7 +1214,64 @@ export default function ClientesPage() {
               </button>
             </div>
 
-            <div className="modal-body">
+            <div
+              className="modal-body"
+              style={{
+                flex: isMobile ? '1 1 auto' : undefined,
+                minHeight: isMobile ? 0 : undefined,
+                overflowY: isMobile ? 'auto' : undefined,
+                padding: isMobile ? 12 : undefined,
+              }}
+            >
+              {isMobile && (
+                <div
+                  style={{
+                    position: 'sticky',
+                    top: -12,
+                    zIndex: 4,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    gap: 6,
+                    padding: '0 0 10px',
+                    marginBottom: 10,
+                    background: 'var(--surface)',
+                  }}
+                >
+                  {[
+                    ['datos', 'Datos'],
+                    ['cuenta', 'Cuenta'],
+                    ['direccion', 'Dirección'],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setClientFormStep(key as ClientFormStep)}
+                      style={{
+                        border: `1px solid ${
+                          clientFormStep === key ? 'var(--accent)' : 'var(--border)'
+                        }`,
+                        background:
+                          clientFormStep === key
+                            ? 'color-mix(in srgb, var(--accent) 12%, var(--surface))'
+                            : 'var(--surface2)',
+                        color: clientFormStep === key ? 'var(--accent)' : 'var(--text2)',
+                        borderRadius: 999,
+                        minHeight: 32,
+                        fontSize: 11,
+                        fontWeight: 900,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: isMobile && clientFormStep !== 'datos' ? 'none' : undefined,
+                }}
+              >
               <div
                 style={{
                   marginBottom: 16,
@@ -960,7 +1347,15 @@ export default function ClientesPage() {
                 </div>
               </div>
 
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
+              
+              </div>
+
+              <div
+                style={{
+                  display: isMobile && clientFormStep !== 'cuenta' ? 'none' : undefined,
+                }}
+              >
+<div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
                 <div className="form-group">
                   <label className="form-label">Límite de crédito</label>
                   <input
@@ -982,7 +1377,15 @@ export default function ClientesPage() {
                 </div>
               </div>
 
+              
+              </div>
+
               <div
+                style={{
+                  display: isMobile && clientFormStep !== 'direccion' ? 'none' : undefined,
+                }}
+              >
+<div
                 style={{
                   margin: '20px 0 16px',
                   padding: 14,
@@ -1123,12 +1526,19 @@ export default function ClientesPage() {
                   />
                 </div>
               </div>
+
+              </div>
             </div>
 
             <div
               className="modal-footer"
               style={{
                 flexDirection: isMobile ? 'column-reverse' : undefined,
+                flexShrink: isMobile ? 0 : undefined,
+                padding: isMobile ? '10px 12px calc(10px + env(safe-area-inset-bottom))' : undefined,
+                borderTop: isMobile ? '1px solid var(--border)' : undefined,
+                background: isMobile ? 'var(--surface)' : undefined,
+                boxShadow: isMobile ? '0 -12px 28px rgba(0,0,0,0.22)' : undefined,
               }}
             >
               <button

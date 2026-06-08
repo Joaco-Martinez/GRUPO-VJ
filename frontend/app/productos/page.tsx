@@ -5,6 +5,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { Product, ProductCategory, ProductComponent } from '@/types';
@@ -32,6 +33,7 @@ import {
 } from 'lucide-react';
 
 type Modal = 'product-create' | 'product-edit' | 'category' | null;
+type ProductFormStep = 'basico' | 'precios' | 'componentes';
 type ComponentForm = { componentId: string; quantity: string; quantityKg: string };
 
 type ToastState = {
@@ -69,6 +71,8 @@ const emptyProductForm = {
   minStock: '0',
   minStockKg: '0',
 };
+
+const PRODUCTS_PAGE_SIZE = 12;
 
 function getProductPublicPrice(product: Product) {
   return product.saleUnit === 'KG'
@@ -156,6 +160,7 @@ export default function ProductosPage() {
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [form, setForm] = useState<Record<string, string>>(emptyProductForm);
+  const [productFormStep, setProductFormStep] = useState<ProductFormStep>('basico');
   const [components, setComponents] = useState<ComponentForm[]>([]);
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
 
@@ -165,6 +170,8 @@ export default function ProductosPage() {
   const [toast, setToast] = useState<ToastState>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [mobileProductSheet, setMobileProductSheet] = useState<Product | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message });
@@ -196,23 +203,52 @@ export default function ProductosPage() {
     load();
   }, []);
 
+  useEffect(() => {
+    if (productFormStep === 'componentes' && (form.isService === 'true' || form.type !== 'COMPUESTO')) {
+      setProductFormStep('basico');
+    }
+  }, [form.isService, form.type, productFormStep]);
+
   const simpleProducts = useMemo(
     () => products.filter((p) => p.type === 'SIMPLE' && p.isActive !== false && (p as any).isService !== true),
     [products]
   );
 
-  const filtered = products.filter((p) => {
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matchesText =
-      !q ||
-      p.name.toLowerCase().includes(q) ||
-      String(p.sku ?? '').toLowerCase().includes(q) ||
-      String((p as any).description ?? '').toLowerCase().includes(q);
 
-    const matchesCat = !categoryId || p.categoryId === categoryId;
+    return products.filter((p) => {
+      const matchesText =
+        !q ||
+        p.name.toLowerCase().includes(q) ||
+        String(p.sku ?? '').toLowerCase().includes(q) ||
+        String((p as any).description ?? '').toLowerCase().includes(q);
 
-    return matchesText && matchesCat;
-  });
+      const matchesCat = !categoryId || p.categoryId === categoryId;
+
+      return matchesText && matchesCat;
+    });
+  }, [products, search, categoryId]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PRODUCTS_PAGE_SIZE));
+
+  const paginatedProducts = useMemo(() => {
+    const start = (currentPage - 1) * PRODUCTS_PAGE_SIZE;
+    return filtered.slice(start, start + PRODUCTS_PAGE_SIZE);
+  }, [filtered, currentPage]);
+
+  const pageStart = filtered.length ? (currentPage - 1) * PRODUCTS_PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(currentPage * PRODUCTS_PAGE_SIZE, filtered.length);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, categoryId]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const resetImage = () => {
     setImageFile(null);
@@ -224,6 +260,7 @@ export default function ProductosPage() {
     setForm({ ...emptyProductForm, categoryId: categories[0]?.id ?? '' });
     setComponents([]);
     resetImage();
+    setProductFormStep('basico');
     setModal('product-create');
   };
 
@@ -266,6 +303,7 @@ export default function ProductosPage() {
 
     setImageFile(null);
     setImagePreview(product.imageUrl ?? '');
+    setProductFormStep('basico');
     setModal('product-edit');
   };
 
@@ -655,7 +693,7 @@ export default function ProductosPage() {
               </thead>
 
               <tbody>
-                {filtered.map((p) => (
+                {paginatedProducts.map((p) => (
                   <tr key={p.id}>
                     <td>
                       <div className="products-row-main" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -845,112 +883,249 @@ export default function ProductosPage() {
 
         <div className="products-mobile-list">
           {loading ? (
-            <div style={{ padding: 14 }}>
-              <div className="skeleton" style={{ height: 220, borderRadius: 16 }} />
+            <div style={{ padding: 12 }}>
+              <div className="skeleton" style={{ height: 180, borderRadius: 16 }} />
             </div>
           ) : (
-            filtered.map((p) => (
-              <article className="products-mobile-item" key={p.id}>
-                <div className="products-mobile-head">
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} alt="" className="products-mobile-img" />
+            paginatedProducts.map((p) => {
+              const isService = Boolean((p as any).isService);
+              const isLowStock = !isService && productStock(p) <= productMinStock(p);
+              const typeLabel = isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE';
+              const stockLabel = isService
+                ? 'Servicio'
+                : `${productStock(p)}${p.saleUnit === 'KG' ? ' kg' : ''}`;
+              const secondaryStockLabel = isService
+                ? '—'
+                : p.saleUnit === 'KG'
+                  ? `${num(p.stockDepositoKg)} kg`
+                  : String(num(p.stockDeposito));
+
+              return (
+                <article className="products-mobile-item" key={p.id}>
+                  <div className="products-mobile-head">
+                    {p.imageUrl ? (
+                      <img src={p.imageUrl} alt="" className="products-mobile-img" />
+                    ) : (
+                      <span className="products-mobile-img products-mobile-placeholder">
+                        <Package size={15} />
+                      </span>
+                    )}
+
+                    <div className="products-mobile-title">
+                      <div className="products-mobile-title-line">
+                        <b>{p.name}</b>
+                        <span
+                          className={`badge ${
+                            isService ? 'badge-gray' : p.type === 'COMPUESTO' ? 'badge-blue' : 'badge-green'
+                          }`}
+                        >
+                          {typeLabel}
+                        </span>
+                      </div>
+
+                      <span>{p.sku ?? 'SIN-SKU'} · {categoryName(p)}</span>
+                    </div>
+                  </div>
+
+                  <div className="products-mobile-quick">
+                    <div>
+                      <small>Precio</small>
+                      <strong>
+                        {fmtMoney(getProductPublicPrice(p))}
+                        {unitSuffix(p)}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <small>Stock mayorista</small>
+                      <strong className={isLowStock ? 'products-danger-text' : ''}>
+                        {stockLabel}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <small>Stock minorista</small>
+                      <strong>{secondaryStockLabel}</strong>
+                    </div>
+                  </div>
+
+                  <div className="products-mobile-actions">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setMobileProductSheet(p)}>
+                      Ver más
+                    </button>
+
+                    <button className="btn btn-primary btn-sm" onClick={() => openEdit(p)}>
+                      <Edit2 size={13} /> Editar
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+
+          {!loading && !filtered.length && (
+            <div className="empty-state">
+              <Package size={36} />
+              <p>Sin productos</p>
+            </div>
+          )}
+        </div>
+
+        {!loading && filtered.length > 0 && (
+          <div className="products-pagination">
+            <div className="products-pagination-info">
+              Mostrando {pageStart} - {pageEnd} de {filtered.length} productos
+            </div>
+
+            <div className="products-pagination-actions">
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              >
+                Anterior
+              </button>
+
+              <span className="products-pagination-page">
+                Página {currentPage} de {totalPages}
+              </span>
+
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {mobileProductSheet && typeof document !== 'undefined' &&
+        createPortal(
+          <div className="products-mobile-sheet-backdrop" onClick={() => setMobileProductSheet(null)}>
+            <div className="products-mobile-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="products-mobile-sheet-handle" />
+
+              <div className="products-mobile-sheet-header">
+                <div className="products-mobile-sheet-product">
+                  {mobileProductSheet.imageUrl ? (
+                    <img src={mobileProductSheet.imageUrl} alt="" />
                   ) : (
-                    <span className="products-mobile-img products-mobile-placeholder">
-                      <Package size={16} />
+                    <span>
+                      <Package size={17} />
                     </span>
                   )}
 
-                  <div className="products-mobile-title">
-                    <b>{p.name}</b>
-                    <span>{p.sku ?? 'SIN-SKU'}</span>
-                    {(p as any).description ? <p>{(p as any).description}</p> : null}
+                  <div>
+                    <b>{mobileProductSheet.name}</b>
+                    <small>
+                      {mobileProductSheet.sku ?? 'SIN-SKU'} · {categoryName(mobileProductSheet)}
+                    </small>
                   </div>
-
-                  <span
-                    className={`badge ${
-                      (p as any).isService
-                        ? 'badge-gray'
-                        : p.type === 'COMPUESTO'
-                          ? 'badge-blue'
-                          : 'badge-green'
-                    }`}
-                  >
-                    {(p as any).isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE'}
-                  </span>
                 </div>
 
-                <div className="products-mobile-data">
-                  <div>
-                    <small>Categoría</small>
-                    <strong>{categoryName(p)}</strong>
-                  </div>
+                <button className="btn btn-ghost btn-sm" onClick={() => setMobileProductSheet(null)}>
+                  <X size={16} />
+                </button>
+              </div>
 
+              <div className="products-mobile-sheet-body">
+                <div className="products-mobile-sheet-grid">
                   <div>
                     <small>Precio público</small>
                     <strong>
-                      {fmtMoney(getProductPublicPrice(p))}
-                      {unitSuffix(p)}
+                      {fmtMoney(getProductPublicPrice(mobileProductSheet))}
+                      {unitSuffix(mobileProductSheet)}
                     </strong>
                   </div>
 
                   <div>
                     <small>Precio cliente</small>
                     <strong>
-                      {fmtMoney(getProductClientPrice(p))}
-                      {unitSuffix(p)}
+                      {fmtMoney(getProductClientPrice(mobileProductSheet))}
+                      {unitSuffix(mobileProductSheet)}
                     </strong>
                   </div>
 
                   <div>
                     <small>Precio mayorista</small>
                     <strong>
-                      {fmtMoney(getProductWholesalePrice(p))}
-                      {unitSuffix(p)}
+                      {fmtMoney(getProductWholesalePrice(mobileProductSheet))}
+                      {unitSuffix(mobileProductSheet)}
                     </strong>
                   </div>
 
                   <div>
                     <small>Costo bruto</small>
                     <strong>
-                      {fmtMoney(getProductGrossCost(p))}
-                      {unitSuffix(p)}
+                      {fmtMoney(getProductGrossCost(mobileProductSheet))}
+                      {unitSuffix(mobileProductSheet)}
                     </strong>
                   </div>
 
                   <div>
                     <small>Ganancia</small>
-                    <strong className={getProfit(p) < 0 ? 'products-danger-text' : ''}>
-                      {fmtMoney(getProfit(p))}
-                      {getProfitPercent(p) === null
+                    <strong className={getProfit(mobileProductSheet) < 0 ? 'products-danger-text' : ''}>
+                      {fmtMoney(getProfit(mobileProductSheet))}
+                      {getProfitPercent(mobileProductSheet) === null
                         ? ''
-                        : ` (${getProfitPercent(p)!.toFixed(1)}%)`}
+                        : ` (${getProfitPercent(mobileProductSheet)!.toFixed(1)}%)`}
                     </strong>
                   </div>
 
                   <div>
-                    <small>Stock Mayorista</small>
+                    <small>Stock mayorista</small>
                     <strong
                       className={
-                        productStock(p) <= productMinStock(p) ? 'products-danger-text' : ''
+                        !(mobileProductSheet as any).isService &&
+                        productStock(mobileProductSheet) <= productMinStock(mobileProductSheet)
+                          ? 'products-danger-text'
+                          : ''
                       }
                     >
-                      {productStock(p)} {p.saleUnit === 'KG' ? 'kg' : ''}
+                      {(mobileProductSheet as any).isService
+                        ? 'No descuenta'
+                        : `${productStock(mobileProductSheet)}${mobileProductSheet.saleUnit === 'KG' ? ' kg' : ''}`}
                     </strong>
                   </div>
 
                   <div>
-                    <small>Stock Minorista</small>
+                    <small>Stock minorista</small>
                     <strong>
-                      {p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito)}
+                      {(mobileProductSheet as any).isService
+                        ? '—'
+                        : mobileProductSheet.saleUnit === 'KG'
+                          ? `${num(mobileProductSheet.stockDepositoKg)} kg`
+                          : num(mobileProductSheet.stockDeposito)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Tipo</small>
+                    <strong>
+                      {(mobileProductSheet as any).isService
+                        ? 'Servicio'
+                        : mobileProductSheet.type === 'COMPUESTO'
+                          ? 'Promo / compuesto'
+                          : 'Simple'}
                     </strong>
                   </div>
                 </div>
 
-                {p.components?.length ? (
-                  <div className="products-mobile-components">
+                {(mobileProductSheet as any).description ? (
+                  <div className="products-mobile-sheet-box">
+                    <small>Descripción</small>
+                    <p>{(mobileProductSheet as any).description}</p>
+                  </div>
+                ) : null}
+
+                {mobileProductSheet.components?.length ? (
+                  <div className="products-mobile-sheet-box">
                     <small>Componentes</small>
                     <p>
-                      {p.components
+                      {mobileProductSheet.components
                         .map(
                           (c: ProductComponent) =>
                             `${c.component?.name ?? 'Componente'} x${
@@ -961,30 +1136,38 @@ export default function ProductosPage() {
                     </p>
                   </div>
                 ) : null}
+              </div>
 
-                <div className="products-mobile-actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => openEdit(p)}>
-                    <Edit2 size={13} /> Editar
-                  </button>
+              <div className="products-mobile-sheet-actions">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const product = mobileProductSheet;
+                    setMobileProductSheet(null);
+                    openEdit(product);
+                  }}
+                >
+                  <Edit2 size={15} /> Editar producto
+                </button>
 
-                  <button className="btn btn-danger btn-sm" onClick={() => deleteProduct(p)}>
-                    <Trash2 size={13} /> Eliminar
-                  </button>
-                </div>
-              </article>
-            ))
-          )}
-
-          {!loading && !filtered.length && (
-            <div className="empty-state">
-              <Package size={36} />
-              <p>Sin productos</p>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    const product = mobileProductSheet;
+                    setMobileProductSheet(null);
+                    deleteProduct(product);
+                  }}
+                >
+                  <Trash2 size={15} /> Eliminar
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
+          </div>,
+          document.body
+        )}
 
-      {(modal === 'product-create' || modal === 'product-edit') && (
+      {(modal === 'product-create' || modal === 'product-edit') && typeof document !== 'undefined' &&
+        createPortal(
         <div className="modal-overlay">
           <div className="modal products-product-modal" style={{ maxWidth: 820 }}>
             <div className="modal-header">
@@ -995,7 +1178,41 @@ export default function ProductosPage() {
               </button>
             </div>
 
-            <div className="modal-body">
+            <div className="modal-body products-product-modal-body">
+              <div className="products-mobile-form-tabs">
+                <button
+                  type="button"
+                  className={productFormStep === 'basico' ? 'is-active' : ''}
+                  onClick={() => setProductFormStep('basico')}
+                >
+                  1. Básico
+                </button>
+
+                <button
+                  type="button"
+                  className={productFormStep === 'precios' ? 'is-active' : ''}
+                  onClick={() => setProductFormStep('precios')}
+                >
+                  2. Precios / stock
+                </button>
+
+                {form.isService !== 'true' && form.type === 'COMPUESTO' && (
+                  <button
+                    type="button"
+                    className={productFormStep === 'componentes' ? 'is-active' : ''}
+                    onClick={() => setProductFormStep('componentes')}
+                  >
+                    3. Componentes
+                  </button>
+                )}
+              </div>
+
+              <section className={`products-form-section ${productFormStep === 'basico' ? 'products-form-section-active' : ''}`}>
+                <div className="products-mobile-section-title">
+                  <b>Datos principales</b>
+                  <small>Nombre, SKU, foto y tipo de producto.</small>
+                </div>
+
               <div className="form-row products-form-row">
                 <div className="form-group">
                   <label className="form-label">Nombre *</label>
@@ -1197,6 +1414,14 @@ export default function ProductosPage() {
                 )}
               </div>
 
+              </section>
+
+              <section className={`products-form-section ${productFormStep === 'precios' ? 'products-form-section-active' : ''}`}>
+                <div className="products-mobile-section-title">
+                  <b>Precios y stock</b>
+                  <small>Valores de venta, costo, stock inicial y mínimo.</small>
+                </div>
+
               {form.saleUnit === 'KG' ? (
                 <div
                   className="products-price-grid"
@@ -1379,6 +1604,14 @@ export default function ProductosPage() {
                 </div>
               )}
 
+              </section>
+
+              <section className={`products-form-section ${productFormStep === 'componentes' ? 'products-form-section-active' : ''}`}>
+                <div className="products-mobile-section-title">
+                  <b>Componentes</b>
+                  <small>Elegí qué productos descuenta esta promo o combo.</small>
+                </div>
+
               {form.isService !== 'true' && form.type === 'COMPUESTO' && (
                 <div className="card products-components-card" style={{ padding: 14, marginTop: 10 }}>
                   <div
@@ -1430,9 +1663,10 @@ export default function ProductosPage() {
                   ))}
                 </div>
               )}
+              </section>
             </div>
 
-            <div className="modal-footer">
+            <div className="modal-footer products-product-modal-footer">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>
                 Cancelar
               </button>
@@ -1447,9 +1681,12 @@ export default function ProductosPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {modal === 'category' && (
+      {modal === 'category' && typeof document !== 'undefined' &&
+        createPortal(
         <div className="modal-overlay">
           <div className="modal products-small-modal">
             <div className="modal-header">
@@ -1501,9 +1738,12 @@ export default function ProductosPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {confirmModal && (
+      {confirmModal && typeof document !== 'undefined' &&
+        createPortal(
         <div className="modal-overlay">
           <div className="modal products-small-modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
@@ -1566,11 +1806,107 @@ export default function ProductosPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
       <style jsx>{`
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 11000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          background: rgba(0, 0, 0, 0.45);
+          overflow-y: auto;
+        }
+
+        .modal {
+          margin: auto;
+          max-height: calc(100dvh - 36px);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .modal-body {
+          overflow-y: auto;
+        }
+
+        .products-product-modal {
+          width: min(820px, calc(100vw - 36px));
+        }
+
+        .products-small-modal {
+          width: min(520px, calc(100vw - 36px));
+        }
+
+        .products-product-modal-body {
+          padding: 16px;
+        }
+
+        .products-pagination {
+          border-top: 1px solid var(--border);
+          padding: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          background: var(--surface);
+        }
+
+        .products-pagination-info {
+          color: var(--text3);
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .products-pagination-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .products-pagination-page {
+          color: var(--text2);
+          font-size: 12px;
+          font-weight: 900;
+          padding: 0 4px;
+        }
+
         .products-actions {
           align-items: center;
+        }
+
+        .products-actions .btn {
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        .products-table-card {
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .products-desktop-table {
+          width: 100%;
+          max-width: 100%;
+          overflow-x: auto;
+          overflow-y: hidden;
+        }
+
+        .products-desktop-table table {
+          width: 100%;
+          min-width: 0;
+        }
+
+        .products-desktop-table th,
+        .products-desktop-table td {
+          vertical-align: middle;
         }
 
         .products-category-action {
@@ -1593,6 +1929,151 @@ export default function ProductosPage() {
           color: var(--danger);
         }
 
+
+        .products-mobile-form-tabs,
+        .products-mobile-section-title {
+          display: none;
+        }
+
+        .products-form-section {
+          display: block;
+        }
+
+
+        @media (min-width: 769px) {
+          .products-stats-grid,
+          .products-category-action,
+          .products-filters,
+          .products-table-card {
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+          }
+
+          .products-actions {
+            margin-right: 0;
+            max-width: 100%;
+          }
+
+          .products-desktop-table {
+            overflow-x: hidden;
+          }
+
+          .products-desktop-table table {
+            table-layout: fixed;
+            width: 100%;
+            min-width: 0;
+          }
+
+          .products-desktop-table th,
+          .products-desktop-table td {
+            padding-left: 10px;
+            padding-right: 10px;
+            font-size: 12px;
+            line-height: 1.35;
+            overflow: hidden;
+          }
+
+          .products-desktop-table th {
+            font-size: 10px;
+            letter-spacing: 0.18em;
+          }
+
+          .products-desktop-table td:nth-child(1) > div,
+          .products-desktop-table td:nth-child(3) > div,
+          .products-desktop-table td:nth-child(5) > div,
+          .products-desktop-table td:nth-child(9) {
+            min-width: 0;
+          }
+
+          .products-desktop-table td:nth-child(1) img,
+          .products-desktop-table td:nth-child(1) span[style*='width: 34px'] {
+            width: 30px !important;
+            height: 30px !important;
+            border-radius: 8px !important;
+          }
+
+          .products-desktop-table td:nth-child(1) div[style*='font-weight: 800'] {
+            font-size: 12px !important;
+            line-height: 1.2;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .products-desktop-table td:nth-child(1) div[style*='maxWidth: 260'] {
+            max-width: 100% !important;
+          }
+
+          .products-desktop-table td:nth-child(3) div,
+          .products-desktop-table td:nth-child(4),
+          .products-desktop-table td:nth-child(5) div,
+          .products-desktop-table td:nth-child(6) span,
+          .products-desktop-table td:nth-child(7) span {
+            font-size: 11px !important;
+          }
+
+          .products-desktop-table td:nth-child(9) {
+            color: var(--text2);
+            font-size: 11px !important;
+            line-height: 1.35;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .products-desktop-table td:nth-child(10) .btn {
+            width: 28px;
+            height: 28px;
+            min-height: 28px;
+            padding: 0;
+          }
+
+          .products-desktop-table th:nth-child(1),
+          .products-desktop-table td:nth-child(1) {
+            width: 16%;
+          }
+
+          .products-desktop-table th:nth-child(2),
+          .products-desktop-table td:nth-child(2) {
+            width: 10%;
+          }
+
+          .products-desktop-table th:nth-child(3),
+          .products-desktop-table td:nth-child(3) {
+            width: 11%;
+          }
+
+          .products-desktop-table th:nth-child(4),
+          .products-desktop-table td:nth-child(4),
+          .products-desktop-table th:nth-child(5),
+          .products-desktop-table td:nth-child(5) {
+            width: 9%;
+          }
+
+          .products-desktop-table th:nth-child(6),
+          .products-desktop-table td:nth-child(6),
+          .products-desktop-table th:nth-child(7),
+          .products-desktop-table td:nth-child(7) {
+            width: 10%;
+          }
+
+          .products-desktop-table th:nth-child(8),
+          .products-desktop-table td:nth-child(8) {
+            width: 8%;
+          }
+
+          .products-desktop-table th:nth-child(9),
+          .products-desktop-table td:nth-child(9) {
+            width: 13%;
+          }
+
+          .products-desktop-table th:nth-child(10),
+          .products-desktop-table td:nth-child(10) {
+            width: 5%;
+          }
+        }
+
         @media (max-width: 980px) {
           .products-stats-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
@@ -1600,6 +2081,50 @@ export default function ProductosPage() {
         }
 
         @media (max-width: 768px) {
+          .products-actions {
+            margin-right: 0;
+          }
+
+          .modal-overlay {
+            align-items: flex-end;
+            justify-content: center;
+            padding: 0;
+            overflow: hidden;
+          }
+
+          .modal {
+            margin: 0;
+            max-height: calc(100dvh - 8px);
+          }
+
+          .products-pagination {
+            display: grid;
+            grid-template-columns: 1fr;
+            justify-items: stretch;
+            padding: 10px;
+            gap: 8px;
+          }
+
+          .products-pagination-info {
+            text-align: center;
+            font-size: 11px;
+          }
+
+          .products-pagination-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .products-pagination-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .products-pagination-page {
+            text-align: center;
+          }
+
           .products-actions {
             width: 100%;
             display: grid !important;
@@ -1621,27 +2146,42 @@ export default function ProductosPage() {
           }
 
           .products-stats-grid {
-            grid-template-columns: 1fr !important;
-            gap: 10px !important;
-            margin-bottom: 14px !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
+          }
+
+          .products-stats-grid .stat-card {
+            min-height: 66px;
+            padding: 10px !important;
+          }
+
+          .products-stats-grid .stat-value {
+            font-size: 18px !important;
+            line-height: 1.1;
+          }
+
+          .products-stats-grid .stat-label {
+            font-size: 10px !important;
+            line-height: 1.2;
           }
 
           .products-category-action {
             justify-content: stretch;
-            margin: 0 0 14px;
+            margin: 0 0 10px;
           }
 
           .products-category-btn {
             width: 100%;
             min-width: 0;
-            height: 42px;
+            height: 36px;
           }
 
           .products-filters {
             display: grid !important;
             grid-template-columns: 1fr !important;
-            gap: 10px !important;
-            margin-bottom: 14px !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
           }
 
           .products-search {
@@ -1657,6 +2197,14 @@ export default function ProductosPage() {
 
           .products-refresh-btn {
             justify-content: center;
+            height: 36px;
+          }
+
+          .products-search input,
+          .products-filter-select {
+            min-height: 36px;
+            height: 36px;
+            font-size: 13px;
           }
 
           .products-table-card {
@@ -1670,17 +2218,17 @@ export default function ProductosPage() {
 
           .products-mobile-list {
             display: grid;
-            gap: 12px;
-            padding: 12px;
+            gap: 8px;
+            padding: 10px;
           }
 
           .products-mobile-item {
             display: grid;
-            gap: 12px;
+            gap: 8px;
             border: 1px solid var(--border);
-            border-radius: 18px;
+            border-radius: 15px;
             background: var(--surface2);
-            padding: 14px;
+            padding: 10px;
             min-width: 0;
           }
 
@@ -1693,9 +2241,9 @@ export default function ProductosPage() {
           }
 
           .products-mobile-img {
-            width: 42px;
-            height: 42px;
-            border-radius: 12px;
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
             object-fit: cover;
             flex-shrink: 0;
             border: 1px solid var(--border);
@@ -1713,6 +2261,24 @@ export default function ProductosPage() {
             gap: 3px;
             min-width: 0;
             flex: 1;
+          }
+
+          .products-mobile-title-line {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+          }
+
+          .products-mobile-title-line b {
+            flex: 1;
+            min-width: 0;
+          }
+
+          .products-mobile-title-line .badge {
+            flex-shrink: 0;
+            font-size: 9px;
+            padding: 3px 6px;
           }
 
           .products-mobile-title b {
@@ -1746,6 +2312,42 @@ export default function ProductosPage() {
 
           .products-mobile-head > .badge {
             flex-shrink: 0;
+          }
+
+          .products-mobile-quick {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr 1fr;
+            gap: 6px;
+          }
+
+          .products-mobile-quick > div {
+            min-width: 0;
+            border-radius: 11px;
+            background: var(--surface);
+            padding: 7px 8px;
+          }
+
+          .products-mobile-quick small {
+            display: block;
+            color: var(--text3);
+            font-size: 9.5px;
+            font-weight: 800;
+            line-height: 1.15;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .products-mobile-quick strong {
+            display: block;
+            font-family: var(--mono);
+            font-size: 11px;
+            line-height: 1.15;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
 
           .products-mobile-data {
@@ -1798,10 +2400,159 @@ export default function ProductosPage() {
           .products-mobile-actions {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 8px;
+            gap: 7px;
           }
 
           .products-mobile-actions button {
+            width: 100%;
+            justify-content: center;
+            min-height: 32px;
+          }
+
+          .products-mobile-sheet-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.48);
+            padding: 0;
+          }
+
+          .products-mobile-sheet {
+            width: 100%;
+            max-height: min(82dvh, 620px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border-radius: 22px 22px 0 0;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.35);
+          }
+
+          .products-mobile-sheet-handle {
+            width: 44px;
+            height: 4px;
+            border-radius: 999px;
+            background: var(--border);
+            margin: 10px auto 8px;
+            flex-shrink: 0;
+          }
+
+          .products-mobile-sheet-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 0 14px 12px;
+            border-bottom: 1px solid var(--border);
+          }
+
+          .products-mobile-sheet-product {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+            flex: 1;
+          }
+
+          .products-mobile-sheet-product img,
+          .products-mobile-sheet-product span {
+            width: 42px;
+            height: 42px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+            object-fit: cover;
+          }
+
+          .products-mobile-sheet-product span {
+            display: grid;
+            place-items: center;
+            background: var(--surface2);
+            color: var(--text3);
+          }
+
+          .products-mobile-sheet-product b {
+            display: block;
+            font-size: 14px;
+            line-height: 1.2;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .products-mobile-sheet-product small {
+            display: block;
+            margin-top: 3px;
+            color: var(--text3);
+            font-size: 11px;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .products-mobile-sheet-body {
+            overflow-y: auto;
+            padding: 12px 14px;
+            display: grid;
+            gap: 10px;
+          }
+
+          .products-mobile-sheet-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+
+          .products-mobile-sheet-grid > div,
+          .products-mobile-sheet-box {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--surface2);
+            padding: 10px;
+            min-width: 0;
+          }
+
+          .products-mobile-sheet-grid small,
+          .products-mobile-sheet-box small {
+            display: block;
+            color: var(--text3);
+            font-size: 10px;
+            font-weight: 800;
+            margin-bottom: 5px;
+          }
+
+          .products-mobile-sheet-grid strong {
+            display: block;
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text);
+            overflow-wrap: anywhere;
+          }
+
+          .products-mobile-sheet-box p {
+            margin: 0;
+            color: var(--text2);
+            font-size: 12px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+          }
+
+          .products-mobile-sheet-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+          }
+
+          .products-mobile-sheet-actions button {
             width: 100%;
             justify-content: center;
           }
@@ -1813,6 +2564,142 @@ export default function ProductosPage() {
             max-height: calc(100dvh - 24px);
             overflow: auto;
             border-radius: 18px;
+          }
+
+          .products-product-modal {
+            align-self: flex-end;
+            width: 100vw !important;
+            max-width: 100vw !important;
+            height: min(96dvh, calc(100dvh - 6px));
+            max-height: min(96dvh, calc(100dvh - 6px));
+            border-radius: 22px 22px 0 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          }
+
+          .products-product-modal .modal-header {
+            position: relative;
+            top: auto;
+            z-index: 5;
+            flex-shrink: 0;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            min-height: 52px;
+          }
+
+          .products-product-modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            padding: 0 !important;
+            overflow-y: auto !important;
+            overflow-x: hidden;
+            background: var(--bg);
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            padding-bottom: 92px !important;
+          }
+
+          .products-mobile-form-tabs {
+            position: sticky;
+            top: 0;
+            z-index: 4;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+          }
+
+          .products-mobile-form-tabs button {
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text2);
+            border-radius: 999px;
+            min-height: 34px;
+            padding: 0 10px;
+            font-size: 11px;
+            font-weight: 900;
+            white-space: nowrap;
+          }
+
+          .products-mobile-form-tabs button.is-active {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+          }
+
+          .products-form-section {
+            display: none;
+            padding: 12px;
+          }
+
+          .products-form-section-active {
+            display: grid;
+            gap: 10px;
+          }
+
+          .products-mobile-section-title {
+            display: grid;
+            gap: 3px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface);
+            padding: 11px 12px;
+          }
+
+          .products-mobile-section-title b {
+            font-size: 14px;
+            line-height: 1.2;
+            color: var(--text);
+          }
+
+          .products-mobile-section-title small {
+            color: var(--text3);
+            font-size: 11px;
+            line-height: 1.35;
+          }
+
+          .products-form-section .form-group,
+          .products-form-section .form-row,
+          .products-form-section .products-price-grid,
+          .products-form-section .products-components-card {
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            background: var(--surface);
+            padding: 10px;
+          }
+
+          .products-form-section .form-row .form-group,
+          .products-form-section .products-price-grid .form-group,
+          .products-form-section .products-components-card .form-group {
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            padding: 0;
+          }
+
+          .products-form-section input,
+          .products-form-section select,
+          .products-form-section textarea {
+            min-height: 38px;
+            font-size: 14px;
+          }
+
+          .products-form-section textarea {
+            min-height: 78px !important;
+          }
+
+          .products-product-modal-footer {
+            position: relative;
+            bottom: auto;
+            z-index: 6;
+            flex-shrink: 0;
+            padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.22);
           }
 
           .products-form-row {
@@ -1856,44 +2743,65 @@ export default function ProductosPage() {
 
         @media (max-width: 420px) {
           .products-mobile-list {
-            padding: 10px;
+            padding: 8px;
           }
 
           .products-mobile-item {
-            border-radius: 16px;
-            padding: 12px;
+            border-radius: 14px;
+            padding: 9px;
           }
 
           .products-mobile-head {
-            flex-direction: column;
-          }
-
-          .products-mobile-head > .badge {
-            width: fit-content;
+            align-items: center;
           }
 
           .products-mobile-img {
-            width: 48px;
-            height: 48px;
+            width: 36px;
+            height: 36px;
           }
 
           .products-mobile-title b,
           .products-mobile-title span {
-            white-space: normal;
+            white-space: nowrap;
           }
 
-          .products-mobile-data > div {
-            align-items: flex-start;
-            flex-direction: column;
-            gap: 4px;
+          .products-mobile-quick {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
           }
 
-          .products-mobile-data strong {
-            text-align: left;
+          .products-mobile-quick > div {
+            padding: 6px;
+          }
+
+          .products-mobile-quick small {
+            font-size: 9px;
+          }
+
+          .products-mobile-quick strong {
+            font-size: 10px;
           }
 
           .products-mobile-actions {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .products-mobile-sheet-grid,
+          .products-mobile-sheet-actions {
             grid-template-columns: 1fr;
+          }
+
+          .products-mobile-form-tabs {
+            display: flex;
+            overflow-x: auto;
+            scrollbar-width: none;
+          }
+
+          .products-mobile-form-tabs::-webkit-scrollbar {
+            display: none;
+          }
+
+          .products-mobile-form-tabs button {
+            flex: 0 0 auto;
           }
 
           .products-components-head {

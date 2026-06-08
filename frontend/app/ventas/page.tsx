@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { PaymentMethod, Sale } from '@/types';
@@ -14,6 +15,7 @@ import {
   FileText,
   Loader2,
   MessageCircle,
+  MoreHorizontal,
   Printer,
   ReceiptText,
   Search,
@@ -390,6 +392,8 @@ export default function VentasPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [detail, setDetail] = useState<Sale | null>(null);
   const [payEdit, setPayEdit] = useState<Sale | null>(null);
+  const [mobileActionsSale, setMobileActionsSale] = useState<Sale | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   const [payments, setPayments] = useState<PaymentView[]>([]);
 
@@ -406,6 +410,10 @@ export default function VentasPage() {
 
   const [remitoLoadingId, setRemitoLoadingId] = useState<string | null>(null);
   const [openingRemitoId, setOpeningRemitoId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -1453,156 +1461,49 @@ export default function VentasPage() {
                   <div className="sales-mobile-actions" onClick={(e) => e.stopPropagation()}>
                     {s.status === 'PENDING' && (
                       <button
-                        className="btn btn-primary btn-sm"
+                        className="btn btn-primary btn-sm sales-mobile-main-action"
                         onClick={() => setSaleStatus(s, 'COMPLETED')}
                       >
+                        <Check size={14} />
                         Confirmar
-                      </button>
-                    )}
-
-                    {s.status !== 'CANCELLED' && (
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={() => setSaleStatus(s, 'CANCELLED')}
-                      >
-                        Cancelar
-                      </button>
-                    )}
-
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => openPayments(s)}
-                    >
-                      Pagos
-                    </button>
-
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      disabled={printingTicketId === s.id}
-                      onClick={() => printTicket(s)}
-                    >
-                      {printingTicketId === s.id ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <Printer size={13} />
-                      )}
-                      Ticket
-                    </button>
-
-                    {saleCanEmitRemito && !saleHasRemito && s.status !== 'CANCELLED' && (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        disabled={remitoLoadingId === s.id}
-                        onClick={() => createRemito(s)}
-                      >
-                        {remitoLoadingId === s.id ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <Truck size={13} />
-                        )}
-                        Remito
-                      </button>
-                    )}
-
-                    {saleHasRemito && (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        disabled={openingRemitoId === s.id}
-                        onClick={() => openRemitoPdf(s)}
-                      >
-                        {openingRemitoId === s.id ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <FileText size={13} />
-                        )}
-                        Ver remito
-                      </button>
-                    )}
-
-                    {saleCanEmitRemito && !saleHasRemito && (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        disabled={openingRemitoId === s.id}
-                        onClick={() => openRemitoPdf(s)}
-                      >
-                        {openingRemitoId === s.id ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <FileText size={13} />
-                        )}
-                        Ver remito
-                      </button>
-                    )}
-
-                    {s.status === 'PENDING' && (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        disabled={quotationLoadingId === s.id}
-                        onClick={() => setQuotationModal(s)}
-                      >
-                        {quotationLoadingId === s.id ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <FileText size={13} />
-                        )}
-                        Cotización
                       </button>
                     )}
 
                     {!isSaleInvoiced(s) && s.status !== 'CANCELLED' && (
                       <button
-                        className="btn btn-primary btn-sm"
+                        className="btn btn-primary btn-sm sales-mobile-main-action"
                         disabled={invoicingId === s.id}
                         onClick={() => openInvoiceModal(s)}
                       >
                         {invoicingId === s.id ? (
-                          <Loader2 size={13} className="animate-spin" />
+                          <Loader2 size={14} className="animate-spin" />
                         ) : (
-                          <ReceiptText size={13} />
+                          <ReceiptText size={14} />
                         )}
                         Facturar
                       </button>
                     )}
 
                     {isSaleInvoiced(s) && (
-                      <>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => {
-                            toast.success('Abriendo factura');
-                            window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank');
-                          }}
-                        >
-                          <FileText size={13} />
-                          Factura
-                        </button>
-
-                        {saleCanDownloadCreditNote && (
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => openCreditNotePdf(s)}
-                          >
-                            <FileText size={13} />
-                            NC PDF
-                          </button>
-                        )}
-
-                        {saleCanEmitCreditNote && (
-                          <button
-                            className="btn btn-danger btn-sm"
-                            disabled={creditNoteLoadingId === s.id}
-                            onClick={() => openCreditNoteModal(s)}
-                          >
-                            {creditNoteLoadingId === s.id ? (
-                              <Loader2 size={13} className="animate-spin" />
-                            ) : (
-                              <ReceiptText size={13} />
-                            )}
-                            Nota crédito
-                          </button>
-                        )}
-                      </>
+                      <button
+                        className="btn btn-ghost btn-sm sales-mobile-main-action"
+                        onClick={() => {
+                          toast.success('Abriendo factura');
+                          window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank');
+                        }}
+                      >
+                        <FileText size={14} />
+                        Factura
+                      </button>
                     )}
+
+                    <button
+                      className="btn btn-secondary btn-sm sales-mobile-more-action"
+                      onClick={() => setMobileActionsSale(s)}
+                    >
+                      <MoreHorizontal size={15} />
+                      Más acciones
+                    </button>
                   </div>
                 </article>
               );
@@ -1647,6 +1548,332 @@ export default function VentasPage() {
           </div>
         )}
       </div>
+
+
+      {mounted &&
+        mobileActionsSale &&
+        createPortal(
+          (() => {
+          const s = mobileActionsSale;
+          const invoiceStatus = getSaleInvoiceStatus(s);
+          const quotationExpirationLabel = getQuotationExpirationLabel(s);
+          const saleIsCreditNote = isCreditNoteSale(s);
+          const saleHasCreditNote = hasCreditNote(s);
+          const saleCanEmitCreditNote = canEmitCreditNote(s);
+          const saleCanDownloadCreditNote = canDownloadCreditNote(s);
+          const saleHasRemito = hasRemito(s);
+          const saleCanEmitRemito = canEmitRemito(s);
+
+          return (
+            <div
+              className="modal-overlay sales-mobile-actions-overlay"
+              onClick={(e) => e.target === e.currentTarget && setMobileActionsSale(null)}
+            >
+              <div className="modal sales-actions-sheet" role="dialog" aria-modal="true">
+                <div className="sales-actions-grabber" />
+
+                <div className="modal-header sales-actions-header">
+                  <div>
+                    <small>Acciones de venta</small>
+                    <b>#{s.id.slice(-8)} · {clientName(s.client)}</b>
+                  </div>
+
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setMobileActionsSale(null)}
+                    aria-label="Cerrar acciones"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="modal-body sales-actions-body">
+                  <div className="sales-actions-summary">
+                    <div>
+                      <small>Total</small>
+                      <b>{fmtMoney(s.total)}</b>
+                    </div>
+
+                    <div>
+                      <small>Estado</small>
+                      <span className={`badge ${badge(s.status)}`}>{s.status}</span>
+                    </div>
+
+                    <div>
+                      <small>AFIP</small>
+                      <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
+                        {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="sales-actions-badges">
+                    <span className="badge badge-gray">
+                      {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                    </span>
+
+                    {saleIsCreditNote ? (
+                      <span className="badge badge-red">NOTA CRÉDITO</span>
+                    ) : saleHasCreditNote ? (
+                      <span className="badge badge-red">NC EMITIDA</span>
+                    ) : null}
+
+                    {saleHasRemito && <span className="badge badge-green">REMITO</span>}
+
+                    {s.status === 'PENDING' && quotationExpirationLabel && (
+                      <span className="badge badge-yellow">Vence {quotationExpirationLabel}</span>
+                    )}
+                  </div>
+
+                  <div className="sales-actions-list">
+                    <button
+                      className="sales-action-row"
+                      onClick={() => {
+                        setDetail(s);
+                        setMobileActionsSale(null);
+                      }}
+                    >
+                      <span>
+                        <FileText size={17} />
+                      </span>
+                      <div>
+                        <b>Ver detalle</b>
+                        <small>Productos, pagos y remitos</small>
+                      </div>
+                    </button>
+
+                    {s.status === 'PENDING' && (
+                      <button
+                        className="sales-action-row sales-action-row-primary"
+                        onClick={() => {
+                          setSaleStatus(s, 'COMPLETED');
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          <Check size={17} />
+                        </span>
+                        <div>
+                          <b>Confirmar venta</b>
+                          <small>Pasar la venta a completada</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {s.status !== 'CANCELLED' && (
+                      <button
+                        className="sales-action-row sales-action-row-danger"
+                        onClick={() => {
+                          setSaleStatus(s, 'CANCELLED');
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          <X size={17} />
+                        </span>
+                        <div>
+                          <b>Cancelar venta</b>
+                          <small>Revertir stock/deuda si corresponde</small>
+                        </div>
+                      </button>
+                    )}
+
+                    <button
+                      className="sales-action-row"
+                      onClick={() => {
+                        openPayments(s);
+                        setMobileActionsSale(null);
+                      }}
+                    >
+                      <span>
+                        <ReceiptText size={17} />
+                      </span>
+                      <div>
+                        <b>Editar pagos</b>
+                        <small>Efectivo, transferencia, tarjeta o mixto</small>
+                      </div>
+                    </button>
+
+                    <button
+                      className="sales-action-row"
+                      disabled={printingTicketId === s.id}
+                      onClick={() => {
+                        printTicket(s);
+                        setMobileActionsSale(null);
+                      }}
+                    >
+                      <span>
+                        {printingTicketId === s.id ? (
+                          <Loader2 size={17} className="animate-spin" />
+                        ) : (
+                          <Printer size={17} />
+                        )}
+                      </span>
+                      <div>
+                        <b>Imprimir ticket</b>
+                        <small>Enviar ticket no fiscal a impresión</small>
+                      </div>
+                    </button>
+
+                    {saleCanEmitRemito && !saleHasRemito && s.status !== 'CANCELLED' && (
+                      <button
+                        className="sales-action-row"
+                        disabled={remitoLoadingId === s.id}
+                        onClick={() => {
+                          createRemito(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          {remitoLoadingId === s.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <Truck size={17} />
+                          )}
+                        </span>
+                        <div>
+                          <b>Generar remito</b>
+                          <small>Crear remito desde esta venta</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {(saleHasRemito || saleCanEmitRemito) && (
+                      <button
+                        className="sales-action-row"
+                        disabled={openingRemitoId === s.id}
+                        onClick={() => {
+                          openRemitoPdf(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          {openingRemitoId === s.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <FileText size={17} />
+                          )}
+                        </span>
+                        <div>
+                          <b>Ver remito</b>
+                          <small>Descargar PDF del remito si existe</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {s.status === 'PENDING' && (
+                      <button
+                        className="sales-action-row"
+                        disabled={quotationLoadingId === s.id}
+                        onClick={() => {
+                          setQuotationModal(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          {quotationLoadingId === s.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <MessageCircle size={17} />
+                          )}
+                        </span>
+                        <div>
+                          <b>Cotización</b>
+                          <small>Descargar o enviar PDF por WhatsApp</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {!isSaleInvoiced(s) && s.status !== 'CANCELLED' && (
+                      <button
+                        className="sales-action-row sales-action-row-primary"
+                        disabled={invoicingId === s.id}
+                        onClick={() => {
+                          openInvoiceModal(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          {invoicingId === s.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <ReceiptText size={17} />
+                          )}
+                        </span>
+                        <div>
+                          <b>Facturar en ARCA</b>
+                          <small>Generar CAE y comprobante fiscal</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {isSaleInvoiced(s) && (
+                      <button
+                        className="sales-action-row"
+                        onClick={() => {
+                          toast.success('Abriendo factura');
+                          window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank');
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          <FileText size={17} />
+                        </span>
+                        <div>
+                          <b>Ver factura</b>
+                          <small>Descargar PDF de factura</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {isSaleInvoiced(s) && saleCanDownloadCreditNote && (
+                      <button
+                        className="sales-action-row"
+                        onClick={() => {
+                          openCreditNotePdf(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          <FileText size={17} />
+                        </span>
+                        <div>
+                          <b>Ver nota de crédito</b>
+                          <small>Descargar PDF de NC</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {isSaleInvoiced(s) && saleCanEmitCreditNote && (
+                      <button
+                        className="sales-action-row sales-action-row-danger"
+                        disabled={creditNoteLoadingId === s.id}
+                        onClick={() => {
+                          openCreditNoteModal(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          {creditNoteLoadingId === s.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <ReceiptText size={17} />
+                          )}
+                        </span>
+                        <div>
+                          <b>Emitir nota de crédito</b>
+                          <small>Generar NC vinculada en ARCA</small>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+          })(),
+          document.body
+        )}
 
       {detail && (
         <div
@@ -2671,6 +2898,429 @@ export default function VentasPage() {
             border-radius: 16px;
           }
         }
+
+        .sales-actions-sheet {
+          width: min(520px, calc(100vw - 24px));
+          border-radius: 22px;
+        }
+
+        .sales-actions-grabber {
+          display: none;
+        }
+
+        .sales-actions-header {
+          align-items: flex-start;
+        }
+
+        .sales-actions-header > div {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+        }
+
+        .sales-actions-header small {
+          color: var(--text3);
+          font-size: 11px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .sales-actions-header b {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .sales-actions-body {
+          display: grid;
+          gap: 12px;
+        }
+
+        .sales-actions-summary {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .sales-actions-summary > div {
+          border: 1px solid var(--border);
+          background: var(--surface2);
+          border-radius: 14px;
+          padding: 10px;
+          min-width: 0;
+          display: grid;
+          gap: 5px;
+        }
+
+        .sales-actions-summary small {
+          color: var(--text3);
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .sales-actions-summary b {
+          font-family: var(--mono);
+          font-size: 12px;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-actions-badges {
+          display: flex;
+          gap: 7px;
+          flex-wrap: wrap;
+        }
+
+        .sales-actions-list {
+          display: grid;
+          gap: 8px;
+        }
+
+        .sales-action-row {
+          width: 100%;
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          background: var(--surface2);
+          color: var(--text);
+          padding: 11px;
+          display: grid;
+          grid-template-columns: 38px 1fr;
+          gap: 10px;
+          text-align: left;
+          align-items: center;
+          cursor: pointer;
+          transition:
+            transform 0.12s ease,
+            border-color 0.12s ease,
+            background 0.12s ease;
+        }
+
+        .sales-action-row:not(:disabled):active {
+          transform: scale(0.99);
+        }
+
+        .sales-action-row:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .sales-action-row > span {
+          width: 38px;
+          height: 38px;
+          border-radius: 13px;
+          background: var(--bg);
+          display: grid;
+          place-items: center;
+          color: var(--text2);
+        }
+
+        .sales-action-row div {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+        }
+
+        .sales-action-row b {
+          font-size: 13px;
+          line-height: 1.2;
+        }
+
+        .sales-action-row small {
+          color: var(--text3);
+          font-size: 11px;
+          line-height: 1.25;
+        }
+
+        .sales-action-row-primary {
+          border-color: rgba(16, 185, 129, 0.28);
+        }
+
+        .sales-action-row-primary > span {
+          color: var(--accent);
+        }
+
+        .sales-action-row-danger {
+          border-color: rgba(239, 68, 68, 0.25);
+        }
+
+        .sales-action-row-danger > span {
+          color: var(--danger);
+        }
+
+        @media (max-width: 768px) {
+          .sales-mobile-actions {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+          }
+
+          .sales-mobile-actions button {
+            width: 100%;
+            justify-content: center;
+            min-height: 38px;
+            border-radius: 13px;
+          }
+
+          .sales-mobile-main-action {
+            min-width: 0;
+          }
+
+          .sales-mobile-more-action {
+            grid-column: 1 / -1;
+          }
+
+          .sales-mobile-actions-overlay {
+            align-items: flex-end;
+            padding: 0;
+          }
+
+          .sales-actions-sheet {
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: min(82dvh, 720px);
+            margin: 0;
+            border-radius: 24px 24px 0 0;
+            animation: salesSheetUp 0.16s ease-out;
+          }
+
+          .sales-actions-grabber {
+            display: block;
+            width: 42px;
+            height: 4px;
+            border-radius: 999px;
+            background: var(--border);
+            margin: 10px auto 0;
+            flex-shrink: 0;
+          }
+
+          .sales-actions-header {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--surface);
+          }
+
+          .sales-actions-body {
+            padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .sales-mobile-actions {
+            grid-template-columns: 1fr !important;
+          }
+
+          .sales-actions-summary {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-action-row {
+            grid-template-columns: 36px 1fr;
+            border-radius: 14px;
+          }
+
+          .sales-action-row > span {
+            width: 36px;
+            height: 36px;
+          }
+        }
+
+
+        @media (max-width: 768px) {
+          .sales-stats-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
+          }
+
+          .sales-stats-grid .stat-card {
+            padding: 10px !important;
+            min-height: 64px;
+          }
+
+          .sales-stats-grid .stat-value {
+            font-size: 18px !important;
+            line-height: 1.05 !important;
+          }
+
+          .sales-stats-grid .stat-label {
+            font-size: 10px !important;
+            line-height: 1.15 !important;
+          }
+
+          .sales-filters {
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) 118px !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
+          }
+
+          .sales-filters select,
+          .sales-search input {
+            min-height: 38px !important;
+            height: 38px !important;
+            font-size: 12px !important;
+          }
+
+          .sales-mobile-list {
+            gap: 7px !important;
+            padding: 8px !important;
+          }
+
+          .sales-mobile-item {
+            padding: 9px !important;
+            gap: 7px !important;
+            border-radius: 13px !important;
+          }
+
+          .sales-mobile-head {
+            flex-direction: row !important;
+            align-items: flex-start !important;
+            gap: 8px !important;
+          }
+
+          .sales-mobile-id {
+            font-size: 10px !important;
+          }
+
+          .sales-mobile-head h3 {
+            font-size: 13px !important;
+            line-height: 1.15 !important;
+            white-space: nowrap !important;
+          }
+
+          .sales-mobile-head p {
+            font-size: 10.5px !important;
+            line-height: 1.15 !important;
+          }
+
+          .sales-mobile-badges {
+            gap: 5px !important;
+            max-height: 23px;
+            overflow: hidden;
+          }
+
+          .sales-mobile-badges .badge {
+            font-size: 9.5px !important;
+            padding: 4px 6px !important;
+            line-height: 1 !important;
+          }
+
+          .sales-mobile-badges .badge:nth-child(n + 4) {
+            display: none !important;
+          }
+
+          .sales-mobile-data {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+          }
+
+          .sales-mobile-data > div {
+            padding: 7px 8px !important;
+            border-radius: 10px !important;
+            align-items: flex-start !important;
+          }
+
+          .sales-mobile-data small {
+            font-size: 9.5px !important;
+          }
+
+          .sales-mobile-data strong {
+            font-size: 11px !important;
+            line-height: 1.15 !important;
+          }
+
+          .sales-mobile-actions {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+          }
+
+          .sales-mobile-actions button {
+            min-height: 32px !important;
+            border-radius: 11px !important;
+            font-size: 11px !important;
+            padding: 7px 6px !important;
+            gap: 4px !important;
+          }
+
+          .sales-mobile-more-action {
+            grid-column: auto !important;
+          }
+
+          .sales-mobile-actions-overlay {
+            position: fixed !important;
+            inset: 0 !important;
+            z-index: 2147483000 !important;
+            align-items: flex-end !important;
+            justify-content: center !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background: rgba(0, 0, 0, 0.48) !important;
+          }
+
+          .sales-actions-sheet {
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: min(86dvh, 760px) !important;
+            margin: 0 !important;
+            border-radius: 24px 24px 0 0 !important;
+            box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.28);
+          }
+
+          .sales-actions-body {
+            overflow-y: auto !important;
+            padding-bottom: calc(18px + env(safe-area-inset-bottom)) !important;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .sales-stats-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+
+          .sales-filters {
+            grid-template-columns: minmax(0, 1fr) 108px !important;
+          }
+
+          .sales-mobile-head {
+            flex-direction: row !important;
+            align-items: flex-start !important;
+          }
+
+          .sales-mobile-head > .badge {
+            width: auto !important;
+            flex-shrink: 0;
+          }
+
+          .sales-mobile-data > div {
+            flex-direction: column !important;
+            gap: 3px !important;
+          }
+
+          .sales-mobile-actions {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+          }
+
+          .sales-mobile-actions button {
+            font-size: 10.5px !important;
+          }
+        }
+
+        @keyframes salesSheetUp {
+          from {
+            transform: translateY(18px);
+            opacity: 0.85;
+          }
+
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+
+
       `}</style>
 
     </AppLayout>

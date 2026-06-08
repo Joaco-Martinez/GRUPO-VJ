@@ -1,26 +1,24 @@
-// src/cron/afipRenovador.ts
-import cron from "node-cron";
+// src/scripts/renovarTokenAfip.ts
+import "dotenv/config";
+import prisma from "../prisma";
 import { generarTokenAFIP } from "../afip/wsaa.service";
 
-export async function iniciarRenovacionAutomatica() {
-  console.log("🚀 Iniciando servicio de renovación automática del token AFIP...");
+async function main() {
+  console.log("🔑 Iniciando renovación de token AFIP desde Railway Cron...");
 
-  try {
-    console.log("🔑 Generando token inicial de AFIP...");
-    await generarTokenAFIP();
-    console.log("✅ Token AFIP inicial generado correctamente.");
-  } catch (err) {
-    console.error("❌ Error al generar el token inicial:", err);
-  }
+  await generarTokenAFIP();
 
-  // Renovación cada 11 horas
-  cron.schedule("0 */11 * * *", async () => {
-    console.log("⏰ Renovación automática del token AFIP...");
-    try {
-      await generarTokenAFIP();
-      console.log("✅ Token AFIP renovado correctamente.");
-    } catch (err) {
-      console.error("❌ Error en renovación automática:", err);
-    }
-  });
+  console.log("✅ Token AFIP renovado correctamente.");
+
+  await prisma.$disconnect();
+
+  process.exit(0);
 }
+
+main().catch(async (error) => {
+  console.error("❌ Error renovando token AFIP desde Railway Cron:", error);
+
+  await prisma.$disconnect();
+
+  process.exit(1);
+});

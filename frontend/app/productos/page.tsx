@@ -14,7 +14,6 @@ import {
   normalizeArray,
   num,
   productMinStock,
-  productPrice,
   productStock,
 } from '@/lib/helpers';
 import {
@@ -70,6 +69,82 @@ const emptyProductForm = {
   minStock: '0',
   minStockKg: '0',
 };
+
+function getProductPublicPrice(product: Product) {
+  return product.saleUnit === 'KG'
+    ? num((product as any).pricePerKg ?? product.price)
+    : num(product.price);
+}
+
+function getProductClientPrice(product: Product) {
+  const fallback = getProductPublicPrice(product);
+
+  return product.saleUnit === 'KG'
+    ? num((product as any).clientPricePerKg ?? (product as any).clientPrice ?? fallback)
+    : num((product as any).clientPrice ?? fallback);
+}
+
+function getProductWholesalePrice(product: Product) {
+  const fallback = getProductPublicPrice(product);
+
+  return product.saleUnit === 'KG'
+    ? num(
+        (product as any).wholesalePricePerKg ??
+          (product as any).wholesalePrice ??
+          fallback
+      )
+    : num((product as any).wholesalePrice ?? fallback);
+}
+
+
+
+function getDirectGrossCost(product: Product): number {
+  return num(
+    (product as any).grossCost ??
+      (product as any).costPrice ??
+      (product as any).costPriceGross ??
+      (product as any).costoBruto ??
+      (product as any).costoCompra ??
+      (product as any).purchaseCost ??
+      (product as any).purchasePrice ??
+      0
+  );
+}
+
+function getProductGrossCost(product: Product): number {
+  const directCost = getDirectGrossCost(product);
+
+  if (directCost > 0 || product.type !== 'COMPUESTO') return directCost;
+
+  return (product.components ?? []).reduce((total: number, relation: ProductComponent): number => {
+    const component = relation.component as Product | undefined;
+    if (!component) return total;
+
+    const quantity =
+      component.saleUnit === 'KG'
+        ? num(relation.quantityKg ?? relation.quantity ?? 0)
+        : num(relation.quantity ?? relation.quantityKg ?? 0);
+
+    return total + getProductGrossCost(component) * quantity;
+  }, 0);
+}
+
+function getProfit(product: Product): number {
+  return getProductPublicPrice(product) - getProductGrossCost(product);
+}
+
+function getProfitPercent(product: Product): number | null {
+  const cost = getProductGrossCost(product);
+  if (cost <= 0) return null;
+
+  return (getProfit(product) / cost) * 100;
+}
+
+
+
+function unitSuffix(product: Product) {
+  return product.saleUnit === 'KG' ? '/kg' : '';
+}
 
 export default function ProductosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -166,7 +241,7 @@ export default function ProductosPage() {
       price: String(product.price ?? ''),
       clientPrice: String(product.clientPrice ?? ''),
       wholesalePrice: String(product.wholesalePrice ?? ''),
-      purchasePrice: String(product.purchasePrice ?? ''),
+      purchasePrice: String(getProductGrossCost(product) || ''),
 
       pricePerKg: String(product.pricePerKg ?? ''),
       clientPricePerKg: String(product.clientPricePerKg ?? ''),
@@ -568,8 +643,9 @@ export default function ProductosPage() {
                 <tr>
                   <th>Producto</th>
                   <th>Categoría</th>
-                  <th>Precio</th>
-                  <th>Costo</th>
+                  <th>Precios</th>
+                  <th>Costo bruto</th>
+                  <th>Ganancia</th>
                   <th>Stock Mayorista</th>
                   <th>Stock Minorista</th>
                   <th>Tipo</th>
@@ -647,14 +723,46 @@ export default function ProductosPage() {
                       <span className="badge badge-gray">{categoryName(p)}</span>
                     </td>
 
-                    <td style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
-                      {fmtMoney(productPrice(p))}
-                      {p.saleUnit === 'KG' ? '/kg' : ''}
+                    <td>
+                      <div style={{ display: 'grid', gap: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>
+                        <strong>
+                          Público: {fmtMoney(getProductPublicPrice(p))}
+                          {unitSuffix(p)}
+                        </strong>
+                        <span style={{ color: 'var(--text2)' }}>
+                          Cliente: {fmtMoney(getProductClientPrice(p))}
+                          {unitSuffix(p)}
+                        </span>
+                        <span style={{ color: 'var(--text2)' }}>
+                          Mayorista: {fmtMoney(getProductWholesalePrice(p))}
+                          {unitSuffix(p)}
+                        </span>
+                      </div>
                     </td>
 
-                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--text2)' }}>
-                      {fmtMoney(p.purchasePrice ?? 0)}
-                      {p.saleUnit === 'KG' ? '/kg' : ''}
+                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--text2)', fontWeight: 800 }}>
+                      {fmtMoney(getProductGrossCost(p))}
+                      {unitSuffix(p)}
+                    </td>
+
+                    <td>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gap: 3,
+                          fontFamily: 'var(--mono)',
+                          fontSize: 12,
+                          color: getProfit(p) >= 0 ? 'var(--success)' : 'var(--danger)',
+                          fontWeight: 800,
+                        }}
+                      >
+                        <span>{fmtMoney(getProfit(p))}</span>
+                        <small style={{ color: 'var(--text3)' }}>
+                          {getProfitPercent(p) === null
+                            ? 'Sin costo'
+                            : `${getProfitPercent(p)!.toFixed(1)}%`}
+                        </small>
+                      </div>
                     </td>
 
                     <td>
@@ -778,18 +886,44 @@ export default function ProductosPage() {
                   </div>
 
                   <div>
-                    <small>Precio</small>
+                    <small>Precio público</small>
                     <strong>
-                      {fmtMoney(productPrice(p))}
-                      {p.saleUnit === 'KG' ? '/kg' : ''}
+                      {fmtMoney(getProductPublicPrice(p))}
+                      {unitSuffix(p)}
                     </strong>
                   </div>
 
                   <div>
-                    <small>Costo</small>
+                    <small>Precio cliente</small>
                     <strong>
-                      {fmtMoney(p.purchasePrice ?? 0)}
-                      {p.saleUnit === 'KG' ? '/kg' : ''}
+                      {fmtMoney(getProductClientPrice(p))}
+                      {unitSuffix(p)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Precio mayorista</small>
+                    <strong>
+                      {fmtMoney(getProductWholesalePrice(p))}
+                      {unitSuffix(p)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Costo bruto</small>
+                    <strong>
+                      {fmtMoney(getProductGrossCost(p))}
+                      {unitSuffix(p)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Ganancia</small>
+                    <strong className={getProfit(p) < 0 ? 'products-danger-text' : ''}>
+                      {fmtMoney(getProfit(p))}
+                      {getProfitPercent(p) === null
+                        ? ''
+                        : ` (${getProfitPercent(p)!.toFixed(1)}%)`}
                     </strong>
                   </div>
 

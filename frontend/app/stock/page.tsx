@@ -304,14 +304,23 @@ export default function StockPage() {
     Math.ceil(movements.length / MOBILE_MOVEMENTS_PAGE_SIZE),
   );
 
+  const safeMobileStockPage = Math.min(
+    Math.max(1, mobileStockPage),
+    mobileStockTotalPages,
+  );
+  const safeMobileMovementsPage = Math.min(
+    Math.max(1, mobileMovementsPage),
+    mobileMovementsTotalPages,
+  );
+
   const mobileStockItems = filtered.slice(
-    (mobileStockPage - 1) * MOBILE_STOCK_PAGE_SIZE,
-    mobileStockPage * MOBILE_STOCK_PAGE_SIZE,
+    (safeMobileStockPage - 1) * MOBILE_STOCK_PAGE_SIZE,
+    safeMobileStockPage * MOBILE_STOCK_PAGE_SIZE,
   );
 
   const mobileMovementItems = movements.slice(
-    (mobileMovementsPage - 1) * MOBILE_MOVEMENTS_PAGE_SIZE,
-    mobileMovementsPage * MOBILE_MOVEMENTS_PAGE_SIZE,
+    (safeMobileMovementsPage - 1) * MOBILE_MOVEMENTS_PAGE_SIZE,
+    safeMobileMovementsPage * MOBILE_MOVEMENTS_PAGE_SIZE,
   );
 
   const lowStockCount = products.filter((p) => {
@@ -322,20 +331,6 @@ export default function StockPage() {
     );
   }).length;
 
-  useEffect(() => {
-    setMobileStockPage(1);
-  }, [search]);
-
-  useEffect(() => {
-    if (mobileStockPage > mobileStockTotalPages)
-      setMobileStockPage(mobileStockTotalPages);
-  }, [mobileStockPage, mobileStockTotalPages]);
-
-  useEffect(() => {
-    if (mobileMovementsPage > mobileMovementsTotalPages) {
-      setMobileMovementsPage(mobileMovementsTotalPages);
-    }
-  }, [mobileMovementsPage, mobileMovementsTotalPages]);
 
   const selected = products.find((p) => p.id === form.productId);
 
@@ -655,7 +650,10 @@ export default function StockPage() {
 
         <input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setMobileStockPage(1);
+          }}
           placeholder="Buscar producto..."
           style={{ paddingLeft: 34 }}
         />
@@ -858,14 +856,14 @@ export default function StockPage() {
         {!loading && filtered.length > 0 && (
           <div className="stock-mobile-pagination">
             <span>
-              Página {mobileStockPage} de {mobileStockTotalPages} ·{" "}
+              Página {safeMobileStockPage} de {mobileStockTotalPages} ·{" "}
               {filtered.length} productos
             </span>
 
             <div>
               <button
                 className="btn btn-secondary btn-sm"
-                disabled={mobileStockPage === 1}
+                disabled={safeMobileStockPage === 1}
                 onClick={() =>
                   setMobileStockPage((prev) => Math.max(1, prev - 1))
                 }
@@ -875,7 +873,7 @@ export default function StockPage() {
 
               <button
                 className="btn btn-secondary btn-sm"
-                disabled={mobileStockPage === mobileStockTotalPages}
+                disabled={safeMobileStockPage === mobileStockTotalPages}
                 onClick={() =>
                   setMobileStockPage((prev) =>
                     Math.min(mobileStockTotalPages, prev + 1),
@@ -1008,14 +1006,14 @@ export default function StockPage() {
         {!loading && movements.length > 0 && (
           <div className="stock-mobile-pagination">
             <span>
-              Página {mobileMovementsPage} de {mobileMovementsTotalPages} ·{" "}
+              Página {safeMobileMovementsPage} de {mobileMovementsTotalPages} ·{" "}
               {movements.length} movimientos
             </span>
 
             <div>
               <button
                 className="btn btn-secondary btn-sm"
-                disabled={mobileMovementsPage === 1}
+                disabled={safeMobileMovementsPage === 1}
                 onClick={() =>
                   setMobileMovementsPage((prev) => Math.max(1, prev - 1))
                 }
@@ -1025,7 +1023,7 @@ export default function StockPage() {
 
               <button
                 className="btn btn-secondary btn-sm"
-                disabled={mobileMovementsPage === mobileMovementsTotalPages}
+                disabled={safeMobileMovementsPage === mobileMovementsTotalPages}
                 onClick={() =>
                   setMobileMovementsPage((prev) =>
                     Math.min(mobileMovementsTotalPages, prev + 1),
@@ -1073,7 +1071,7 @@ export default function StockPage() {
           document.body,
         )}
 
-      <style jsx>{`
+      <style jsx global>{`
         .stock-mobile-list,
         .stock-mobile-summary,
         .stock-mobile-tabs,
@@ -1417,6 +1415,7 @@ export default function StockPage() {
 
           .stock-mobile-sheet {
             width: 100%;
+            height: auto;
             max-height: min(92dvh, 680px);
             overflow: hidden;
             display: flex;
@@ -1462,34 +1461,65 @@ export default function StockPage() {
           }
 
           .stock-mobile-sheet-body {
+            flex: 1 1 auto;
+            min-height: 0;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+            -webkit-overflow-scrolling: touch;
           }
 
           .stock-mobile-sheet-body .stock-form-grid {
-            grid-template-columns: 1fr !important;
+            display: flex !important;
+            flex-direction: column !important;
+            grid-template-columns: none !important;
             gap: 10px !important;
+            align-items: stretch !important;
+            width: 100% !important;
+            min-width: 0 !important;
           }
 
           .stock-mobile-sheet-body .stock-form-grid > div {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
             border: 1px solid var(--border);
             border-radius: 14px;
             background: var(--surface2);
             padding: 10px;
           }
 
+          .stock-mobile-sheet-body .stock-form-grid label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            color: var(--text3);
+          }
+
           .stock-mobile-sheet-body .stock-submit-btn {
-            width: 100%;
-            min-height: 42px;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            min-height: 46px;
             justify-content: center;
-            grid-column: auto;
+            grid-column: auto !important;
+            border-radius: 14px;
+            margin-top: 2px;
           }
 
           .stock-mobile-sheet-body select,
           .stock-mobile-sheet-body input {
-            width: 100%;
-            min-height: 38px;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            min-height: 42px;
             font-size: 14px;
+          }
+
+          .stock-mobile-sheet-body select {
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
         }
 
@@ -1531,8 +1561,138 @@ export default function StockPage() {
           .stock-mobile-sheet {
             max-height: 94dvh;
           }
-        }>;
+        }
       `}</style>
+
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          body:has(.stock-mobile-sheet-backdrop) {
+            overflow: hidden;
+          }
+
+          .stock-mobile-sheet-backdrop {
+            position: fixed !important;
+            inset: 0 !important;
+            z-index: 2147483000 !important;
+            display: flex !important;
+            align-items: flex-end !important;
+            justify-content: center !important;
+            background: rgba(0, 0, 0, 0.55) !important;
+            padding: 0 !important;
+          }
+
+          .stock-mobile-sheet {
+            width: 100% !important;
+            max-width: 100vw !important;
+            height: auto !important;
+            max-height: min(92dvh, 680px) !important;
+            overflow: hidden !important;
+            display: flex !important;
+            flex-direction: column !important;
+            border-radius: 22px 22px 0 0 !important;
+            border: 1px solid var(--border) !important;
+            background: var(--surface) !important;
+            box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.45) !important;
+          }
+
+          .stock-mobile-sheet-handle {
+            width: 44px !important;
+            height: 4px !important;
+            border-radius: 999px !important;
+            background: var(--border) !important;
+            margin: 10px auto 8px !important;
+            flex-shrink: 0 !important;
+          }
+
+          .stock-mobile-sheet-header {
+            display: flex !important;
+            align-items: flex-start !important;
+            justify-content: space-between !important;
+            gap: 12px !important;
+            padding: 0 14px 12px !important;
+            border-bottom: 1px solid var(--border) !important;
+            flex-shrink: 0 !important;
+          }
+
+          .stock-mobile-sheet-header b {
+            display: block !important;
+            color: var(--text) !important;
+            font-size: 15px !important;
+            line-height: 1.2 !important;
+          }
+
+          .stock-mobile-sheet-header small {
+            display: block !important;
+            margin-top: 3px !important;
+            color: var(--text3) !important;
+            font-size: 11px !important;
+            line-height: 1.25 !important;
+          }
+
+          .stock-mobile-sheet-body {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            padding: 12px 14px calc(14px + env(safe-area-inset-bottom)) !important;
+            -webkit-overflow-scrolling: touch !important;
+          }
+
+          .stock-mobile-sheet-body .stock-form-grid {
+            display: flex !important;
+            flex-direction: column !important;
+            grid-template-columns: none !important;
+            gap: 10px !important;
+            align-items: stretch !important;
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+
+          .stock-mobile-sheet-body .stock-form-grid > div {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 14px !important;
+            background: var(--surface2) !important;
+            padding: 10px !important;
+          }
+
+          .stock-mobile-sheet-body .stock-form-grid label {
+            display: block !important;
+            margin-bottom: 6px !important;
+            font-size: 10px !important;
+            letter-spacing: 0.08em !important;
+            color: var(--text3) !important;
+          }
+
+          .stock-mobile-sheet-body select,
+          .stock-mobile-sheet-body input {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            min-height: 42px !important;
+            font-size: 14px !important;
+          }
+
+          .stock-mobile-sheet-body select {
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+          }
+
+          .stock-mobile-sheet-body .stock-submit-btn {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            min-height: 46px !important;
+            justify-content: center !important;
+            grid-column: auto !important;
+            border-radius: 14px !important;
+            margin-top: 2px !important;
+          }
+        }
+      `}</style>
+
     </AppLayout>
-  );sss
+  );
 }

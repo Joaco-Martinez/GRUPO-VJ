@@ -190,10 +190,10 @@ function getComponentNeededQty(componentRelation: ProductComponentForPOS) {
   if (!componentProduct) return 0;
 
   if (componentProduct.saleUnit === 'KG') {
-    return num(componentRelation.quantityKg, componentRelation.quantity);
+    return num(componentRelation.quantityKg ?? undefined, componentRelation.quantity ?? undefined);
   }
 
-  return num(componentRelation.quantity, componentRelation.quantityKg);
+  return num(componentRelation.quantity ?? undefined, componentRelation.quantityKg ?? undefined);
 }
 
 function productStockByLocation(product: Product, stockLocation: StockLocation) {

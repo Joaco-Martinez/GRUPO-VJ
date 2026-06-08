@@ -570,8 +570,8 @@ export default function ProductosPage() {
                   <th>Categoría</th>
                   <th>Precio</th>
                   <th>Costo</th>
-                  <th>Stock local</th>
-                  <th>Depósito</th>
+                  <th>Stock Mayorista</th>
+                  <th>Stock Minorista</th>
                   <th>Tipo</th>
                   <th>Componentes</th>
                   <th></th>
@@ -794,7 +794,7 @@ export default function ProductosPage() {
                   </div>
 
                   <div>
-                    <small>Stock local</small>
+                    <small>Stock Mayorista</small>
                     <strong
                       className={
                         productStock(p) <= productMinStock(p) ? 'products-danger-text' : ''
@@ -805,7 +805,7 @@ export default function ProductosPage() {
                   </div>
 
                   <div>
-                    <small>Depósito</small>
+                    <small>Stock Minorista</small>
                     <strong>
                       {p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito)}
                     </strong>
@@ -1126,7 +1126,7 @@ export default function ProductosPage() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Stock local kg</label>
+                    <label className="form-label">Stock Mayorista kg</label>
                     <input
                       type="number"
                       value={form.stockLocalKg}
@@ -1137,7 +1137,7 @@ export default function ProductosPage() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Depósito kg</label>
+                    <label className="form-label">Stock Minorista kg</label>
                     <input
                       type="number"
                       value={form.stockDepositoKg}
@@ -1214,7 +1214,7 @@ export default function ProductosPage() {
                   {form.type !== 'COMPUESTO' && form.isService !== 'true' && (
                     <>
                       <div className="form-group">
-                        <label className="form-label">Stock local</label>
+                        <label className="form-label">Stock Mayorista</label>
                         <input
                           type="number"
                           value={form.stockLocal}
@@ -1228,7 +1228,7 @@ export default function ProductosPage() {
                       </div>
 
                       <div className="form-group">
-                        <label className="form-label">Depósito</label>
+                        <label className="form-label">Stock Minorista</label>
                         <input
                           type="number"
                           value={form.stockDeposito}

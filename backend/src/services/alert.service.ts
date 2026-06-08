@@ -51,7 +51,7 @@ class AlertService {
   }
 
   async checkProductStockFromData(product: Product) {
-    const alerts = [];
+    const alerts: { id: string; productId: string; message: string; createdAt: Date; resolved: boolean; }[] = [];
 
     if (product.isService) return alerts;
     if (!product.isActive) return alerts;

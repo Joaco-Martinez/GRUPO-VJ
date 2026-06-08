@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { MovementLocation, Product, StockMovement } from '@/types';
-import { fmtDate, normalizeArray, num, productMinStock, productStock } from '@/lib/helpers';
+import { fmtDate, normalizeArray, num } from '@/lib/helpers';
 import {
   ArrowDownCircle,
   ArrowLeftRight,
@@ -68,6 +68,134 @@ function movementIcon(type?: string) {
   }
 
   return <ArrowDownCircle size={14} style={{ color: 'var(--accent)' }} />;
+}
+
+type ProductComponentLike = {
+  quantity?: number | null;
+  quantityKg?: number | null;
+  component?: Product | null;
+};
+
+type ProductWithComponents = Product & {
+  components?: ProductComponentLike[];
+};
+
+type StockLocationKey = 'LOCAL' | 'DEPOSITO';
+
+function isCompositeProduct(product: Product) {
+  const productWithComponents = product as ProductWithComponents;
+
+  return product.type === 'COMPUESTO' && Array.isArray(productWithComponents.components) && productWithComponents.components.length > 0;
+}
+
+function getProductMinStock(product: Product) {
+  if (product.saleUnit === 'KG') {
+    return num(product.minStockKg);
+  }
+
+  return num(product.minStock);
+}
+
+function getSimpleProductStock(product: Product, location: StockLocationKey, useKg: boolean) {
+  if (location === 'LOCAL') {
+    return useKg ? num(product.stockLocalKg) : num(product.stockLocal);
+  }
+
+  return useKg ? num(product.stockDepositoKg) : num(product.stockDeposito);
+}
+
+function getComponentRequiredAmount(component: ProductComponentLike) {
+  const quantityKg = num(component.quantityKg);
+  const quantity = num(component.quantity);
+
+  if (quantityKg > 0) {
+    return {
+      amount: quantityKg,
+      useKg: true,
+    };
+  }
+
+  return {
+    amount: quantity,
+    useKg: false,
+  };
+}
+
+function getCompositeAvailableStock(product: Product, location: StockLocationKey) {
+  const components = (product as ProductWithComponents).components ?? [];
+
+  if (!components.length) return 0;
+
+  let available = Number.POSITIVE_INFINITY;
+
+  for (const item of components) {
+    const componentProduct = item.component;
+
+    if (!componentProduct) return 0;
+
+    const required = getComponentRequiredAmount(item);
+
+    if (required.amount <= 0) continue;
+
+    const componentStock = getSimpleProductStock(componentProduct, location, required.useKg);
+    const possibleUnits = Math.floor(componentStock / required.amount);
+
+    available = Math.min(available, possibleUnits);
+  }
+
+  if (!Number.isFinite(available)) return 0;
+
+  return Math.max(0, available);
+}
+
+function getProductStockByLocation(product: Product, location: StockLocationKey) {
+  if (isCompositeProduct(product)) {
+    return getCompositeAvailableStock(product, location);
+  }
+
+  return getSimpleProductStock(product, location, product.saleUnit === 'KG');
+}
+
+function getProductLocalStock(product: Product) {
+  return getProductStockByLocation(product, 'LOCAL');
+}
+
+function getProductDepositoStock(product: Product) {
+  return getProductStockByLocation(product, 'DEPOSITO');
+}
+
+function getStockUnit(product: Product) {
+  if (isCompositeProduct(product)) return ' promos';
+
+  return product.saleUnit === 'KG' ? ' kg' : '';
+}
+
+function isLowStock(stock: number, min: number) {
+  return min > 0 && stock <= min;
+}
+
+function getStockStatus(localLow: boolean, depositoLow: boolean) {
+  if (localLow && depositoLow) return 'BAJO EN AMBOS';
+  if (localLow) return 'BAJO EN MAYORISTA';
+  if (depositoLow) return 'BAJO EN MINORISTA';
+  return 'OK';
+}
+
+function getStockLowDetail(localLow: boolean, depositoLow: boolean) {
+  if (localLow && depositoLow) return 'Bajo de stock en Mayorista y Minorista';
+  if (localLow) return 'Bajo de stock en Mayorista';
+  if (depositoLow) return 'Bajo de stock en Minorista';
+  return 'Stock correcto en ambos depósitos';
+}
+
+function getStockBadgeClass(localLow: boolean, depositoLow: boolean) {
+  return localLow || depositoLow ? 'badge-red' : 'badge-green';
+}
+
+function movementLocationLabel(location?: MovementLocation | null) {
+  if (location === 'LOCAL') return 'Mayorista';
+  if (location === 'DEPOSITO') return 'Minorista';
+  return '—';
 }
 
 export default function StockPage() {
@@ -212,7 +340,7 @@ export default function StockPage() {
   };
 
   return (
-    <AppLayout title="Stock" subtitle="Inventario local, depósito y movimientos">
+    <AppLayout title="Stock" subtitle="Inventario mayorista, minorista y movimientos">
       <div className="card stock-form-card" style={{ padding: 16, marginBottom: 18 }}>
         <div
           className="stock-form-grid"
@@ -234,12 +362,20 @@ export default function StockPage() {
               <option value="">Seleccionar...</option>
 
               {products
-                .filter((p) => p.type === 'SIMPLE')
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {p.saleUnit === 'KG' ? `${p.stockLocalKg ?? 0} kg` : p.stockLocal}
-                  </option>
-                ))}
+                .filter((p) => p.type === 'SIMPLE' && !p.isService)
+                .map((p) => {
+                  const local = getProductLocalStock(p);
+                  const deposito = getProductDepositoStock(p);
+                  const unit = getStockUnit(p);
+
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {p.name} · Mayorista: {local}
+                      {unit} · Minorista: {deposito}
+                      {unit}
+                    </option>
+                  );
+                })}
             </select>
           </div>
 
@@ -276,8 +412,8 @@ export default function StockPage() {
                   }
                   disabled={saving}
                 >
-                  <option value="LOCAL">Local</option>
-                  <option value="DEPOSITO">Depósito</option>
+                  <option value="LOCAL">Mayorista</option>
+                  <option value="DEPOSITO">Minorista</option>
                 </select>
               </div>
 
@@ -294,8 +430,8 @@ export default function StockPage() {
                   }
                   disabled={saving}
                 >
-                  <option value="LOCAL">Local</option>
-                  <option value="DEPOSITO">Depósito</option>
+                  <option value="LOCAL">Mayorista</option>
+                  <option value="DEPOSITO">Minorista</option>
                 </select>
               </div>
             </>
@@ -313,8 +449,8 @@ export default function StockPage() {
                 }
                 disabled={saving}
               >
-                <option value="LOCAL">Local</option>
-                <option value="DEPOSITO">Depósito</option>
+                <option value="LOCAL">Mayorista</option>
+                <option value="DEPOSITO">Minorista</option>
               </select>
             </div>
           )}
@@ -339,7 +475,11 @@ export default function StockPage() {
             />
           </div>
 
-          <button className="btn btn-primary stock-submit-btn" onClick={save} disabled={saving || !selected}>
+          <button
+            className="btn btn-primary stock-submit-btn"
+            onClick={save}
+            disabled={saving || !selected}
+          >
             {saving ? (
               <span className="spinner" />
             ) : form.mode === 'TRANSFER' ? (
@@ -386,8 +526,8 @@ export default function StockPage() {
                   <th>Producto</th>
                   <th>SKU</th>
                   <th>Unidad</th>
-                  <th>Local</th>
-                  <th>Depósito</th>
+                  <th>Mayorista</th>
+                  <th>Minorista</th>
                   <th>Mínimo</th>
                   <th>Estado</th>
                 </tr>
@@ -395,44 +535,75 @@ export default function StockPage() {
 
               <tbody>
                 {filtered.map((p) => {
-                  const stock = productStock(p);
-                  const min = productMinStock(p);
-                  const deposito = p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito);
-                  const critical = stock <= min;
+                  const local = getProductLocalStock(p);
+                  const deposito = getProductDepositoStock(p);
+                  const min = getProductMinStock(p);
+                  const unit = getStockUnit(p);
+
+                  const localLow = isLowStock(local, min);
+                  const depositoLow = isLowStock(deposito, min);
+                  const status = getStockStatus(localLow, depositoLow);
+                  const badgeClass = getStockBadgeClass(localLow, depositoLow);
 
                   return (
                     <tr key={p.id}>
                       <td>
-                        <b>{p.name}</b>
+                        <div className="stock-product-name">
+                          <b>{p.name}</b>
+
+                          {isCompositeProduct(p) && (
+                            <span className="stock-product-note">
+                              Promo calculada por componentes
+                            </span>
+                          )}
+                        </div>
                       </td>
 
-                      <td style={{ fontFamily: 'var(--mono)' }}>{p.sku}</td>
+                      <td style={{ fontFamily: 'var(--mono)' }}>{p.sku || '—'}</td>
 
                       <td>
-                        <span className="badge badge-gray">{p.saleUnit}</span>
+                        <span className="badge badge-gray">
+                          {isCompositeProduct(p) ? 'PROMO' : p.saleUnit}
+                        </span>
                       </td>
 
                       <td
                         style={{
                           fontFamily: 'var(--mono)',
-                          color: critical ? 'var(--danger)' : 'var(--text)',
+                          color: localLow ? 'var(--danger)' : 'var(--text)',
+                          fontWeight: localLow ? 900 : 500,
                         }}
                       >
-                        {stock}
-                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                        {local}
+                        {unit}
                       </td>
 
-                      <td style={{ fontFamily: 'var(--mono)' }}>
+                      <td
+                        style={{
+                          fontFamily: 'var(--mono)',
+                          color: depositoLow ? 'var(--danger)' : 'var(--text)',
+                          fontWeight: depositoLow ? 900 : 500,
+                        }}
+                      >
                         {deposito}
-                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                        {unit}
                       </td>
-
-                      <td>{min}</td>
 
                       <td>
-                        <span className={`badge ${critical ? 'badge-red' : 'badge-green'}`}>
-                          {critical ? 'BAJO' : 'OK'}
-                        </span>
+                        {min}
+                        {unit}
+                      </td>
+
+                      <td>
+                        <div className="stock-status-cell">
+                          <span className={`badge ${badgeClass}`}>{status}</span>
+
+                          {(localLow || depositoLow) && (
+                            <small className="stock-low-detail">
+                              {getStockLowDetail(localLow, depositoLow)}
+                            </small>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -456,10 +627,15 @@ export default function StockPage() {
             </div>
           ) : (
             filtered.map((p) => {
-              const stock = productStock(p);
-              const min = productMinStock(p);
-              const deposito = p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito);
-              const critical = stock <= min;
+              const local = getProductLocalStock(p);
+              const deposito = getProductDepositoStock(p);
+              const min = getProductMinStock(p);
+              const unit = getStockUnit(p);
+
+              const localLow = isLowStock(local, min);
+              const depositoLow = isLowStock(deposito, min);
+              const status = getStockStatus(localLow, depositoLow);
+              const badgeClass = getStockBadgeClass(localLow, depositoLow);
 
               return (
                 <article className="stock-mobile-item" key={p.id}>
@@ -469,30 +645,44 @@ export default function StockPage() {
                       <span>{p.sku || 'Sin SKU'}</span>
                     </div>
 
-                    <span className={`badge ${critical ? 'badge-red' : 'badge-green'}`}>
-                      {critical ? 'BAJO' : 'OK'}
-                    </span>
+                    <span className={`badge ${badgeClass}`}>{status}</span>
                   </div>
 
+                  {(localLow || depositoLow) && (
+                    <div className="stock-mobile-alert">
+                      {getStockLowDetail(localLow, depositoLow)}
+                    </div>
+                  )}
+
                   <div className="stock-mobile-badges">
-                    <span className="badge badge-gray">{p.saleUnit}</span>
-                    <span className="badge badge-gray">Mínimo {min}</span>
+                    <span className="badge badge-gray">
+                      {isCompositeProduct(p) ? 'PROMO' : p.saleUnit}
+                    </span>
+
+                    {isCompositeProduct(p) && (
+                      <span className="badge badge-gray">Stock por componentes</span>
+                    )}
+
+                    <span className="badge badge-gray">
+                      Mínimo {min}
+                      {unit}
+                    </span>
                   </div>
 
                   <div className="stock-mobile-data">
                     <div>
-                      <small>Local</small>
-                      <strong className={critical ? 'stock-danger' : ''}>
-                        {stock}
-                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                      <small>Mayorista</small>
+                      <strong className={localLow ? 'stock-danger' : ''}>
+                        {local}
+                        {unit}
                       </strong>
                     </div>
 
                     <div>
-                      <small>Depósito</small>
-                      <strong>
+                      <small>Minorista</small>
+                      <strong className={depositoLow ? 'stock-danger' : ''}>
                         {deposito}
-                        {p.saleUnit === 'KG' ? ' kg' : ''}
+                        {unit}
                       </strong>
                     </div>
                   </div>
@@ -550,9 +740,9 @@ export default function StockPage() {
                     </span>
                   </td>
 
-                  <td>{m.from ?? '—'}</td>
+                  <td>{movementLocationLabel(m.from)}</td>
 
-                  <td>{m.to ?? '—'}</td>
+                  <td>{movementLocationLabel(m.to)}</td>
 
                   <td style={{ fontFamily: 'var(--mono)' }}>
                     {m.quantityKg ? `${m.quantityKg} kg` : m.quantity ?? '—'}
@@ -590,12 +780,12 @@ export default function StockPage() {
               <div className="stock-mobile-data">
                 <div>
                   <small>Desde</small>
-                  <strong>{m.from ?? '—'}</strong>
+                  <strong>{movementLocationLabel(m.from)}</strong>
                 </div>
 
                 <div>
                   <small>Hacia</small>
-                  <strong>{m.to ?? '—'}</strong>
+                  <strong>{movementLocationLabel(m.to)}</strong>
                 </div>
 
                 <div>
@@ -627,6 +817,41 @@ export default function StockPage() {
 
         .stock-location-field {
           grid-column: auto;
+        }
+
+
+        .stock-product-name {
+          display: grid;
+          gap: 4px;
+        }
+
+        .stock-product-note {
+          color: var(--text3);
+          font-size: 11px;
+          font-weight: 800;
+        }
+
+        .stock-status-cell {
+          display: grid;
+          gap: 5px;
+          align-items: start;
+        }
+
+        .stock-low-detail {
+          color: var(--danger);
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.2;
+        }
+
+        .stock-mobile-alert {
+          border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+          background: color-mix(in srgb, var(--danger) 10%, transparent);
+          color: var(--danger);
+          border-radius: 12px;
+          padding: 8px 10px;
+          font-size: 12px;
+          font-weight: 900;
         }
 
         @media (max-width: 1200px) {

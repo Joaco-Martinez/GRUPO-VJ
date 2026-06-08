@@ -12,6 +12,7 @@ import {
   Check,
   FileText,
   Loader2,
+  MessageCircle,
   Printer,
   ReceiptText,
   Search,
@@ -393,6 +394,7 @@ export default function VentasPage() {
 
   const [invoiceModal, setInvoiceModal] = useState<InvoiceModalState | null>(null);
   const [creditNoteModal, setCreditNoteModal] = useState<CreditNoteModalState | null>(null);
+  const [quotationModal, setQuotationModal] = useState<Sale | null>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
@@ -623,6 +625,42 @@ export default function VentasPage() {
     }
   };
 
+  const getQuotationPdfBlob = async (sale: Sale) => {
+    const response = await api.get(`/sales/${sale.id}/cotizacion-pdf`, {
+      responseType: 'blob',
+    });
+
+    const contentType = String(response.headers['content-type'] ?? '');
+
+    if (!contentType.includes('application/pdf')) {
+      const errorText = await response.data.text();
+
+      try {
+        const parsed = JSON.parse(errorText) as { message?: string; error?: string };
+        throw new Error(parsed.message || parsed.error || 'El backend no devolvió un PDF');
+      } catch {
+        throw new Error(errorText || 'El backend no devolvió un PDF válido');
+      }
+    }
+
+    return new Blob([response.data], {
+      type: 'application/pdf',
+    });
+  };
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
   const downloadQuotation = async (sale: Sale) => {
     if (sale.status !== 'PENDING') {
       toast.error('Solo se puede descargar cotización de una venta pendiente');
@@ -634,42 +672,66 @@ export default function VentasPage() {
 
       const toastId = toast.loading('Generando cotización...');
 
-      const response = await api.get(`/sales/${sale.id}/cotizacion-pdf`, {
-        responseType: 'blob',
-      });
+      const blob = await getQuotationPdfBlob(sale);
 
-      const contentType = String(response.headers['content-type'] ?? '');
+      downloadBlob(blob, `cotizacion-${sale.id}.pdf`);
 
-if (!contentType.includes('application/pdf')) {
-        const errorText = await response.data.text();
-
-        try {
-          const parsed = JSON.parse(errorText) as { message?: string; error?: string };
-          throw new Error(parsed.message || parsed.error || 'El backend no devolvió un PDF');
-        } catch {
-          throw new Error(errorText || 'El backend no devolvió un PDF válido');
-        }
-      }
-
-      const blob = new Blob([response.data], {
-        type: 'application/pdf',
-      });
-
-      const url = window.URL.createObjectURL(blob);
-
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `cotizacion-${sale.id}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-
-      link.remove();
-      window.URL.revokeObjectURL(url);
-
+      setQuotationModal(null);
       await load();
       toast.success('Cotización descargada', { id: toastId });
     } catch (error: unknown) {
       const message = await getBlobErrorMessage(error, 'No se pudo descargar la cotización.');
+      toast.error(message);
+    } finally {
+      setQuotationLoadingId(null);
+    }
+  };
+
+  const shareQuotationPdfWhatsapp = async (sale: Sale) => {
+    if (sale.status !== 'PENDING') {
+      toast.error('Solo se puede enviar cotización de una venta pendiente');
+      return;
+    }
+
+    try {
+      setQuotationLoadingId(sale.id);
+
+      const toastId = toast.loading('Generando cotización para WhatsApp...');
+
+      const blob = await getQuotationPdfBlob(sale);
+      const filename = `cotizacion-${sale.id.slice(-8)}.pdf`;
+      const file = new File([blob], filename, {
+        type: 'application/pdf',
+      });
+
+      const nav = navigator as Navigator & {
+        canShare?: (data: ShareData) => boolean;
+      };
+
+      const shareData: ShareData = {
+        title: `Cotización #${sale.id.slice(-8)}`,
+        text: `Hola, te envío la cotización en PDF de Grupo VJ. Total: ${fmtMoney(sale.total)}`,
+        files: [file],
+      };
+
+      if (navigator.share && (!nav.canShare || nav.canShare(shareData))) {
+        await navigator.share(shareData);
+
+        setQuotationModal(null);
+        await load();
+
+        toast.success('Elegí WhatsApp para enviar la cotización PDF', { id: toastId });
+        return;
+      }
+
+      downloadBlob(blob, filename);
+
+      toast.error(
+        'Este navegador no permite enviar PDFs directo por WhatsApp. Te descargué el PDF para adjuntarlo manualmente.',
+        { id: toastId }
+      );
+    } catch (error: unknown) {
+      const message = await getBlobErrorMessage(error, 'No se pudo compartir la cotización PDF.');
       toast.error(message);
     } finally {
       setQuotationLoadingId(null);
@@ -1234,8 +1296,8 @@ if (!contentType.includes('application/pdf')) {
                             <button
                               className="btn btn-secondary btn-sm"
                               disabled={quotationLoadingId === s.id}
-                              onClick={() => downloadQuotation(s)}
-                              title="Descargar cotización PDF"
+                              onClick={() => setQuotationModal(s)}
+                              title="Cotización PDF"
                             >
                               {quotationLoadingId === s.id ? (
                                 <Loader2 size={13} className="animate-spin" />
@@ -1475,7 +1537,7 @@ if (!contentType.includes('application/pdf')) {
                       <button
                         className="btn btn-secondary btn-sm"
                         disabled={quotationLoadingId === s.id}
-                        onClick={() => downloadQuotation(s)}
+                        onClick={() => setQuotationModal(s)}
                       >
                         {quotationLoadingId === s.id ? (
                           <Loader2 size={13} className="animate-spin" />
@@ -1648,14 +1710,14 @@ if (!contentType.includes('application/pdf')) {
                   <button
                     className="btn btn-secondary btn-sm"
                     disabled={quotationLoadingId === detail.id}
-                    onClick={() => downloadQuotation(detail)}
+                    onClick={() => setQuotationModal(detail)}
                   >
                     {quotationLoadingId === detail.id ? (
                       <Loader2 size={13} className="animate-spin" />
                     ) : (
                       <FileText size={13} />
                     )}
-                    Descargar cotización
+                    Cotización
                   </button>
                 </div>
               )}
@@ -1772,6 +1834,89 @@ if (!contentType.includes('application/pdf')) {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {quotationModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setQuotationModal(null)}
+        >
+          <div className="modal sales-small-modal" style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <b>Cotización #{quotationModal.id.slice(-8)}</b>
+
+              <button className="btn btn-ghost btn-sm" onClick={() => setQuotationModal(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ color: 'var(--text2)', marginBottom: 14 }}>
+                Elegí qué querés hacer con la cotización PDF de{' '}
+                <b>{clientName(quotationModal.client)}</b>.
+              </p>
+
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 14,
+                  padding: 12,
+                  marginBottom: 12,
+                  display: 'grid',
+                  gap: 6,
+                }}
+              >
+                <small style={{ color: 'var(--text3)' }}>Total cotizado</small>
+                <b style={{ fontSize: 20, color: 'var(--accent)' }}>
+                  {fmtMoney(quotationModal.total)}
+                </b>
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 14,
+                  padding: 12,
+                  color: 'var(--text2)',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                Para enviar el <b>PDF por WhatsApp</b>, el sistema usa el menú de compartir del
+                dispositivo. En celular te debería aparecer WhatsApp como opción. En PC, si el
+                navegador no permite compartir archivos, se descarga el PDF para adjuntarlo manualmente.
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                disabled={quotationLoadingId === quotationModal.id}
+                onClick={() => downloadQuotation(quotationModal)}
+              >
+                {quotationLoadingId === quotationModal.id ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <FileText size={16} />
+                )}
+                Descargar PDF
+              </button>
+
+              <button
+                className="btn btn-primary"
+                disabled={quotationLoadingId === quotationModal.id}
+                onClick={() => shareQuotationPdfWhatsapp(quotationModal)}
+              >
+                {quotationLoadingId === quotationModal.id ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <MessageCircle size={16} />
+                )}
+                Enviar PDF por WhatsApp
+              </button>
             </div>
           </div>
         </div>

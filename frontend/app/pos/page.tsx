@@ -53,6 +53,36 @@ const methods: PaymentMethod[] = [
 type StockLocation = 'LOCAL' | 'DEPOSITO';
 type DeliveryMode = 'PICKUP' | 'LOCAL_DELIVERY';
 
+function stockLocationLabel(location?: StockLocation | null) {
+  if (location === 'LOCAL') return 'Mayorista';
+  if (location === 'DEPOSITO') return 'Minorista';
+  return '—';
+}
+
+function stockLocationLabelLower(location?: StockLocation | null) {
+  if (location === 'LOCAL') return 'mayorista';
+  if (location === 'DEPOSITO') return 'minorista';
+  return '—';
+}
+
+function stockLocationStockLabel(location?: StockLocation | null) {
+  if (location === 'LOCAL') return 'stock Mayorista';
+  if (location === 'DEPOSITO') return 'stock Minorista';
+  return 'stock';
+}
+
+function stockLocationStockLabelCap(location?: StockLocation | null) {
+  if (location === 'LOCAL') return 'Stock Mayorista';
+  if (location === 'DEPOSITO') return 'Stock Minorista';
+  return 'Stock';
+}
+
+function stockLocationStockLabelLower(location?: StockLocation | null) {
+  if (location === 'LOCAL') return 'stock mayorista';
+  if (location === 'DEPOSITO') return 'stock minorista';
+  return 'stock';
+}
+
 type DeliveryCalculation = {
   distanceKm: number;
   pricePerKm: number;
@@ -464,7 +494,7 @@ export default function POSPage() {
       if (requirement.required > available) {
         toast.error(
           `Stock insuficiente para ${requirement.product.name} en ${
-            stockLocation === 'DEPOSITO' ? 'depósito' : 'local'
+            stockLocationStockLabelLower(stockLocation)
           }. Disponible: ${available}${requirement.product.saleUnit === 'KG' ? ' kg' : ''}`
         );
 
@@ -509,11 +539,11 @@ export default function POSPage() {
       toast.error(
         isCompositeProduct(product)
           ? `No se puede agregar la promo porque faltan componentes en ${
-              stockLocation === 'DEPOSITO' ? 'depósito' : 'local'
+              stockLocationStockLabelLower(stockLocation)
             }`
           : stockLocation === 'DEPOSITO'
-            ? 'Sin stock disponible en depósito'
-            : 'Sin stock disponible en local'
+            ? 'Sin stock disponible en stock Minorista'
+            : 'Sin stock disponible en stock Mayorista'
       );
 
       return;
@@ -968,10 +998,10 @@ export default function POSPage() {
               value={stockLocation}
               onChange={(e) => setStockLocation(e.target.value as StockLocation)}
               style={{ width: 210 }}
-              title="Depósito desde donde se descuenta la mercadería"
+              title="Depósito desde donde se descuenta la mercadería: Mayorista o Minorista"
             >
-              <option value="LOCAL">Descontar de Local</option>
-              <option value="DEPOSITO">Descontar de Depósito</option>
+              <option value="LOCAL">Descontar de stock Mayorista</option>
+              <option value="DEPOSITO">Descontar de stock Minorista</option>
             </select>
 
             <button className="btn btn-secondary btn-sm pos-refresh-btn" onClick={() => load(true)} disabled={loading}>
@@ -1095,7 +1125,7 @@ export default function POSPage() {
                         marginTop: 4,
                       }}
                     >
-                      Stock {stockLocation === 'DEPOSITO' ? 'depósito' : 'local'}:{' '}
+                      Stock {stockLocationStockLabelCap(stockLocation)}:{' '}
                       {stockLabel(p, stockLocation)}
                     </div>
                   </button>
@@ -1139,14 +1169,14 @@ export default function POSPage() {
               }}
             >
               <Warehouse size={13} />
-              Descuenta de: {stockLocation === 'DEPOSITO' ? 'Depósito' : 'Local'}
+              Descuenta de: {stockLocationStockLabelCap(stockLocation)}
             </div>
 
             <div className="form-group">
               <label className="form-label">Depósito / origen de stock</label>
               <select value={stockLocation} onChange={(e) => setStockLocation(e.target.value as StockLocation)}>
-                <option value="LOCAL">Local</option>
-                <option value="DEPOSITO">Depósito</option>
+                <option value="LOCAL">Mayorista</option>
+                <option value="DEPOSITO">Minorista</option>
               </select>
             </div>
 
@@ -1380,7 +1410,7 @@ export default function POSPage() {
 
                           {isStockControlledProduct(item.product) && (
                             <div style={{ color: 'var(--text3)', fontSize: 11 }}>
-                              Stock {stockLocation === 'DEPOSITO' ? 'depósito' : 'local'}:{' '}
+                              Stock {stockLocationStockLabelCap(stockLocation)}:{' '}
                               {stockLabel(item.product, stockLocation)}
                             </div>
                           )}

@@ -54,6 +54,7 @@ const emptyProductForm = {
   sku: '',
   type: 'SIMPLE',
   categoryId: '',
+  isService: 'false',
   saleUnit: 'UNIT',
   price: '',
   clientPrice: '',
@@ -121,7 +122,7 @@ export default function ProductosPage() {
   }, []);
 
   const simpleProducts = useMemo(
-    () => products.filter((p) => p.type === 'SIMPLE' && p.isActive !== false),
+    () => products.filter((p) => p.type === 'SIMPLE' && p.isActive !== false && (p as any).isService !== true),
     [products]
   );
 
@@ -159,6 +160,7 @@ export default function ProductosPage() {
       sku: product.sku ?? '',
       type: product.type,
       categoryId: product.categoryId ?? '',
+      isService: String(Boolean((product as any).isService)),
       saleUnit: product.saleUnit,
 
       price: String(product.price ?? ''),
@@ -208,8 +210,14 @@ export default function ProductosPage() {
   };
 
   const buildPayloadObject = () => {
+    const isService = form.isService === 'true';
+
     return {
       ...form,
+
+      isService,
+      type: isService ? 'SIMPLE' : form.type,
+      saleUnit: isService ? 'UNIT' : form.saleUnit,
 
       description: form.description?.trim() || '',
 
@@ -224,16 +232,16 @@ export default function ProductosPage() {
       wholesalePricePerKg:
         form.wholesalePricePerKg === '' ? undefined : num(form.wholesalePricePerKg),
 
-      stockLocal: num(form.stockLocal),
-      stockDeposito: num(form.stockDeposito),
-      stockLocalKg: num(form.stockLocalKg),
-      stockDepositoKg: num(form.stockDepositoKg),
+      stockLocal: isService ? 0 : num(form.stockLocal),
+      stockDeposito: isService ? 0 : num(form.stockDeposito),
+      stockLocalKg: isService ? 0 : num(form.stockLocalKg),
+      stockDepositoKg: isService ? 0 : num(form.stockDepositoKg),
 
-      minStock: num(form.minStock),
-      minStockKg: num(form.minStockKg),
+      minStock: isService ? 0 : num(form.minStock),
+      minStockKg: isService ? 0 : num(form.minStockKg),
 
       components:
-        form.type === 'COMPUESTO'
+        !isService && form.type === 'COMPUESTO'
           ? components
               .filter((c) => c.componentId)
               .map((c) => ({
@@ -659,23 +667,27 @@ export default function ProductosPage() {
                               : 'var(--text)',
                         }}
                       >
-                        {productStock(p)} {p.saleUnit === 'KG' ? 'kg' : ''}
+                        {(p as any).isService ? 'No descuenta stock' : `${productStock(p)} ${p.saleUnit === 'KG' ? 'kg' : ''}`}
                       </span>
                     </td>
 
                     <td>
                       <span style={{ fontFamily: 'var(--mono)' }}>
-                        {p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito)}
+                        {(p as any).isService ? '-' : p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito)}
                       </span>
                     </td>
 
                     <td>
                       <span
                         className={`badge ${
-                          p.type === 'COMPUESTO' ? 'badge-blue' : 'badge-green'
+                          (p as any).isService
+                            ? 'badge-gray'
+                            : p.type === 'COMPUESTO'
+                              ? 'badge-blue'
+                              : 'badge-green'
                         }`}
                       >
-                        {p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE'}
+                        {(p as any).isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE'}
                       </span>
                     </td>
 
@@ -748,10 +760,14 @@ export default function ProductosPage() {
 
                   <span
                     className={`badge ${
-                      p.type === 'COMPUESTO' ? 'badge-blue' : 'badge-green'
+                      (p as any).isService
+                        ? 'badge-gray'
+                        : p.type === 'COMPUESTO'
+                          ? 'badge-blue'
+                          : 'badge-green'
                     }`}
                   >
-                    {p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE'}
+                    {(p as any).isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE'}
                   </span>
                 </div>
 
@@ -955,6 +971,7 @@ export default function ProductosPage() {
                   <label className="form-label">Tipo</label>
                   <select
                     value={form.type}
+                    disabled={form.isService === 'true'}
                     onChange={(e) =>
                       setForm((p) => ({
                         ...p,
@@ -990,10 +1007,38 @@ export default function ProductosPage() {
 
               <div className="form-row products-form-row">
                 <div className="form-group">
+                  <label className="form-label">Producto / servicio</label>
+                  <select
+                    value={form.isService}
+                    onChange={(e) => {
+                      const nextIsService = e.target.value === 'true';
+
+                      setForm((p) => ({
+                        ...p,
+                        isService: String(nextIsService),
+                        type: nextIsService ? 'SIMPLE' : p.type,
+                        saleUnit: nextIsService ? 'UNIT' : p.saleUnit,
+                        stockLocal: nextIsService ? '0' : p.stockLocal,
+                        stockDeposito: nextIsService ? '0' : p.stockDeposito,
+                        stockLocalKg: nextIsService ? '0' : p.stockLocalKg,
+                        stockDepositoKg: nextIsService ? '0' : p.stockDepositoKg,
+                        minStock: nextIsService ? '0' : p.minStock,
+                        minStockKg: nextIsService ? '0' : p.minStockKg,
+                      }));
+
+                      if (nextIsService) setComponents([]);
+                    }}
+                  >
+                    <option value="false">Producto físico</option>
+                    <option value="true">Servicio</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
                   <label className="form-label">Unidad de venta</label>
                   <select
                     value={form.saleUnit}
-                    disabled={form.type === 'COMPUESTO'}
+                    disabled={form.type === 'COMPUESTO' || form.isService === 'true'}
                     onChange={(e) =>
                       setForm((p) => ({ ...p, saleUnit: e.target.value }))
                     }
@@ -1003,6 +1048,7 @@ export default function ProductosPage() {
                   </select>
                 </div>
 
+{form.isService !== 'true' && (
                 <div className="form-group">
                   <label className="form-label">Stock mínimo</label>
                   <input
@@ -1017,6 +1063,7 @@ export default function ProductosPage() {
                     }
                   />
                 </div>
+                )}
               </div>
 
               {form.saleUnit === 'KG' ? (
@@ -1167,7 +1214,7 @@ export default function ProductosPage() {
                     />
                   </div>
 
-                  {form.type !== 'COMPUESTO' && (
+                  {form.type !== 'COMPUESTO' && form.isService !== 'true' && (
                     <>
                       <div className="form-group">
                         <label className="form-label">Stock local</label>
@@ -1201,7 +1248,7 @@ export default function ProductosPage() {
                 </div>
               )}
 
-              {form.type === 'COMPUESTO' && (
+              {form.isService !== 'true' && form.type === 'COMPUESTO' && (
                 <div className="card products-components-card" style={{ padding: 14, marginTop: 10 }}>
                   <div
                     className="products-components-head"

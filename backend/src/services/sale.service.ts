@@ -107,6 +107,27 @@ type StockLine = {
   reason: string;
 };
 
+const DELIVERY_SKU = "ENVIO-FLETE2";
+
+function normalizeText(value?: string | null) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isDeliverySaleItem(item: ResolvedSaleItem) {
+  return normalizeText(item.productSku) === DELIVERY_SKU;
+}
+
+function shouldDiscountStock(item: ResolvedSaleItem) {
+  if (item.isService) return false;
+  if (isDeliverySaleItem(item)) return false;
+
+  return true;
+}
+
 function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
@@ -214,19 +235,28 @@ function resolvePurchasePriceSnapshot(product: any) {
 
 function applyDiscountAndProfitToItems(
   items: ResolvedSaleItem[],
-  subtotal: number,
+  discountBaseSubtotal: number,
   discountAmount: number
 ) {
   let appliedDiscount = 0;
 
+  const lastDiscountableIndex = (() => {
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      if (!isDeliverySaleItem(items[i])) return i;
+    }
+
+    return -1;
+  })();
+
   return items.map((item, index) => {
-    const isLast = index === items.length - 1;
+    const isDeliveryItem = isDeliverySaleItem(item);
+    const isLastDiscountable = index === lastDiscountableIndex;
 
     const proportionalDiscount =
-      subtotal > 0
-        ? isLast
+      !isDeliveryItem && discountBaseSubtotal > 0
+        ? isLastDiscountable
           ? round2(discountAmount - appliedDiscount)
-          : round2(discountAmount * (item.subtotal / subtotal))
+          : round2(discountAmount * (item.subtotal / discountBaseSubtotal))
         : 0;
 
     appliedDiscount = round2(appliedDiscount + proportionalDiscount);
@@ -262,7 +292,7 @@ function buildStockLines(items: ResolvedSaleItem[]) {
   const stockMap = new Map<string, StockLine>();
 
   for (const item of items) {
-    if (item.isService) {
+    if (!shouldDiscountStock(item)) {
       continue;
     }
 
@@ -343,12 +373,7 @@ async function discountStockLines(
   userId: string | undefined,
   saleId: string,
   stockLocation: StockLocation,
-  pendingAlerts: Array<{
-    productId: string;
-    name: string;
-    stockLocal: number;
-    minStock: number;
-  }>
+  pendingAlerts: string[]
 ) {
   for (const line of stockLines) {
     const data: any = {};
@@ -367,10 +392,6 @@ async function discountStockLines(
       data,
       select: {
         id: true,
-        name: true,
-        stockLocal: true,
-        stockDeposito: true,
-        minStock: true,
       },
     });
 
@@ -401,20 +422,7 @@ async function discountStockLines(
       data: movementData,
     });
 
-    const minStock = updatedProduct.minStock ?? 0;
-
-    if (
-      stockLocation === "LOCAL" &&
-      line.quantity > 0 &&
-      updatedProduct.stockLocal <= minStock
-    ) {
-      pendingAlerts.push({
-        productId: updatedProduct.id,
-        name: updatedProduct.name,
-        stockLocal: updatedProduct.stockLocal,
-        minStock,
-      });
-    }
+    pendingAlerts.push(updatedProduct.id);
   }
 }
 
@@ -423,7 +431,8 @@ async function restoreStockLines(
   stockLines: StockLine[],
   userId: string | undefined,
   saleId: string,
-  stockLocation: StockLocation
+  stockLocation: StockLocation,
+  pendingAlerts: string[]
 ) {
   for (const line of stockLines) {
     const data: any = {};
@@ -441,12 +450,17 @@ async function restoreStockLines(
       };
     }
 
-    await tx.product.update({
+    const updatedProduct = await tx.product.update({
       where: {
         id: line.productId,
       },
       data,
+      select: {
+        id: true,
+      },
     });
+
+    pendingAlerts.push(updatedProduct.id);
 
     const movementData: any = {
       type: MovementType.SALE_CANCEL,
@@ -941,7 +955,20 @@ export const saleService = {
         throw new Error("Producto no encontrado");
       }
 
-      const { quantity, quantityKg, qtyUsedForTotal } = resolveQty(product, item);
+      const isDeliveryProduct = normalizeText(product.sku) === DELIVERY_SKU;
+
+      const { quantity, quantityKg, qtyUsedForTotal } = isDeliveryProduct
+        ? {
+            quantity: Number(item.quantity ?? 1),
+            quantityKg: null as number | null,
+            qtyUsedForTotal: Number(item.quantity ?? 1),
+          }
+        : resolveQty(product, item);
+
+      if (isDeliveryProduct && (!Number.isFinite(quantity) || quantity <= 0)) {
+        throw new Error(`Cantidad inválida para ${product.name}`);
+      }
+
       const manualPrice = item.price !== undefined ? Number(item.price) : NaN;
 
       if (item.price !== undefined && (!Number.isFinite(manualPrice) || manualPrice < 0)) {
@@ -998,28 +1025,56 @@ export const saleService = {
       itemsWithPrices.reduce((acc, item) => acc + item.subtotal, 0)
     );
 
-    let discountAmount = 0;
-
-    if (data.discountType && typeof data.discountValue === "number") {
-      discountAmount =
-        data.discountType === "PERCENTAGE"
-          ? subtotal * (data.discountValue / 100)
-          : data.discountValue;
-    }
-
-    discountAmount = round2(discountAmount);
-
     const deliveryCost = round2(Number(data.deliveryCost ?? 0));
 
     if (!Number.isFinite(deliveryCost) || deliveryCost < 0) {
       throw new Error("El costo de envío no puede ser negativo");
     }
 
+    const deliveryLineSubtotal = round2(
+      itemsWithPrices
+        .filter(isDeliverySaleItem)
+        .reduce((acc, item) => acc + item.subtotal, 0)
+    );
+
+    const discountBaseSubtotal = round2(subtotal - deliveryLineSubtotal);
+
+    let discountAmount = 0;
+
+    if (data.discountType && typeof data.discountValue === "number") {
+      discountAmount =
+        data.discountType === "PERCENTAGE"
+          ? discountBaseSubtotal * (data.discountValue / 100)
+          : data.discountValue;
+    }
+
+    discountAmount = round2(discountAmount);
+
+    if ((data.deliveryMethod ?? DeliveryMethod.PICKUP) === DeliveryMethod.LOCAL_DELIVERY) {
+      if (deliveryCost <= 0) {
+        throw new Error("El costo de envío debe ser mayor a 0");
+      }
+
+      if (deliveryLineSubtotal <= 0) {
+        throw new Error(
+          `El envío debe venir cargado como item (${DELIVERY_SKU}) en la venta`
+        );
+      }
+
+      if (Math.abs(deliveryLineSubtotal - deliveryCost) > 0.01) {
+        throw new Error(
+          `El item de envío (${round2(deliveryLineSubtotal)}) no coincide con deliveryCost (${deliveryCost})`
+        );
+      }
+    }
+
+    // El envío ya entra dentro de subtotal porque se manda como un item de venta.
+    // Por eso NO se suma deliveryCost otra vez, para no duplicarlo.
     const total = round2(subtotal - discountAmount);
 
     const itemsWithProfit = applyDiscountAndProfitToItems(
       itemsWithPrices,
-      subtotal,
+      discountBaseSubtotal,
       discountAmount
     );
 
@@ -1044,12 +1099,7 @@ export const saleService = {
     const stockLocation = normalizeStockLocation(data.stockLocation);
     const stockLines = buildStockLines(itemsWithProfit);
 
-    const pendingAlerts: Array<{
-      productId: string;
-      name: string;
-      stockLocal: number;
-      minStock: number;
-    }> = [];
+    const pendingAlerts: string[] = [];
 
     const saleStatus = data.status ?? SaleStatus.PENDING;
 
@@ -1180,17 +1230,14 @@ export const saleService = {
       }
     );
 
+    const uniqueProductIds = [...new Set(pendingAlerts)];
+
     void Promise.all(
-      pendingAlerts.map(async (alert) => {
+      uniqueProductIds.map(async (productId) => {
         try {
-          await alertService.createAlert(
-            alert.productId,
-            alert.name,
-            alert.stockLocal,
-            alert.minStock
-          );
+          await alertService.checkProductStock(productId);
         } catch (error) {
-          console.error("Error creando alerta de stock:", error);
+          console.error("Error revisando alerta de stock:", error);
         }
       })
     );
@@ -1257,6 +1304,7 @@ export const saleService = {
 
     const restoredStockLines: StockLine[] = [];
     const stockLocation = normalizeStockLocation((sale as any).stockLocation ?? "LOCAL");
+    const pendingAlerts: string[] = [];
 
     if (status === SaleStatus.CANCELLED) {
       const resolvedItems: ResolvedSaleItem[] = sale.items.map((item) => ({
@@ -1294,7 +1342,8 @@ export const saleService = {
             restoredStockLines,
             sale.userId ?? undefined,
             sale.id,
-            stockLocation
+            stockLocation,
+            pendingAlerts
           );
 
           await reverseAccountDebtFromSale(tx, sale);
@@ -1336,6 +1385,20 @@ export const saleService = {
         maxWait: 20000,
       }
     );
+
+    if (pendingAlerts.length > 0) {
+      const uniqueProductIds = [...new Set(pendingAlerts)];
+
+      void Promise.all(
+        uniqueProductIds.map(async (productId) => {
+          try {
+            await alertService.checkProductStock(productId);
+          } catch (error) {
+            console.error("Error revisando alerta de stock:", error);
+          }
+        })
+      );
+    }
 
     if (status === SaleStatus.COMPLETED) {
       await financeService.registerIncomeFromSale(id);

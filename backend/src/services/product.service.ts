@@ -9,6 +9,7 @@ import {
 import type { Express } from "express";
 import cloudinary from "../config/cloudinary";
 import fs from "fs";
+import alertService from "./alert.service";
 
 function normalizeSku(raw: string): string {
   return raw
@@ -445,6 +446,8 @@ export const productService = {
         include: productInclude,
       });
 
+      await alertService.checkProductStock(created.id);
+
       return created;
     } catch (err: any) {
       safeDeleteLocalFile(data.file?.path);
@@ -639,11 +642,15 @@ export const productService = {
     }
 
     try {
-      return await prisma.product.update({
+      const updated = await prisma.product.update({
         where: { id },
         data: prismaData,
         include: productInclude,
       });
+
+      await alertService.checkProductStock(updated.id);
+
+      return updated;
     } catch (err: any) {
       if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
         throw new Error("Ya existe un producto con ese SKU");
@@ -761,6 +768,8 @@ export const productService = {
       return productUpdated;
     });
 
+    await alertService.checkProductStock(updated.id);
+
     return updated;
   },
 
@@ -826,6 +835,8 @@ export const productService = {
       return productUpdated;
     });
 
+    await alertService.checkProductStock(updated.id);
+
     return updated;
   },
 
@@ -875,6 +886,8 @@ export const productService = {
       return productUpdated;
     });
 
+    await alertService.checkProductStock(updated.id);
+
     return updated;
   },
 
@@ -923,6 +936,8 @@ export const productService = {
 
       return productUpdated;
     });
+
+    await alertService.checkProductStock(updated.id);
 
     return updated;
   },

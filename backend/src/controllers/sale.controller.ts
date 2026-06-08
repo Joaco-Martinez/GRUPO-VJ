@@ -65,9 +65,7 @@ export const saleController = {
       );
 
       if (!sale) {
-        return res.status(404).json({
-          message: "Venta no encontrada",
-        });
+        return res.status(404).json({ message: "Venta no encontrada" });
       }
 
       const safeSale = JSON.parse(
@@ -84,10 +82,8 @@ export const saleController = {
 
   async generarCotizacion(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id } = req.params;
-
       const result = await saleService.generarCotizacion(
-        getParamAsString(id, "id")
+        getParamAsString(req.params.id, "id")
       );
 
       res.setHeader("Content-Type", "application/pdf");
@@ -113,7 +109,6 @@ export const saleController = {
             quantity: toNumber(item.quantity) ?? 0,
             quantityKg: toNumber(item.quantityKg),
             price: toNumber(item.price),
-
             boxContents: Array.isArray(item.boxContents)
               ? item.boxContents.map((box: any) => ({
                   productId: box.productId,
@@ -152,28 +147,21 @@ export const saleController = {
 
       const payload = {
         ...body,
-
         stockLocation,
         quotationHours: toNumber(body.quotationHours),
         discountValue: toNumber(body.discountValue),
-
         businessLocationId: body.businessLocationId ?? null,
-
         deliveryMethod,
         deliveryStatus,
         deliveryAddressSnapshot: body.deliveryAddressSnapshot ?? null,
         deliveryDistanceKm: toNumber(body.deliveryDistanceKm),
-deliveryPricePerKm: toNumber(body.deliveryPricePerKm),
-deliveryCost: toNumber(body.deliveryCost) ?? 0,
-
+        deliveryPricePerKm: toNumber(body.deliveryPricePerKm),
+        deliveryCost: toNumber(body.deliveryCost) ?? 0,
         transportName: body.transportName ?? null,
         transportCuit: body.transportCuit ?? null,
-
         packagesCount: toIntOrNull(body.packagesCount),
         declaredValue: toNumber(body.declaredValue),
-
         items,
-
         payments: Array.isArray(body.payments)
           ? body.payments.map((payment: any) => ({
               method: payment.method as PaymentMethod,
@@ -203,9 +191,7 @@ deliveryCost: toNumber(body.deliveryCost) ?? 0,
       const { action } = req.body;
 
       if (!["COMPLETE", "CANCEL"].includes(action)) {
-        return res.status(400).json({
-          message: "Acción inválida. Usá COMPLETE o CANCEL",
-        });
+        return res.status(400).json({ message: "Acción inválida. Usá COMPLETE o CANCEL" });
       }
 
       const mapped = action === "COMPLETE" ? "COMPLETED" : "CANCELLED";
@@ -222,9 +208,7 @@ deliveryCost: toNumber(body.deliveryCost) ?? 0,
       const { status } = req.body as { status: SaleStatus };
 
       if (!status || !Object.values(SaleStatus).includes(status)) {
-        return res.status(400).json({
-          message: "Estado de venta inválido",
-        });
+        return res.status(400).json({ message: "Estado de venta inválido" });
       }
 
       const updated = await saleService.updateStatus(
@@ -240,17 +224,14 @@ deliveryCost: toNumber(body.deliveryCost) ?? 0,
 
   async updatePaymentMethod(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id } = req.params;
       const { paymentMethod } = req.body as { paymentMethod: PaymentMethod };
 
       if (!paymentMethod) {
-        return res.status(400).json({
-          message: "paymentMethod es requerido",
-        });
+        return res.status(400).json({ message: "paymentMethod es requerido" });
       }
 
       const updated = await saleService.updatePaymentMethod(
-        getParamAsString(id, "id"),
+        getParamAsString(req.params.id, "id"),
         paymentMethod
       );
 
@@ -299,9 +280,8 @@ deliveryCost: toNumber(body.deliveryCost) ?? 0,
 
   async generarNotaPedido(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id } = req.params;
       const result = await saleService.generarNotaPedido(
-        getParamAsString(id, "id")
+        getParamAsString(req.params.id, "id")
       );
 
       res.json({

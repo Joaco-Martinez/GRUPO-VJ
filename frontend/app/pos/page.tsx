@@ -77,6 +77,61 @@ type ConfirmState = {
 
 const DELIVERY_SKU = 'ENVIO-FLETE2';
 
+function normalizeText(value?: string | null) {
+  return String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function isDeliveryProduct(product?: Product | null) {
+  if (!product) return false;
+
+  return normalizeText(product.sku) === DELIVERY_SKU;
+}
+
+
+function getProductImageUrl(product?: Product | null) {
+  if (!product) return null;
+
+  const imageUrl = (product as Product & { imageUrl?: string | null }).imageUrl;
+
+  return imageUrl?.trim() || null;
+}
+
+type ProductComponentForPOS = {
+  id?: string;
+  componentId?: string | null;
+  quantity?: number | null;
+  quantityKg?: number | null;
+  component?: Product | null;
+};
+
+type ProductWithComponents = Product & {
+  components?: ProductComponentForPOS[] | null;
+};
+
+function isCompositeProduct(product?: Product | null) {
+  return product?.type === 'COMPUESTO';
+}
+
+function getCompositeComponents(product?: Product | null) {
+  return ((product as ProductWithComponents | null)?.components ?? []).filter(
+    (component) => component?.component
+  );
+}
+
+function isStockControlledProduct(product?: Product | null) {
+  if (!product) return false;
+  if (isDeliveryProduct(product)) return false;
+  if (product.isService) return false;
+
+  // Los COMPUESTO / PROMO también controlan stock,
+  // pero el stock se calcula con sus componentes.
+  return true;
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return (
     (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
@@ -87,10 +142,7 @@ function getErrorMessage(error: unknown, fallback: string) {
   );
 }
 
-function productStockByLocation(product: Product, stockLocation: StockLocation) {
-  if (product.isService) return 999999;
-  if (product.type === 'COMPUESTO') return 999999;
-
+function productRawStockByLocation(product: Product, stockLocation: StockLocation) {
   if (product.saleUnit === 'KG') {
     return stockLocation === 'DEPOSITO'
       ? num(product.stockDepositoKg)
@@ -102,9 +154,56 @@ function productStockByLocation(product: Product, stockLocation: StockLocation) 
     : num(product.stockLocal);
 }
 
+function getComponentNeededQty(componentRelation: ProductComponentForPOS) {
+  const componentProduct = componentRelation.component;
+
+  if (!componentProduct) return 0;
+
+  if (componentProduct.saleUnit === 'KG') {
+    return num(componentRelation.quantityKg, componentRelation.quantity);
+  }
+
+  return num(componentRelation.quantity, componentRelation.quantityKg);
+}
+
+function productStockByLocation(product: Product, stockLocation: StockLocation) {
+  if (isDeliveryProduct(product)) return 999999;
+  if (product.isService) return 999999;
+
+  if (isCompositeProduct(product)) {
+    const components = getCompositeComponents(product);
+
+    if (!components.length) return 0;
+
+    const availableByComponent = components.map((componentRelation) => {
+      const componentProduct = componentRelation.component;
+
+      if (!componentProduct) return 0;
+
+      const neededQty = getComponentNeededQty(componentRelation);
+
+      if (neededQty <= 0) return 0;
+
+      const componentStock = productRawStockByLocation(componentProduct, stockLocation);
+
+      return Math.floor(componentStock / neededQty);
+    });
+
+    return Math.max(0, Math.min(...availableByComponent));
+  }
+
+  return productRawStockByLocation(product, stockLocation);
+}
+
 function stockLabel(product: Product, stockLocation: StockLocation) {
+  if (isDeliveryProduct(product)) return 'envío / servicio';
   if (product.isService) return 'servicio';
-  if (product.type === 'COMPUESTO') return 'por componentes';
+
+  if (isCompositeProduct(product)) {
+    const availablePromos = productStockByLocation(product, stockLocation);
+
+    return `${availablePromos} promo${availablePromos === 1 ? '' : 's'}`;
+  }
 
   const stock = productStockByLocation(product, stockLocation);
 
@@ -278,10 +377,7 @@ export default function POSPage() {
     businessLocations.find((location) => location.id === businessLocationId) ?? null;
 
   const deliveryProduct = useMemo(
-    () =>
-      products.find(
-        (p) => p.sku === DELIVERY_SKU || p.name.toUpperCase().includes('ENVÍO')
-      ),
+    () => products.find((p) => isDeliveryProduct(p)),
     [products]
   );
 
@@ -295,6 +391,7 @@ export default function POSPage() {
   const filtered = useMemo(() => {
     return products.filter((p) => {
       if (p.isService) return false;
+      if (isDeliveryProduct(p)) return false;
 
       const q = search.toLowerCase();
 
@@ -307,115 +404,163 @@ export default function POSPage() {
     });
   }, [products, search, categoryId]);
 
+  const getCartStockRequirements = (items: CartItem[]) => {
+    const requirements = new Map<
+      string,
+      {
+        product: Product;
+        required: number;
+      }
+    >();
+
+    const addRequirement = (product: Product, required: number) => {
+      if (required <= 0) return;
+
+      const current = requirements.get(product.id);
+
+      requirements.set(product.id, {
+        product,
+        required: (current?.required ?? 0) + required,
+      });
+    };
+
+    for (const item of items) {
+      if (item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService) {
+        continue;
+      }
+
+      const itemQty = item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
+
+      if (itemQty <= 0) continue;
+
+      if (isCompositeProduct(item.product)) {
+        const components = getCompositeComponents(item.product);
+
+        for (const componentRelation of components) {
+          const componentProduct = componentRelation.component;
+
+          if (!componentProduct) continue;
+
+          const neededPerPromo = getComponentNeededQty(componentRelation);
+
+          addRequirement(componentProduct, neededPerPromo * itemQty);
+        }
+
+        continue;
+      }
+
+      addRequirement(item.product, itemQty);
+    }
+
+    return requirements;
+  };
+
+  const validateCartStockItems = (items: CartItem[]) => {
+    const requirements = getCartStockRequirements(items);
+
+    for (const requirement of requirements.values()) {
+      const available = productRawStockByLocation(requirement.product, stockLocation);
+
+      if (requirement.required > available) {
+        toast.error(
+          `Stock insuficiente para ${requirement.product.name} en ${
+            stockLocation === 'DEPOSITO' ? 'depósito' : 'local'
+          }. Disponible: ${available}${requirement.product.saleUnit === 'KG' ? ' kg' : ''}`
+        );
+
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const buildCartWithProduct = (product: Product) => {
+    const exists = cart.find((i) => i.product.id === product.id);
+
+    if (exists) {
+      return cart.map((i) => {
+        if (i.product.id !== product.id) return i;
+
+        if (product.saleUnit === 'KG') return i;
+
+        return {
+          ...i,
+          quantity: i.quantity + 1,
+        };
+      });
+    }
+
+    return [
+      ...cart,
+      {
+        product,
+        quantity: product.saleUnit === 'KG' ? 0 : 1,
+        quantityKg: product.saleUnit === 'KG' ? 0.1 : undefined,
+        priceType,
+      },
+    ];
+  };
+
   const add = (product: Product) => {
     const stock = productStockByLocation(product, stockLocation);
 
-    if (!product.isService && product.type !== 'COMPUESTO' && stock <= 0) {
+    if (isStockControlledProduct(product) && stock <= 0) {
       toast.error(
-        stockLocation === 'DEPOSITO'
-          ? 'Sin stock disponible en depósito'
-          : 'Sin stock disponible en local'
+        isCompositeProduct(product)
+          ? `No se puede agregar la promo porque faltan componentes en ${
+              stockLocation === 'DEPOSITO' ? 'depósito' : 'local'
+            }`
+          : stockLocation === 'DEPOSITO'
+            ? 'Sin stock disponible en depósito'
+            : 'Sin stock disponible en local'
       );
+
       return;
     }
 
-    setCart((prev) => {
-      const exists = prev.find((i) => i.product.id === product.id);
+    const nextCart = buildCartWithProduct(product);
 
-      if (exists) {
-        return prev.map((i) => {
-          if (i.product.id !== product.id) return i;
+    if (!validateCartStockItems(nextCart)) return;
 
-          if (product.saleUnit === 'KG') return i;
-
-          const nextQty = i.quantity + 1;
-
-          if (!product.isService && product.type !== 'COMPUESTO' && nextQty > stock) {
-            toast.error(
-              stockLocation === 'DEPOSITO'
-                ? 'No hay más stock disponible en depósito'
-                : 'No hay más stock disponible en local'
-            );
-
-            return i;
-          }
-
-          return {
-            ...i,
-            quantity: nextQty,
-          };
-        });
-      }
-
-      return [
-        ...prev,
-        {
-          product,
-          quantity: product.saleUnit === 'KG' ? 0 : 1,
-          quantityKg: product.saleUnit === 'KG' ? 0.1 : undefined,
-          priceType,
-        },
-      ];
-    });
+    setCart(nextCart);
   };
 
   const setQty = (id: string, value: number) => {
-    setCart((prev) =>
-      prev.map((i) => {
-        if (i.product.id !== id) return i;
+    const nextCart = cart.map((i) => {
+      if (i.product.id !== id) return i;
 
-        if (i.isDeliveryItem || i.product.isService) {
-          return {
-            ...i,
-            quantity: 1,
-          };
-        }
-
-        const stock = productStockByLocation(i.product, stockLocation);
-        const nextQty = Math.max(1, value);
-
-        if (i.product.type !== 'COMPUESTO' && nextQty > stock) {
-          toast.error(
-            stockLocation === 'DEPOSITO'
-              ? 'No hay suficiente stock en depósito'
-              : 'No hay suficiente stock en local'
-          );
-
-          return i;
-        }
-
+      if (i.isDeliveryItem || isDeliveryProduct(i.product) || i.product.isService) {
         return {
           ...i,
-          quantity: nextQty,
+          quantity: 1,
         };
-      })
-    );
+      }
+
+      return {
+        ...i,
+        quantity: Math.max(1, value),
+      };
+    });
+
+    if (!validateCartStockItems(nextCart)) return;
+
+    setCart(nextCart);
   };
 
   const setKg = (id: string, value: number) => {
-    setCart((prev) =>
-      prev.map((i) => {
-        if (i.product.id !== id) return i;
+    const nextCart = cart.map((i) => {
+      if (i.product.id !== id) return i;
 
-        const stock = productStockByLocation(i.product, stockLocation);
-        const nextKg = Math.max(0.001, value);
+      return {
+        ...i,
+        quantityKg: Math.max(0.001, value),
+      };
+    });
 
-        if (!i.product.isService && i.product.type !== 'COMPUESTO' && nextKg > stock) {
-          toast.error(
-            stockLocation === 'DEPOSITO'
-              ? 'No hay suficiente stock KG en depósito'
-              : 'No hay suficiente stock KG en local'
-          );
+    if (!validateCartStockItems(nextCart)) return;
 
-          return i;
-        }
-
-        return {
-          ...i,
-          quantityKg: nextKg,
-        };
-      })
-    );
+    setCart(nextCart);
   };
 
   const remove = (id: string) => {
@@ -541,20 +686,35 @@ export default function POSPage() {
     }
   };
 
-  const subtotal = cart.reduce((a, item) => {
+  const productsSubtotal = cart.reduce((a, item) => {
+    if (item.isDeliveryItem || isDeliveryProduct(item.product)) return a;
+
     const qty = item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
 
     return a + getItemPrice(item, priceType) * qty;
   }, 0);
 
+  const deliveryLineSubtotal = cart.reduce((a, item) => {
+    if (!item.isDeliveryItem && !isDeliveryProduct(item.product)) return a;
+
+    return a + num(item.manualPrice, getItemPrice(item, priceType));
+  }, 0);
+
+  const deliveryCostForTotal =
+    deliveryMode === 'LOCAL_DELIVERY'
+      ? Math.max(num(deliveryCalculation?.deliveryCost), deliveryLineSubtotal)
+      : 0;
+
+  const subtotal = productsSubtotal;
+
   const discount =
     discountType === 'PERCENTAGE'
-      ? subtotal * (num(discountValue) / 100)
+      ? productsSubtotal * (num(discountValue) / 100)
       : discountType === 'FIXED'
         ? num(discountValue)
         : 0;
 
-  const total = Math.max(0, subtotal - discount);
+  const total = Math.max(0, productsSubtotal - discount + deliveryCostForTotal);
 
   const paid =
     paymentMode === 'multi'
@@ -569,10 +729,10 @@ export default function POSPage() {
 
   const validateCartStock = () => {
     for (const item of cart) {
-      if (item.product.isService) continue;
-      if (item.product.type === 'COMPUESTO') continue;
+      if (item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService) {
+        continue;
+      }
 
-      const stock = productStockByLocation(item.product, stockLocation);
       const qty = item.product.saleUnit === 'KG' ? num(item.quantityKg) : item.quantity;
 
       if (qty <= 0) {
@@ -580,18 +740,13 @@ export default function POSPage() {
         return false;
       }
 
-      if (qty > stock) {
-        toast.error(
-          `Stock insuficiente para ${item.product.name} en ${
-            stockLocation === 'DEPOSITO' ? 'depósito' : 'local'
-          }. Disponible: ${stock}${item.product.saleUnit === 'KG' ? ' kg' : ''}`
-        );
-
+      if (isCompositeProduct(item.product) && !getCompositeComponents(item.product).length) {
+        toast.error(`La promo ${item.product.name} no tiene componentes configurados`);
         return false;
       }
     }
 
-    return true;
+    return validateCartStockItems(cart);
   };
 
   const validateSale = () => {
@@ -628,10 +783,8 @@ export default function POSPage() {
         return false;
       }
 
-      const hasDeliveryItem = cart.some((item) => item.product.id === deliveryProduct.id);
-
-      if (!hasDeliveryItem) {
-        toast.error('El envío no está agregado al carrito');
+      if (deliveryCostForTotal <= 0) {
+        toast.error('El costo de envío debe ser mayor a 0');
         return false;
       }
     }
@@ -670,17 +823,28 @@ export default function POSPage() {
           deliveryMode === 'LOCAL_DELIVERY' ? deliveryCalculation?.distanceKm : null,
         deliveryPricePerKm:
           deliveryMode === 'LOCAL_DELIVERY' ? num(deliveryPricePerKm) : null,
-        deliveryCost: deliveryMode === 'LOCAL_DELIVERY' ? deliveryCalculation?.deliveryCost ?? 0 : 0,
+        deliveryCost: deliveryMode === 'LOCAL_DELIVERY' ? deliveryCostForTotal : 0,
 
-        items: cart.map((i) => ({
-          productId: i.product.id,
-          quantity: i.product.saleUnit === 'KG' ? undefined : i.quantity,
-          quantityKg: i.product.saleUnit === 'KG' ? num(i.quantityKg) : undefined,
-          price:
-            i.isDeliveryItem && deliveryMode === 'LOCAL_DELIVERY'
-              ? num(deliveryCalculation?.deliveryCost)
-              : getItemPrice(i, priceType),
-        })),
+        items: [
+          ...cart
+            .filter((i) => !i.isDeliveryItem && !isDeliveryProduct(i.product))
+            .map((i) => ({
+              productId: i.product.id,
+              quantity: i.product.saleUnit === 'KG' ? undefined : i.quantity,
+              quantityKg: i.product.saleUnit === 'KG' ? num(i.quantityKg) : undefined,
+              price: getItemPrice(i, priceType),
+            })),
+          ...(deliveryMode === 'LOCAL_DELIVERY' && deliveryProduct && deliveryCostForTotal > 0
+            ? [
+                {
+                  productId: deliveryProduct.id,
+                  quantity: 1,
+                  quantityKg: undefined,
+                  price: deliveryCostForTotal,
+                },
+              ]
+            : []),
+        ],
 
         payments:
           paymentMode === 'multi'
@@ -694,6 +858,8 @@ export default function POSPage() {
                 }))
             : undefined,
       };
+
+      console.log('🧾 Payload venta POS:', payload);
 
       await api.post('/sales', payload);
 
@@ -827,7 +993,8 @@ export default function POSPage() {
             ) : (
               filtered.map((p) => {
                 const stock = productStockByLocation(p, stockLocation);
-                const withoutStock = !p.isService && p.type !== 'COMPUESTO' && stock <= 0;
+                const withoutStock = isStockControlledProduct(p) && stock <= 0;
+                const imageUrl = getProductImageUrl(p);
 
                 return (
                   <button
@@ -836,32 +1003,73 @@ export default function POSPage() {
                     onClick={() => add(p)}
                     disabled={withoutStock}
                     style={{
-                      padding: 14,
+                      padding: 12,
                       textAlign: 'left',
                       opacity: withoutStock ? 0.55 : 1,
                       cursor: withoutStock ? 'not-allowed' : 'pointer',
+                      overflow: 'hidden',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <span
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: 10,
-                          background: 'var(--surface2)',
-                          display: 'grid',
-                          placeItems: 'center',
-                        }}
-                      >
-                        <Package size={16} />
-                      </span>
+                    <div
+                      className="pos-product-image"
+                      style={{
+                        width: '100%',
+                        aspectRatio: '1 / 1',
+                        borderRadius: 14,
+                        background: '#ffffff',
+                        border: '1px solid var(--border)',
+                        display: 'grid',
+                        placeItems: 'center',
+                        overflow: 'hidden',
+                        marginBottom: 10,
+                        position: 'relative',
+                        padding: 8,
+                      }}
+                    >
+                      {!imageUrl && (
+                        <Package
+                          size={28}
+                          style={{
+                            color: 'var(--text3)',
+                          }}
+                        />
+                      )}
 
+                      {imageUrl && (
+                        <img
+                          src={imageUrl}
+                          alt={p.name}
+                          loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'contain',
+                            display: 'block',
+                          }}
+                        />
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                       <span className={`badge ${p.type === 'COMPUESTO' ? 'badge-blue' : 'badge-gray'}`}>
                         {p.type === 'COMPUESTO' ? 'PROMO' : p.saleUnit}
                       </span>
+
+                      <span
+                        style={{
+                          color: withoutStock ? 'var(--danger)' : 'var(--text3)',
+                          fontSize: 11,
+                          fontWeight: 800,
+                        }}
+                      >
+                        {withoutStock ? 'SIN STOCK' : stockLabel(p, stockLocation)}
+                      </span>
                     </div>
 
-                    <div style={{ fontWeight: 800, marginTop: 12 }}>{p.name}</div>
+                    <div style={{ fontWeight: 800, marginTop: 10, minHeight: 38 }}>{p.name}</div>
 
                     <div style={{ color: 'var(--text3)', fontSize: 11 }}>
                       {categoryName(p)} · {p.sku ?? 'SIN-SKU'}
@@ -873,6 +1081,7 @@ export default function POSPage() {
                         color: 'var(--accent)',
                         fontWeight: 900,
                         marginTop: 8,
+                        fontSize: 15,
                       }}
                     >
                       {fmtMoney(productPrice(p, priceType))}
@@ -1111,33 +1320,85 @@ export default function POSPage() {
             <div className="pos-cart-items" style={{ maxHeight: 260, overflow: 'auto', marginBottom: 12 }}>
               {cart.map((item) => {
                 const itemPrice = getItemPrice(item, priceType);
+                const imageUrl = getProductImageUrl(item.product);
 
                 return (
                   <div key={item.product.id} style={{ borderBottom: '1px solid var(--border)', padding: '10px 0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <div>
-                        <b style={{ fontSize: 13 }}>
-                          {item.product.name}
-                          {item.isDeliveryItem ? ' 🚚' : ''}
-                        </b>
+                      <div style={{ display: 'flex', gap: 10, minWidth: 0 }}>
+                        <div
+                          style={{
+                            width: 52,
+                            height: 52,
+                            borderRadius: 12,
+                            background: '#ffffff',
+                            border: '1px solid var(--border)',
+                            display: 'grid',
+                            placeItems: 'center',
+                            overflow: 'hidden',
+                            flexShrink: 0,
+                            padding: 5,
+                          }}
+                        >
+                          {!imageUrl && (
+                            <Package
+                              size={18}
+                              style={{
+                                color: 'var(--text3)',
+                              }}
+                            />
+                          )}
 
-                        <div style={{ fontFamily: 'var(--mono)', color: 'var(--text3)', fontSize: 11 }}>
-                          {fmtMoney(itemPrice)}
-                          {item.product.saleUnit === 'KG' ? '/kg' : ''}
+                          {imageUrl && (
+                            <img
+                              src={imageUrl}
+                              alt={item.product.name}
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                display: 'block',
+                              }}
+                            />
+                          )}
                         </div>
 
-                        {!item.product.isService && (
-                          <div style={{ color: 'var(--text3)', fontSize: 11 }}>
-                            Stock {stockLocation === 'DEPOSITO' ? 'depósito' : 'local'}:{' '}
-                            {stockLabel(item.product, stockLocation)}
-                          </div>
-                        )}
+                        <div style={{ minWidth: 0 }}>
+                          <b style={{ fontSize: 13 }}>
+                            {item.product.name}
+                            {item.isDeliveryItem ? ' 🚚' : ''}
+                          </b>
 
-                        {item.product.isService && (
-                          <div style={{ color: 'var(--accent)', fontSize: 11 }}>
-                            Servicio sin descuento de stock
+                          <div style={{ fontFamily: 'var(--mono)', color: 'var(--text3)', fontSize: 11 }}>
+                            {fmtMoney(itemPrice)}
+                            {item.product.saleUnit === 'KG' ? '/kg' : ''}
                           </div>
-                        )}
+
+                          {isStockControlledProduct(item.product) && (
+                            <div style={{ color: 'var(--text3)', fontSize: 11 }}>
+                              Stock {stockLocation === 'DEPOSITO' ? 'depósito' : 'local'}:{' '}
+                              {stockLabel(item.product, stockLocation)}
+                            </div>
+                          )}
+
+                          {isCompositeProduct(item.product) && (
+                            <div style={{ color: 'var(--accent)', fontSize: 11 }}>
+                              Promo: descuenta stock de sus componentes
+                            </div>
+                          )}
+
+                          {!isCompositeProduct(item.product) && !isStockControlledProduct(item.product) && (
+                            <div style={{ color: 'var(--accent)', fontSize: 11 }}>
+                              {isDeliveryProduct(item.product)
+                                ? 'Envío / servicio sin descuento de stock'
+                                : 'Servicio sin descuento de stock'}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       <button className="btn btn-ghost btn-sm" onClick={() => remove(item.product.id)}>
@@ -1145,7 +1406,7 @@ export default function POSPage() {
                       </button>
                     </div>
 
-                    {item.product.saleUnit === 'KG' ? (
+                    {item.product.saleUnit === 'KG' && !item.isDeliveryItem && !isDeliveryProduct(item.product) && !item.product.isService ? (
                       <input
                         style={{ marginTop: 8 }}
                         type="number"
@@ -1158,7 +1419,7 @@ export default function POSPage() {
                         <button
                           className="btn btn-secondary btn-sm"
                           onClick={() => setQty(item.product.id, item.quantity - 1)}
-                          disabled={item.isDeliveryItem || item.product.isService}
+                          disabled={item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService}
                         >
                           <Minus size={12} />
                         </button>
@@ -1170,7 +1431,7 @@ export default function POSPage() {
                         <button
                           className="btn btn-secondary btn-sm"
                           onClick={() => setQty(item.product.id, item.quantity + 1)}
-                          disabled={item.isDeliveryItem || item.product.isService}
+                          disabled={item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService}
                         >
                           <Plus size={12} />
                         </button>
@@ -1297,10 +1558,10 @@ export default function POSPage() {
               <span>{fmtMoney(subtotal)}</span>
             </div>
 
-            {deliveryCalculation && (
+            {deliveryMode === 'LOCAL_DELIVERY' && deliveryCostForTotal > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent)', marginBottom: 5 }}>
                 <span>Envío incluido</span>
-                <span>{fmtMoney(deliveryCalculation.deliveryCost)}</span>
+                <span>{fmtMoney(deliveryCostForTotal)}</span>
               </div>
             )}
 
@@ -1463,6 +1724,15 @@ export default function POSPage() {
           }
         }
 
+        .pos-product-card {
+          min-height: 335px;
+        }
+
+        .pos-product-image {
+          height: auto !important;
+          aspect-ratio: 1 / 1;
+        }
+
         @media (max-width: 768px) {
           .pos-root {
             gap: 14px !important;
@@ -1500,10 +1770,16 @@ export default function POSPage() {
             padding: 12px !important;
             border-radius: 16px;
             min-width: 0;
+            min-height: 330px;
           }
 
           .pos-product-card > div:first-child {
             align-items: flex-start;
+          }
+
+          .pos-product-image {
+            height: auto !important;
+            aspect-ratio: 1 / 1;
           }
 
           .pos-product-card b,
@@ -1562,6 +1838,12 @@ export default function POSPage() {
 
           .pos-product-card {
             padding: 12px !important;
+            min-height: auto;
+          }
+
+          .pos-product-image {
+            height: auto !important;
+            aspect-ratio: 1 / 1;
           }
 
           .pos-cart-body {

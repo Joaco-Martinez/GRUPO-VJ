@@ -851,10 +851,7 @@ export default function ProductosPage() {
       </div>
 
       {(modal === 'product-create' || modal === 'product-edit') && (
-        <div
-          className="modal-overlay"
-          onClick={(e) => e.target === e.currentTarget && setModal(null)}
-        >
+        <div className="modal-overlay">
           <div className="modal products-product-modal" style={{ maxWidth: 820 }}>
             <div className="modal-header">
               <b>{modal === 'product-create' ? 'Nuevo producto' : 'Editar producto'}</b>
@@ -1319,10 +1316,7 @@ export default function ProductosPage() {
       )}
 
       {modal === 'category' && (
-        <div
-          className="modal-overlay"
-          onClick={(e) => e.target === e.currentTarget && setModal(null)}
-        >
+        <div className="modal-overlay">
           <div className="modal products-small-modal">
             <div className="modal-header">
               <b>Nueva categoría</b>
@@ -1376,13 +1370,7 @@ export default function ProductosPage() {
       )}
 
       {confirmModal && (
-        <div
-          className="modal-overlay"
-          onClick={(e) => {
-            if (confirmLoading) return;
-            if (e.target === e.currentTarget) setConfirmModal(null);
-          }}
-        >
+        <div className="modal-overlay">
           <div className="modal products-small-modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <b>{confirmModal.title}</b>

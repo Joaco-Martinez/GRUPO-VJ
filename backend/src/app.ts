@@ -26,7 +26,6 @@ import financeRoutes from "./routes/finance.routes";
 import productStatsRoutes from "./routes/productStats.routes";
 import deliveryRoutes from "./routes/delivery.routes";
 import catalogRoutes from "./routes/catalog.routes";
-import { iniciarRenovacionAutomatica } from "./cron/afipRenovador";
 import arcaConfigRoutes from "./routes/arcaConfig.routes";
 import ticketRoutes from "./routes/ticket.routes";
 dotenv.config();

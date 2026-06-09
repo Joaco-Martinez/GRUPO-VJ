@@ -1256,14 +1256,12 @@ export default function TiendaPage() {
   white-space: nowrap;
   border: 0;
 }
-  
+
         }
       `}</style>
 
       <div className="shop">
-         <h1 className="seo-title">
-    Grupo VJ - Tienda de bebidas en Córdoba
-  </h1>
+        
         <header className="topbar">
           <div className="topbar-inner">
             <Link href="/tienda" className="brand">
@@ -1537,6 +1535,9 @@ export default function TiendaPage() {
               GRUPO VJ
             </div>
 
+           <h1 className="seo-title">
+    Grupo VJ - Tienda de bebidas en Córdoba
+  </h1>
             <div className="footer-links">
               <Link href={isLoggedIn ? "/tienda/cuenta" : "/tienda/login"}>
                 {isLoggedIn ? "Mi cuenta" : "Login"}

@@ -58,6 +58,24 @@ export const clientController = {
     }
   },
 
+  async registerFromStore(req: Request, res: Response, next: NextFunction) {
+  try {
+    const client = await clientService.registerStoreClient({
+      ...req.body,
+      latitude: toNumberOrNull(req.body.latitude) ?? null,
+      longitude: toNumberOrNull(req.body.longitude) ?? null,
+    });
+
+    res.status(201).json({
+      ok: true,
+      message: "Cuenta creada correctamente",
+      client,
+    });
+  } catch (error) {
+    next(error);
+  }
+},
+
   async getOne(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;

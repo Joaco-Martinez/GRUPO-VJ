@@ -4,28 +4,9 @@ import Image from "next/image";
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Lock, Mail, MessageCircle } from "lucide-react";
-import { shopApi } from "@/lib/shop";
+import { ArrowLeft, Lock, Mail, UserPlus } from "lucide-react";
 import toast from "react-hot-toast";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-const WHATSAPP_ACCOUNT_URL =
-  "https://wa.me/5493513790057?text=Hola%20Grupo%20VJ%2C%20quiero%20pedir%20una%20cuenta%20para%20poder%20comprar%20en%20la%20tienda.";
-
-async function isAlreadyLoggedIn() {
-  try {
-    const res = await fetch(`${API_URL}/auth/me`, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    });
-
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
+import { useShopAuth } from "@/context/ShopAuthContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
@@ -48,6 +29,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export default function TiendaLoginPage() {
   const router = useRouter();
+  const { login, isLoggedIn, loading } = useShopAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -55,17 +37,12 @@ export default function TiendaLoginPage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    let alive = true;
+    if (loading) return;
 
-    isAlreadyLoggedIn().then((logged) => {
-      if (!alive || !logged) return;
+    if (isLoggedIn) {
       router.replace("/tienda/cuenta");
-    });
-
-    return () => {
-      alive = false;
-    };
-  }, [router]);
+    }
+  }, [loading, isLoggedIn, router]);
 
   function validateForm() {
     if (!email.trim()) {
@@ -92,7 +69,7 @@ export default function TiendaLoginPage() {
     const toastId = toast.loading("Iniciando sesión...");
 
     try {
-      await shopApi.login({
+      await login({
         email: email.trim(),
         password,
       });
@@ -127,10 +104,7 @@ export default function TiendaLoginPage() {
           --primary: #111827;
           --primary-hover: #030712;
           --blue: #2563eb;
-          --blue-soft: #eff6ff;
-          --green: #16a34a;
-          --green-hover: #15803d;
-          --green-soft: #f0fdf4;
+          --blue-hover: #1d4ed8;
           --red: #dc2626;
           --red-soft: #fef2f2;
           --shadow: 0 24px 70px rgba(15, 23, 42, 0.10);
@@ -348,12 +322,12 @@ export default function TiendaLoginPage() {
           line-height: 1.45;
         }
 
-        .whatsapp-account {
+        .create-account {
           margin-top: 14px;
           width: 100%;
           min-height: 48px;
           border-radius: 16px;
-          background: var(--green);
+          background: var(--blue);
           color: white;
           display: flex;
           align-items: center;
@@ -363,15 +337,15 @@ export default function TiendaLoginPage() {
           font-size: 14px;
           font-weight: 950;
           transition: 0.18s ease;
-          box-shadow: 0 14px 30px rgba(22, 163, 74, 0.22);
+          box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22);
         }
 
-        .whatsapp-account:hover {
-          background: var(--green-hover);
+        .create-account:hover {
+          background: var(--blue-hover);
           transform: translateY(-1px);
         }
 
-        .whatsapp-help {
+        .register-help {
           margin: 10px 0 0;
           color: var(--muted);
           text-align: center;
@@ -426,7 +400,7 @@ export default function TiendaLoginPage() {
             font-size: 26px;
           }
 
-          .whatsapp-account {
+          .create-account {
             min-height: 50px;
             font-size: 13px;
           }
@@ -474,7 +448,7 @@ export default function TiendaLoginPage() {
                   autoComplete="email"
                   placeholder="cliente@empresa.com"
                   value={email}
-                  disabled={saving}
+                  disabled={saving || loading}
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
@@ -494,13 +468,17 @@ export default function TiendaLoginPage() {
                   autoComplete="current-password"
                   placeholder="Ingresá tu contraseña"
                   value={password}
-                  disabled={saving}
+                  disabled={saving || loading}
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
             </div>
 
-            <button type="submit" disabled={saving} className="btn-submit">
+            <button
+              type="submit"
+              disabled={saving || loading}
+              className="btn-submit"
+            >
               {saving ? "Ingresando..." : "Ingresar"}
             </button>
           </form>
@@ -508,21 +486,18 @@ export default function TiendaLoginPage() {
           <div className="divider" />
 
           <p className="auth-footer">
-            ¿No tenés cuenta? Pedila por WhatsApp y te la activamos.
+            ¿No tenés cuenta? Creala ahora sin ayuda de nadie y empezá a
+            comprar.
           </p>
 
-          <a
-            className="whatsapp-account"
-            href={WHATSAPP_ACCOUNT_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <MessageCircle size={18} />
-            Pedir cuenta por WhatsApp
-          </a>
+          <Link className="create-account" href="/tienda/register">
+            <UserPlus size={18} />
+            Crear mi cuenta
+          </Link>
 
-          <p className="whatsapp-help">
-            También podés escribirnos al +54 9 3513 79-0057.
+          <p className="register-help">
+            Tu cuenta se crea como cliente minorista. Si necesitás cuenta
+            mayorista, Grupo VJ puede activarla después.
           </p>
 
           <Link className="back-to-shop" href="/tienda">

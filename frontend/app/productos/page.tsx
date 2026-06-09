@@ -234,18 +234,26 @@ function getProductMinStockMinorista(product: Product): number {
     : num((product as any).minStockDeposito);
 }
 
-function isProductLowStock(product: Product): boolean {
+function isProductLowStockMayorista(product: Product): boolean {
   if ((product as any).isService) return false;
 
-  const mayoristaStock = getProductStockMayorista(product);
-  const mayoristaMin = getProductMinStockMayorista(product);
-  const minoristaStock = getProductStockMinorista(product);
-  const minoristaMin = getProductMinStockMinorista(product);
+  const stock = getProductStockMayorista(product);
+  const minStock = getProductMinStockMayorista(product);
 
-  return (
-    (mayoristaMin > 0 && mayoristaStock <= mayoristaMin) ||
-    (minoristaMin > 0 && minoristaStock <= minoristaMin)
-  );
+  return minStock > 0 && stock <= minStock;
+}
+
+function isProductLowStockMinorista(product: Product): boolean {
+  if ((product as any).isService) return false;
+
+  const stock = getProductStockMinorista(product);
+  const minStock = getProductMinStockMinorista(product);
+
+  return minStock > 0 && stock <= minStock;
+}
+
+function isProductLowStock(product: Product): boolean {
+  return isProductLowStockMayorista(product) || isProductLowStockMinorista(product);
 }
 
 function stockLabel(product: Product, stock: number) {
@@ -1202,10 +1210,9 @@ export default function ProductosPage() {
                       <span
                         style={{
                           fontFamily: 'var(--mono)',
-                          color:
-                            isProductLowStock(p)
-                              ? 'var(--danger)'
-                              : 'var(--text)',
+                          color: isProductLowStockMayorista(p)
+                            ? 'var(--danger)'
+                            : 'var(--text)',
                         }}
                       >
                         {(p as any).isService
@@ -1215,7 +1222,14 @@ export default function ProductosPage() {
                     </td>
 
                     <td>
-                      <span style={{ fontFamily: 'var(--mono)' }}>
+                      <span
+                        style={{
+                          fontFamily: 'var(--mono)',
+                          color: isProductLowStockMinorista(p)
+                            ? 'var(--danger)'
+                            : 'var(--text)',
+                        }}
+                      >
                         {(p as any).isService
                           ? '-'
                           : stockLabel(p, getProductStockMinorista(p))}
@@ -1290,7 +1304,6 @@ export default function ProductosPage() {
           ) : (
             paginatedProducts.map((p) => {
               const isService = Boolean((p as any).isService);
-              const isLowStock = isProductLowStock(p);
               const typeLabel = isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE';
               const mayoristaStockLabel = isService
                 ? 'Servicio'
@@ -1353,14 +1366,16 @@ export default function ProductosPage() {
                   <div className="products-mobile-quick products-mobile-quick-stock">
                     <div>
                       <small>Stock mayorista</small>
-                      <strong className={isLowStock ? 'products-danger-text' : ''}>
+                      <strong className={isProductLowStockMayorista(p) ? 'products-danger-text' : ''}>
                         {mayoristaStockLabel}
                       </strong>
                     </div>
 
                     <div>
                       <small>Stock minorista</small>
-                      <strong>{minoristaStockLabel}</strong>
+                      <strong className={isProductLowStockMinorista(p) ? 'products-danger-text' : ''}>
+                        {minoristaStockLabel}
+                      </strong>
                     </div>
 
                     <div>
@@ -1504,7 +1519,7 @@ export default function ProductosPage() {
                     <small>Stock mayorista</small>
                     <strong
                       className={
-                        isProductLowStock(mobileProductSheet)
+                        isProductLowStockMayorista(mobileProductSheet)
                           ? 'products-danger-text'
                           : ''
                       }
@@ -1517,7 +1532,13 @@ export default function ProductosPage() {
 
                   <div>
                     <small>Stock minorista</small>
-                    <strong>
+                    <strong
+                      className={
+                        isProductLowStockMinorista(mobileProductSheet)
+                          ? 'products-danger-text'
+                          : ''
+                      }
+                    >
                       {(mobileProductSheet as any).isService
                         ? '—'
                         : stockLabel(mobileProductSheet, getProductStockMinorista(mobileProductSheet))}

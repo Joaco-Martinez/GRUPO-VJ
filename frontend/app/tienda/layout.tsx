@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-
+import { ShopAuthProvider } from "../../context/ShopAuthContext";
 const siteUrl = 'https://www.grupovj.com.ar';
 
 export const metadata: Metadata = {
@@ -105,7 +105,7 @@ export default function TiendaLayout({
           __html: JSON.stringify(jsonLd),
         }}
       />
-      {children}
+      <ShopAuthProvider>{children}</ShopAuthProvider>
     </>
   );
 }

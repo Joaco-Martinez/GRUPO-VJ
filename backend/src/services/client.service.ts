@@ -186,6 +186,117 @@ export const clientService = {
     });
   },
 
+  async registerStoreClient(data: {
+  nombre: string;
+  apellido: string;
+  dni: string;
+  telefono?: string | null;
+  gmail: string;
+  password: string;
+
+  addressStreet?: string | null;
+  addressNumber?: string | null;
+  addressFloor?: string | null;
+  addressApartment?: string | null;
+  addressCity?: string | null;
+  addressProvince?: string | null;
+  addressPostalCode?: string | null;
+  addressNotes?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+}) {
+  const nombre = String(data.nombre || "").trim();
+  const apellido = String(data.apellido || "").trim();
+  const dni = String(data.dni || "").trim();
+  const gmail = cleanEmail(data.gmail);
+
+  if (!nombre) throw new Error("El nombre es obligatorio");
+  if (!apellido) throw new Error("El apellido es obligatorio");
+  if (!dni) throw new Error("El DNI/CUIT es obligatorio");
+  if (!gmail) throw new Error("El email es obligatorio");
+
+  if (!data.password || data.password.length < 6) {
+    throw new Error("La contraseña debe tener al menos 6 caracteres");
+  }
+
+  const addressData = buildAddressData(data);
+
+  return prisma.$transaction(async (tx) => {
+    const existingUser = await tx.user.findUnique({
+      where: { email: gmail },
+    });
+
+    if (existingUser) {
+      throw new Error("Ya existe un usuario con ese email");
+    }
+
+    const existingClientByDni = await tx.client.findUnique({
+      where: { dni },
+    });
+
+    if (existingClientByDni) {
+      throw new Error("Ya existe un cliente con ese DNI/CUIT");
+    }
+
+    const existingClientByEmail = await tx.client.findUnique({
+      where: { gmail },
+    });
+
+    if (existingClientByEmail) {
+      throw new Error("Ya existe un cliente con ese email");
+    }
+
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+
+    const user = await tx.user.create({
+      data: {
+        email: gmail,
+        password: hashedPassword,
+        name: `${nombre} ${apellido}`.trim(),
+        role: Role.CLIENTE,
+        isActive: true,
+      },
+    });
+
+    return tx.client.create({
+      data: {
+        nombre,
+        apellido,
+        dni,
+        telefono: data.telefono ?? null,
+        gmail,
+
+        // Cliente registrado desde /tienda = Minorista
+        category: CategoryClient.Price,
+
+        // Nunca habilitamos cuenta corriente desde la tienda
+        creditLimit: null,
+        isAccountEnabled: false,
+
+        userId: user.id,
+        ...addressData,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            isActive: true,
+          },
+        },
+        _count: {
+          select: {
+            sales: true,
+            accountMovements: true,
+          },
+        },
+      },
+    });
+  });
+},
+
   async getClients() {
     return prisma.client.findMany({
       orderBy: { createdAt: "desc" },

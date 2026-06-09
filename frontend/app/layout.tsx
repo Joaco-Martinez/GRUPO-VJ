@@ -16,28 +16,41 @@ const jetBrainsMono = JetBrains_Mono({
   display: 'swap',
 });
 
-const siteUrl = 'https://tudominio.com.ar';
+const siteUrl = 'https://www.grupovj.com.ar';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
 
   title: {
-    default: 'Tienda Online',
-    template: '%s | Tienda Online',
+    default: 'Grupo VJ | Tienda de bebidas en Córdoba',
+    template: '%s | Grupo VJ',
   },
 
   description:
-    'Tienda online de Grupo VJ. Consultá productos, precios y stock disponible.',
+    'Tienda online de Grupo VJ. Comprá bebidas, combos, gaseosas, cervezas, fernet, energizantes y más. Consultá precios, stock disponible y opciones de compra.',
 
-  applicationName: 'Tienda Online',
+  applicationName: 'Grupo VJ',
 
   keywords: [
-    'Tienda Online',
     'Grupo VJ',
-    'productos',
-    'stock',
-    'ventas',
-    'ecommerce',
+    'Grupo VJ Córdoba',
+    'Grupo VJ bebidas',
+    'tienda Grupo VJ',
+    'tienda de bebidas',
+    'bebidas Córdoba',
+    'bebidas Argentina',
+    'comprar bebidas online',
+    'mayorista de bebidas',
+    'minorista de bebidas',
+    'distribuidora de bebidas',
+    'fernet',
+    'cerveza',
+    'cervezas',
+    'gaseosas',
+    'energizantes',
+    'combos de bebidas',
+    'stock de bebidas',
+    'ecommerce bebidas',
   ],
 
   authors: [
@@ -61,34 +74,36 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'es_AR',
     url: siteUrl,
-    siteName: 'Tienda Online',
-    title: 'Tienda Online',
+    siteName: 'Grupo VJ',
+    title: 'Grupo VJ | Tienda de bebidas en Córdoba',
     description:
-      'Tienda online de Grupo VJ. Consultá productos, precios y stock disponible.',
+      'Comprá bebidas, combos, gaseosas, cervezas, fernet, energizantes y más en Grupo VJ. Consultá precios y stock disponible.',
     images: [
       {
         url: '/favicon.ico',
         width: 64,
         height: 64,
-        alt: 'Tienda Online',
+        alt: 'Grupo VJ',
       },
     ],
   },
 
   twitter: {
     card: 'summary',
-    title: 'Tienda Online',
+    title: 'Grupo VJ | Tienda de bebidas en Córdoba',
     description:
-      'Tienda online de Grupo VJ. Consultá productos, precios y stock disponible.',
+      'Tienda online de Grupo VJ. Comprá bebidas, combos y productos con stock actualizado.',
     images: ['/favicon.ico'],
   },
 
   robots: {
     index: true,
     follow: true,
+    nocache: false,
     googleBot: {
       index: true,
       follow: true,
+      noimageindex: false,
       'max-image-preview': 'large',
       'max-snippet': -1,
       'max-video-preview': -1,
@@ -102,6 +117,14 @@ export const metadata: Metadata = {
   },
 
   category: 'ecommerce',
+
+  other: {
+    'geo.region': 'AR-X',
+    'geo.placename': 'Córdoba, Argentina',
+    'og:country-name': 'Argentina',
+    'og:email': '',
+    'theme-color': '#f4f6f8',
+  },
 };
 
 export const viewport: Viewport = {
@@ -116,9 +139,36 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Store',
+    name: 'Grupo VJ',
+    url: siteUrl,
+    description:
+      'Tienda online de Grupo VJ. Venta de bebidas, combos, gaseosas, cervezas, fernet, energizantes y más.',
+    areaServed: {
+      '@type': 'Country',
+      name: 'Argentina',
+    },
+    address: {
+      '@type': 'PostalAddress',
+      addressCountry: 'AR',
+      addressRegion: 'Córdoba',
+    },
+    sameAs: [],
+  };
+
   return (
     <html lang="es-AR" className={`${geist.variable} ${jetBrainsMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd),
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

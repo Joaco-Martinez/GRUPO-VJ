@@ -21,7 +21,8 @@ const fmt = (n: number) =>
   new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency: "ARS",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(Number.isFinite(Number(n)) ? Number(n) : 0);
 
 const COLORS = [
@@ -87,6 +88,11 @@ const emptyTotals: Totals = {
 function n0(value: unknown) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
+}
+
+function getPriceProfitPercent(price: number, profit: number): number {
+  if (price <= 0) return 0;
+  return (profit / price) * 100;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,8 +180,7 @@ function normalizeTotals(data: unknown): Totals {
     const collectedRevenue = n0(unwrapped.collectedRevenue);
     const pendingRevenue = n0(unwrapped.pendingRevenue);
     const grossProfit = n0(unwrapped.grossProfit ?? unwrapped.profit);
-    const profitMargin =
-      grossRevenue > 0 ? (grossProfit / grossRevenue) * 100 : 0;
+    const profitMargin = getPriceProfitPercent(grossRevenue, grossProfit);
 
     return {
       totalRevenue: n0(unwrapped.totalRevenue ?? grossRevenue),
@@ -208,8 +213,7 @@ function normalizeTotals(data: unknown): Totals {
       0,
     );
     const grossProfit = products.reduce((acc, p) => acc + n0(p.grossProfit), 0);
-    const profitMargin =
-      grossRevenue > 0 ? (grossProfit / grossRevenue) * 100 : 0;
+    const profitMargin = getPriceProfitPercent(grossRevenue, grossProfit);
 
     return {
       totalRevenue: grossRevenue,
@@ -877,6 +881,41 @@ export default function ReportesPage() {
         .reports-mobile-tabs,
         .reports-mobile-top-products {
           display: none;
+        }
+
+        .reports-desktop-table {
+          width: 100%;
+          max-width: 100%;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .reports-desktop-table table {
+          width: 100%;
+          min-width: 760px;
+          table-layout: fixed;
+        }
+
+        .reports-desktop-table th,
+        .reports-desktop-table td {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
+        .reports-desktop-table th:first-child,
+        .reports-desktop-table td:first-child {
+          width: 58px;
+          white-space: nowrap;
+          overflow-wrap: normal;
+          word-break: normal;
+        }
+
+        .reports-desktop-table th:nth-child(n + 3),
+        .reports-desktop-table td:nth-child(n + 3) {
+          white-space: nowrap;
+          overflow-wrap: normal;
+          word-break: normal;
         }
 
         @media (max-width: 1024px) {

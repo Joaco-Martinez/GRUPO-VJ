@@ -1245,10 +1245,25 @@ export default function TiendaPage() {
             font-size: 10px;
             padding: 6px 8px;
           }
+            .seo-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+  
         }
       `}</style>
 
       <div className="shop">
+         <h1 className="seo-title">
+    Grupo VJ - Tienda de bebidas en Córdoba
+  </h1>
         <header className="topbar">
           <div className="topbar-inner">
             <Link href="/tienda" className="brand">

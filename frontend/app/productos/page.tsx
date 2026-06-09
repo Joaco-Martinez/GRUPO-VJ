@@ -169,9 +169,9 @@ function getPriceProfit(price: number, cost: number): number {
 }
 
 function getPriceProfitPercent(price: number, cost: number): number | null {
-  if (cost <= 0) return null;
+  if (cost <= 0 || price <= 0) return null;
 
-  return (getPriceProfit(price, cost) / cost) * 100;
+  return (getPriceProfit(price, cost) / price) * 100;
 }
 
 function getProductMinoristProfit(product: Product): number {
@@ -1591,7 +1591,7 @@ export default function ProductosPage() {
       {(modal === 'product-create' || modal === 'product-edit') && typeof document !== 'undefined' &&
         createPortal(
         <div className="modal-overlay">
-          <div className="modal products-product-modal" style={{ maxWidth: 820 }}>
+          <div className="modal products-product-modal" style={{ maxWidth: 1080 }}>
             <div className="modal-header">
               <b>{modal === 'product-create' ? 'Nuevo producto' : 'Editar producto'}</b>
 
@@ -1845,147 +1845,21 @@ export default function ProductosPage() {
               <section className={`products-form-section ${productFormStep === 'precios' ? 'products-form-section-active' : ''}`}>
                 <div className="products-mobile-section-title">
                   <b>Precios y stock</b>
-                  <small>Valores de venta, costo, stock inicial y mínimo.</small>
+                  <small>Minorista a la izquierda y mayorista a la derecha, cada uno con su precio, stock y mínimo.</small>
                 </div>
 
-              {form.saleUnit === 'KG' ? (
-                <div
-                  className="products-price-grid"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, 1fr)',
-                    gap: 12,
-                  }}
-                >
-                  <div className="form-group">
-                    <label className="form-label">Precio minorista/kg</label>
-                    <input
-                      type="number"
-                      value={form.pricePerKg}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, pricePerKg: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Mayorista/kg</label>
-                    <input
-                      type="number"
-                      value={form.wholesalePricePerKg}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          wholesalePricePerKg: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Costo de compra/kg</label>
-                    <input
-                      type="number"
-                      value={form.purchasePrice}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          purchasePrice: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Stock Mayorista kg</label>
-                    <input
-                      type="number"
-                      value={form.stockLocalKg}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, stockLocalKg: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Stock Minorista kg</label>
-                    <input
-                      type="number"
-                      value={form.stockDepositoKg}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          stockDepositoKg: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Stock mínimo Mayorista kg</label>
-                    <input
-                      type="number"
-                      value={form.minStockKg}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          minStockKg: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Stock mínimo Minorista kg</label>
-                    <input
-                      type="number"
-                      value={form.minStockDepositoKg}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          minStockDepositoKg: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="products-price-grid"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, 1fr)',
-                    gap: 12,
-                  }}
-                >
-                  <div className="form-group">
-                    <label className="form-label">Precio minorista</label>
-                    <input
-                      type="number"
-                      value={form.price}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, price: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Mayorista</label>
-                    <input
-                      type="number"
-                      value={form.wholesalePrice}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          wholesalePrice: e.target.value,
-                        }))
-                      }
-                    />
+              <div className="products-pricing-desktop-layout">
+                <div className="products-pricing-shared-card">
+                  <div className="products-pricing-card-title">
+                    <b>Costo del producto</b>
+                    <small>
+                      Este valor se usa para calcular la ganancia minorista y mayorista.
+                    </small>
                   </div>
 
                   <div className="form-group">
                     <label className="form-label">
-                      {form.type === 'COMPUESTO' ? 'Costo manual' : 'Costo de compra'}
+                      {form.type === 'COMPUESTO' ? 'Costo manual' : form.saleUnit === 'KG' ? 'Costo de compra/kg' : 'Costo de compra'}
                     </label>
                     <input
                       type="number"
@@ -1996,70 +1870,151 @@ export default function ProductosPage() {
                           purchasePrice: e.target.value,
                         }))
                       }
+                      placeholder={form.saleUnit === 'KG' ? 'Costo por kg' : 'Costo por unidad'}
                     />
                   </div>
-
-                  {form.type !== 'COMPUESTO' && form.isService !== 'true' && (
-                    <>
-                      <div className="form-group">
-                        <label className="form-label">Stock Mayorista</label>
-                        <input
-                          type="number"
-                          value={form.stockLocal}
-                          onChange={(e) =>
-                            setForm((p) => ({
-                              ...p,
-                              stockLocal: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-
-                      <div className="form-group">
-                        <label className="form-label">Stock Minorista</label>
-                        <input
-                          type="number"
-                          value={form.stockDeposito}
-                          onChange={(e) =>
-                            setForm((p) => ({
-                              ...p,
-                              stockDeposito: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-
-                      <div className="form-group">
-                        <label className="form-label">Stock mínimo Mayorista</label>
-                        <input
-                          type="number"
-                          value={form.minStock}
-                          onChange={(e) =>
-                            setForm((p) => ({
-                              ...p,
-                              minStock: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-
-                      <div className="form-group">
-                        <label className="form-label">Stock mínimo Minorista</label>
-                        <input
-                          type="number"
-                          value={form.minStockDeposito}
-                          onChange={(e) =>
-                            setForm((p) => ({
-                              ...p,
-                              minStockDeposito: e.target.value,
-                            }))
-                          }
-                        />
-                      </div>
-                    </>
-                  )}
                 </div>
-              )}
+
+                <div className="products-pricing-channel-grid">
+                  <div className="products-pricing-channel-card products-pricing-minorist-card">
+                    <div className="products-pricing-channel-head">
+                      <b>Minorista</b>
+                      <small>Precio, stock y mínimo para venta minorista.</small>
+                    </div>
+
+                    <div className="products-pricing-fields">
+                      <div className="form-group">
+                        <label className="form-label">
+                          {form.saleUnit === 'KG' ? 'Precio minorista/kg' : 'Precio minorista'}
+                        </label>
+                        <input
+                          type="number"
+                          value={form.saleUnit === 'KG' ? form.pricePerKg : form.price}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              [form.saleUnit === 'KG' ? 'pricePerKg' : 'price']: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+
+                      {form.type !== 'COMPUESTO' && form.isService !== 'true' && (
+                        <>
+                          <div className="form-group">
+                            <label className="form-label">
+                              {form.saleUnit === 'KG' ? 'Stock Minorista kg' : 'Stock Minorista'}
+                            </label>
+                            <input
+                              type="number"
+                              value={form.saleUnit === 'KG' ? form.stockDepositoKg : form.stockDeposito}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  [form.saleUnit === 'KG' ? 'stockDepositoKg' : 'stockDeposito']: e.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label">
+                              {form.saleUnit === 'KG' ? 'Stock mínimo Minorista kg' : 'Stock mínimo Minorista'}
+                            </label>
+                            <input
+                              type="number"
+                              value={form.saleUnit === 'KG' ? form.minStockDepositoKg : form.minStockDeposito}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  [form.saleUnit === 'KG' ? 'minStockDepositoKg' : 'minStockDeposito']: e.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {(form.type === 'COMPUESTO' || form.isService === 'true') && (
+                        <div className="products-pricing-note">
+                          {form.isService === 'true'
+                            ? 'Los servicios no descuentan stock.'
+                            : 'Las promos descuentan stock desde sus componentes.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="products-pricing-channel-card products-pricing-wholesale-card">
+                    <div className="products-pricing-channel-head">
+                      <b>Mayorista</b>
+                      <small>Precio, stock y mínimo para venta mayorista.</small>
+                    </div>
+
+                    <div className="products-pricing-fields">
+                      <div className="form-group">
+                        <label className="form-label">
+                          {form.saleUnit === 'KG' ? 'Precio mayorista/kg' : 'Precio mayorista'}
+                        </label>
+                        <input
+                          type="number"
+                          value={form.saleUnit === 'KG' ? form.wholesalePricePerKg : form.wholesalePrice}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              [form.saleUnit === 'KG' ? 'wholesalePricePerKg' : 'wholesalePrice']: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+
+                      {form.type !== 'COMPUESTO' && form.isService !== 'true' && (
+                        <>
+                          <div className="form-group">
+                            <label className="form-label">
+                              {form.saleUnit === 'KG' ? 'Stock Mayorista kg' : 'Stock Mayorista'}
+                            </label>
+                            <input
+                              type="number"
+                              value={form.saleUnit === 'KG' ? form.stockLocalKg : form.stockLocal}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  [form.saleUnit === 'KG' ? 'stockLocalKg' : 'stockLocal']: e.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label">
+                              {form.saleUnit === 'KG' ? 'Stock mínimo Mayorista kg' : 'Stock mínimo Mayorista'}
+                            </label>
+                            <input
+                              type="number"
+                              value={form.saleUnit === 'KG' ? form.minStockKg : form.minStock}
+                              onChange={(e) =>
+                                setForm((p) => ({
+                                  ...p,
+                                  [form.saleUnit === 'KG' ? 'minStockKg' : 'minStock']: e.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {(form.type === 'COMPUESTO' || form.isService === 'true') && (
+                        <div className="products-pricing-note">
+                          {form.isService === 'true'
+                            ? 'Los servicios no descuentan stock.'
+                            : 'Las promos descuentan stock desde sus componentes.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
 
 
 
@@ -2369,7 +2324,7 @@ export default function ProductosPage() {
         }
 
         .products-product-modal {
-          width: min(820px, calc(100vw - 36px));
+          width: min(1080px, calc(100vw - 36px));
         }
 
         .products-small-modal {
@@ -2710,6 +2665,88 @@ export default function ProductosPage() {
 
         .products-form-section {
           display: block;
+        }
+
+
+        .products-pricing-desktop-layout {
+          display: grid;
+          gap: 12px;
+        }
+
+        .products-pricing-shared-card,
+        .products-pricing-channel-card {
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          background: var(--surface2);
+          padding: 14px;
+          min-width: 0;
+        }
+
+        .products-pricing-shared-card {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 260px;
+          gap: 14px;
+          align-items: end;
+        }
+
+        .products-pricing-card-title,
+        .products-pricing-channel-head {
+          display: grid;
+          gap: 3px;
+          min-width: 0;
+        }
+
+        .products-pricing-card-title b,
+        .products-pricing-channel-head b {
+          color: var(--text);
+          font-size: 14px;
+          line-height: 1.2;
+        }
+
+        .products-pricing-card-title small,
+        .products-pricing-channel-head small {
+          color: var(--text3);
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .products-pricing-channel-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+          align-items: stretch;
+        }
+
+        .products-pricing-channel-card {
+          display: grid;
+          gap: 12px;
+          align-content: start;
+        }
+
+        .products-pricing-channel-head {
+          padding-bottom: 10px;
+          border-bottom: 1px solid var(--border);
+        }
+
+        .products-pricing-fields {
+          display: grid;
+          gap: 10px;
+        }
+
+        .products-pricing-fields .form-group,
+        .products-pricing-shared-card .form-group {
+          margin: 0;
+        }
+
+        .products-pricing-note {
+          border: 1px dashed var(--border);
+          border-radius: 13px;
+          background: var(--surface);
+          color: var(--text3);
+          font-size: 12px;
+          font-weight: 800;
+          line-height: 1.4;
+          padding: 11px 12px;
         }
 
 

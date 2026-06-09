@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { Sale, Alert, Product } from '@/types';
-import { clientName, normalizeArray, productMinStock, productStock } from '@/lib/helpers';
+import { clientName, normalizeArray, num } from '@/lib/helpers';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, ShoppingCart, Package, AlertTriangle, DollarSign } from 'lucide-react';
 import Link from 'next/link';
@@ -17,12 +17,121 @@ const fmt = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
+type ProductWithMinStock = Product & {
+  minStockDeposito?: number | string | null;
+  minStockDepositoKg?: number | string | null;
+};
+
+type AlertWithProduct = Alert & {
+  product?: ProductWithMinStock | null;
+  productName?: string | null;
+  productSku?: string | null;
+  sku?: string | null;
+  message?: string | null;
+
+  stockLocal?: number | string | null;
+  stockDeposito?: number | string | null;
+  stockLocalKg?: number | string | null;
+  stockDepositoKg?: number | string | null;
+
+  minStock?: number | string | null;
+  minStockDeposito?: number | string | null;
+  minStockKg?: number | string | null;
+  minStockDepositoKg?: number | string | null;
+
+  saleUnit?: string | null;
+};
+
 type DashboardData = {
   sales: Sale[];
-  alerts: Alert[];
-  products: Product[];
+  alerts: AlertWithProduct[];
+  products: ProductWithMinStock[];
   totals: { totalRevenue?: number; totalSales?: number } | null;
 };
+
+function getProductStockMayorista(product: ProductWithMinStock) {
+  return product.saleUnit === 'KG'
+    ? num((product as any).stockLocalKg)
+    : num((product as any).stockLocal);
+}
+
+function getProductStockMinorista(product: ProductWithMinStock) {
+  return product.saleUnit === 'KG'
+    ? num((product as any).stockDepositoKg)
+    : num((product as any).stockDeposito);
+}
+
+function getProductMinMayorista(product: ProductWithMinStock) {
+  return product.saleUnit === 'KG'
+    ? num((product as any).minStockKg)
+    : num((product as any).minStock);
+}
+
+function getProductMinMinorista(product: ProductWithMinStock) {
+  return product.saleUnit === 'KG'
+    ? num((product as any).minStockDepositoKg)
+    : num((product as any).minStockDeposito);
+}
+
+function isProductLowStock(product: ProductWithMinStock) {
+  if ((product as any).isService) return false;
+  if ((product as any).isActive === false) return false;
+
+  const stockMayorista = getProductStockMayorista(product);
+  const stockMinorista = getProductStockMinorista(product);
+
+  const minMayorista = getProductMinMayorista(product);
+  const minMinorista = getProductMinMinorista(product);
+
+  const lowMayorista = minMayorista > 0 && stockMayorista <= minMayorista;
+  const lowMinorista = minMinorista > 0 && stockMinorista <= minMinorista;
+
+  return lowMayorista || lowMinorista;
+}
+
+function getAlertProductName(alert: AlertWithProduct) {
+  return alert.productName ?? alert.product?.name ?? alert.message ?? 'Producto';
+}
+
+function getAlertUnit(alert: AlertWithProduct) {
+  const unit = String(alert.saleUnit || alert.product?.saleUnit || 'UNIT').toUpperCase();
+  return unit === 'KG' ? 'kg' : 'un.';
+}
+
+function getAlertStocks(alert: AlertWithProduct) {
+  const product = alert.product;
+  const unit = getAlertUnit(alert);
+  const isKg = unit === 'kg';
+
+  const stockMayorista = isKg
+    ? num(alert.stockLocalKg ?? product?.stockLocalKg)
+    : num(alert.stockLocal ?? product?.stockLocal);
+
+  const stockMinorista = isKg
+    ? num(alert.stockDepositoKg ?? product?.stockDepositoKg)
+    : num(alert.stockDeposito ?? product?.stockDeposito);
+
+  const minMayorista = isKg
+    ? num(alert.minStockKg ?? product?.minStockKg)
+    : num(alert.minStock ?? product?.minStock);
+
+  const minMinorista = isKg
+    ? num(alert.minStockDepositoKg ?? product?.minStockDepositoKg)
+    : num(alert.minStockDeposito ?? product?.minStockDeposito);
+
+  const lowMayorista = minMayorista > 0 && stockMayorista <= minMayorista;
+  const lowMinorista = minMinorista > 0 && stockMinorista <= minMinorista;
+
+  return {
+    unit,
+    stockMayorista,
+    stockMinorista,
+    minMayorista,
+    minMinorista,
+    lowMayorista,
+    lowMinorista,
+  };
+}
 
 async function fetchDashboardData(): Promise<DashboardData> {
   const [salesRes, alertsRes, productsRes, totalsRes] = await Promise.allSettled([
@@ -39,12 +148,12 @@ async function fetchDashboardData(): Promise<DashboardData> {
 
   const alerts =
     alertsRes.status === 'fulfilled'
-      ? normalizeArray<Alert>(alertsRes.value.data)
+      ? normalizeArray<AlertWithProduct>(alertsRes.value.data)
       : [];
 
   const products =
     productsRes.status === 'fulfilled'
-      ? normalizeArray<Product>(productsRes.value.data)
+      ? normalizeArray<ProductWithMinStock>(productsRes.value.data)
       : [];
 
   const totals =
@@ -62,8 +171,8 @@ async function fetchDashboardData(): Promise<DashboardData> {
 
 export default function DashboardPage() {
   const [sales, setSales] = useState<Sale[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [alerts, setAlerts] = useState<AlertWithProduct[]>([]);
+  const [products, setProducts] = useState<ProductWithMinStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [totals, setTotals] = useState<{ totalRevenue?: number; totalSales?: number } | null>(null);
 
@@ -133,9 +242,7 @@ export default function DashboardPage() {
 
   const todayRevenue = todaySales.reduce((a, s) => a + (s.total || 0), 0);
 
-  const lowStock = (Array.isArray(products) ? products : []).filter(
-    (p) => productStock(p) <= productMinStock(p)
-  ).length;
+  const lowStock = (Array.isArray(products) ? products : []).filter(isProductLowStock).length;
 
   return (
     <AppLayout title="Dashboard" subtitle="Resumen general">
@@ -299,35 +406,49 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="dashboard-alerts-list" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {alerts.slice(0, 6).map((a) => (
-                    <div
-                      key={a.id}
-                      className="dashboard-alert-item"
-                      style={{
-                        background: 'var(--surface2)',
-                        borderRadius: 8,
-                        padding: '10px 12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-                        {a.productName ?? a.product?.name ?? a.message ?? 'Producto'}
-                      </span>
+                  {alerts.slice(0, 6).map((a) => {
+                    const alertStock = getAlertStocks(a);
 
-                      <span
+                    return (
+                      <div
+                        key={a.id}
+                        className="dashboard-alert-item"
                         style={{
-                          fontFamily: 'var(--mono)',
-                          fontSize: 12,
-                          color: 'var(--danger)',
+                          background: 'var(--surface2)',
+                          borderRadius: 8,
+                          padding: '10px 12px',
+                          display: 'grid',
+                          gap: 7,
                         }}
                       >
-                        {a.stockLocal ?? a.product?.stockLocal ?? '—'} /{' '}
-                        {a.minStock ?? a.product?.minStock ?? '—'}
-                      </span>
-                    </div>
-                  ))}
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                          {getAlertProductName(a)}
+                        </span>
+
+                        <div className="dashboard-alert-stock-row">
+                          <span
+                            style={{
+                              fontFamily: 'var(--mono)',
+                              fontSize: 11,
+                              color: alertStock.lowMayorista ? 'var(--danger)' : 'var(--text3)',
+                            }}
+                          >
+                            May: {alertStock.stockMayorista}/{alertStock.minMayorista} {alertStock.unit}
+                          </span>
+
+                          <span
+                            style={{
+                              fontFamily: 'var(--mono)',
+                              fontSize: 11,
+                              color: alertStock.lowMinorista ? 'var(--danger)' : 'var(--text3)',
+                            }}
+                          >
+                            Min: {alertStock.stockMinorista}/{alertStock.minMinorista} {alertStock.unit}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -484,6 +605,20 @@ export default function DashboardPage() {
           display: none;
         }
 
+        .dashboard-alert-stock-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .dashboard-alert-stock-row span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
         @media (max-width: 768px) {
           .dashboard-loading-grid {
             grid-template-columns: 1fr !important;
@@ -546,22 +681,22 @@ export default function DashboardPage() {
           }
 
           .dashboard-alert-item {
-            align-items: flex-start !important;
-            gap: 10px;
+            align-items: stretch !important;
+            gap: 8px;
             border-radius: 12px !important;
             padding: 10px !important;
           }
 
           .dashboard-alert-item span:first-child {
             min-width: 0;
-            flex: 1;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
           }
 
-          .dashboard-alert-item span:last-child {
-            flex-shrink: 0;
+          .dashboard-alert-stock-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
           }
 
           .dashboard-desktop-table {
@@ -663,6 +798,10 @@ export default function DashboardPage() {
 
           .dashboard-alert-item span:first-child {
             white-space: normal;
+          }
+
+          .dashboard-alert-stock-row {
+            grid-template-columns: 1fr;
           }
 
           .dashboard-mobile-sale {

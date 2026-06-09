@@ -1,7 +1,8 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Search,
   ShoppingCart,
@@ -11,16 +12,56 @@ import {
   MapPin,
   ChevronDown,
   Store,
-} from 'lucide-react';
-import { CatalogCategory, CatalogProduct, formatMoney, shopApi } from '@/lib/shop';
-import { useCartStore } from '@/store/cart';
-import Image from 'next/image';
-import toast from 'react-hot-toast';
+} from "lucide-react";
+import {
+  CatalogCategory,
+  CatalogProduct,
+  formatMoney,
+  shopApi,
+} from "@/lib/shop";
+import { useCartStore } from "@/store/cart";
+import Image from "next/image";
+import toast from "react-hot-toast";
 
-const HIDDEN_PRODUCT_SKUS = ['ENVIO-FLETE2'];
+const HIDDEN_PRODUCT_SKUS = ["ENVIO-FLETE2"];
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+type ShopAuthUser = {
+  id: string;
+  email: string;
+  name?: string | null;
+  role?: string;
+  client?: {
+    id: string;
+    nombre?: string | null;
+    apellido?: string | null;
+    category?: string | null;
+  } | null;
+};
+
+async function getCurrentUser(): Promise<ShopAuthUser | null> {
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    return data?.content ?? data?.user ?? data ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function isVisibleCatalogProduct(product: CatalogProduct) {
-  return !HIDDEN_PRODUCT_SKUS.includes(String(product.sku ?? '').trim().toUpperCase());
+  return !HIDDEN_PRODUCT_SKUS.includes(
+    String(product.sku ?? "")
+      .trim()
+      .toUpperCase(),
+  );
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -35,7 +76,11 @@ function getErrorMessage(error: unknown, fallback: string) {
     };
   };
 
-  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+  return (
+    apiError.response?.data?.message ??
+    apiError.response?.data?.error ??
+    fallback
+  );
 }
 
 async function fetchCategories() {
@@ -47,35 +92,64 @@ async function fetchCatalogProducts(category: string, search: string) {
 }
 
 export default function TiendaPage() {
+  const router = useRouter();
+
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [products, setProducts] = useState<CatalogProduct[]>([]);
-  const [category, setCategory] = useState('');
-  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState("");
+  const [search, setSearch] = useState("");
   const [customerCategory, setCustomerCategory] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<ShopAuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
   const cartCount = useCartStore((state) => state.count());
   const add = useCartStore((state) => state.add);
 
   const storeSuffix = useMemo(() => {
-    if (customerCategory === 'Mayorista') return 'Mayorista';
-    if (customerCategory === 'Cliente') return 'Clientes';
-    return 'Minorista';
+    if (customerCategory === "Mayorista") return "Mayorista";
+    if (customerCategory === "Cliente") return "Clientes";
+    return "Minorista";
   }, [customerCategory]);
 
   const priceLabel = useMemo(() => {
-    if (customerCategory === 'Mayorista') return 'Precio mayorista';
-    if (customerCategory === 'Cliente') return 'Precio cliente';
-    return 'Precio público';
+    if (customerCategory === "Mayorista") return "Precio mayorista";
+    if (customerCategory === "Cliente") return "Precio cliente";
+    return "Precio público";
   }, [customerCategory]);
 
-  const isLoggedIn = customerCategory !== null;
+  const isLoggedIn = authChecked && Boolean(authUser);
+
+  const accountLabel = useMemo(() => {
+    if (!authUser) return "Ingresar";
+    const clientName = [authUser.client?.nombre, authUser.client?.apellido]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    return clientName || authUser.name || "Mi cuenta";
+  }, [authUser]);
 
   const selectedCategoryName = useMemo(() => {
-    if (!category) return 'Todas las categorías';
-    return categories.find((cat) => cat.slug === category)?.name ?? 'Categoría';
+    if (!category) return "Todas las categorías";
+    return categories.find((cat) => cat.slug === category)?.name ?? "Categoría";
   }, [category, categories]);
+
+  useEffect(() => {
+    let alive = true;
+
+    getCurrentUser().then((user) => {
+      if (!alive) return;
+
+      setAuthUser(user);
+      setCustomerCategory(user?.client?.category ?? null);
+      setAuthChecked(true);
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -91,7 +165,7 @@ export default function TiendaPage() {
         if (!alive) return;
 
         setCategories([]);
-        toast.error('No se pudieron cargar las categorías');
+        toast.error("No se pudieron cargar las categorías");
       });
 
     return () => {
@@ -107,15 +181,17 @@ export default function TiendaPage() {
         if (!alive) return;
 
         setProducts(result.products.filter(isVisibleCatalogProduct));
-        setCustomerCategory(result.customer?.category ?? null);
-        setError('');
+        setCustomerCategory(
+          result.customer?.category ?? authUser?.client?.category ?? null,
+        );
+        setError("");
       })
       .catch((err: unknown) => {
         console.error(err);
 
         if (!alive) return;
 
-        const message = getErrorMessage(err, 'No se pudo cargar la tienda');
+        const message = getErrorMessage(err, "No se pudo cargar la tienda");
 
         setProducts([]);
         setError(message);
@@ -129,28 +205,34 @@ export default function TiendaPage() {
     return () => {
       alive = false;
     };
-  }, [category, search]);
+  }, [category, search, authUser?.client?.category]);
 
   const handleCategoryChange = (value: string) => {
     setLoading(true);
-    setError('');
+    setError("");
     setCategory(value);
   };
 
   const handleSearchChange = (value: string) => {
     setLoading(true);
-    setError('');
+    setError("");
     setSearch(value);
   };
 
   const handleAddToCart = (product: CatalogProduct) => {
+    if (!isLoggedIn) {
+      toast.error("Para agregar productos al carrito tenés que iniciar sesión");
+      router.push("/tienda/login");
+      return;
+    }
+
     if (!product.canSell) {
-      toast.error('Este producto no tiene stock disponible');
+      toast.error("Este producto no tiene stock disponible");
       return;
     }
 
     add(product, 1);
-    toast.success('Producto agregado al carrito');
+    toast.success("Producto agregado al carrito");
   };
 
   return (
@@ -1199,9 +1281,12 @@ export default function TiendaPage() {
             </div>
 
             <div className="header-actions">
-              <Link className="header-btn" href="/tienda/login">
+              <Link
+                className="header-btn"
+                href={isLoggedIn ? "/tienda/cuenta" : "/tienda/login"}
+              >
                 <UserRound size={16} />
-                <span>{isLoggedIn ? 'Mi cuenta' : 'Ingresar'}</span>
+                <span>{accountLabel}</span>
               </Link>
 
               {isLoggedIn && (
@@ -1220,7 +1305,8 @@ export default function TiendaPage() {
             <div className="location-left">
               <MapPin size={14} />
               <span>
-                Retiro y atención en <strong>Paso de los Andes 893, Córdoba</strong>
+                Retiro y atención en{" "}
+                <strong>Paso de los Andes 893, Córdoba</strong>
               </span>
             </div>
 
@@ -1232,7 +1318,7 @@ export default function TiendaPage() {
         </div>
 
         <main className="main">
-          {!isLoggedIn && (
+          {authChecked && !isLoggedIn && (
             <div className="login-banner">
               <div className="login-banner-text">
                 <div className="login-icon">
@@ -1240,18 +1326,14 @@ export default function TiendaPage() {
                 </div>
 
                 <span>
-                  Estás navegando como visitante. Para comprar y ver condiciones comerciales,
-                  ingresá con tu cuenta o registrate.
+                  Estás navegando como visitante. Para comprar y ver condiciones
+                  comerciales, ingresá con tu cuenta.
                 </span>
               </div>
 
               <div className="login-banner-actions">
                 <Link href="/tienda/login" className="login-primary">
                   Iniciar sesión
-                </Link>
-
-                <Link href="/tienda/register" className="login-secondary">
-                  Registrarme
                 </Link>
               </div>
             </div>
@@ -1260,7 +1342,10 @@ export default function TiendaPage() {
           {error && <div className="err-box">⚠ {error}</div>}
 
           <div className="mobile-categories">
-            <select value={category} onChange={(e) => handleCategoryChange(e.target.value)}>
+            <select
+              value={category}
+              onChange={(e) => handleCategoryChange(e.target.value)}
+            >
               <option value="">Todas las categorías</option>
               {categories.map((cat) => (
                 <option key={cat.id} value={cat.slug}>
@@ -1280,8 +1365,8 @@ export default function TiendaPage() {
 
               <div className="cat-list">
                 <button
-                  className={`cat-btn ${category === '' ? 'active' : ''}`}
-                  onClick={() => handleCategoryChange('')}
+                  className={`cat-btn ${category === "" ? "active" : ""}`}
+                  onClick={() => handleCategoryChange("")}
                 >
                   <span>Todas</span>
                   <span className="cat-dot" />
@@ -1290,7 +1375,7 @@ export default function TiendaPage() {
                 {categories.map((cat) => (
                   <button
                     key={cat.id}
-                    className={`cat-btn ${category === cat.slug ? 'active' : ''}`}
+                    className={`cat-btn ${category === cat.slug ? "active" : ""}`}
                     onClick={() => handleCategoryChange(cat.slug)}
                   >
                     <span>{cat.name}</span>
@@ -1312,8 +1397,10 @@ export default function TiendaPage() {
                     <div className="toolbar-title">
                       <h2>{selectedCategoryName}</h2>
                       <span>
-                        {products.length}{' '}
-                        {products.length === 1 ? 'producto encontrado' : 'productos encontrados'}
+                        {products.length}{" "}
+                        {products.length === 1
+                          ? "producto encontrado"
+                          : "productos encontrados"}
                       </span>
                     </div>
 
@@ -1333,7 +1420,10 @@ export default function TiendaPage() {
                       <div className="empty">
                         <Package size={42} />
                         <p>No se encontraron productos</p>
-                        <small>Probá cambiando la búsqueda o seleccionando otra categoría.</small>
+                        <small>
+                          Probá cambiando la búsqueda o seleccionando otra
+                          categoría.
+                        </small>
                       </div>
                     )}
 
@@ -1350,13 +1440,19 @@ export default function TiendaPage() {
                           )}
 
                           {product.category?.name && (
-                            <span className="tag-cat">{product.category.name}</span>
+                            <span className="tag-cat">
+                              {product.category.name}
+                            </span>
                           )}
 
                           {product.canSell ? (
-                            <span className="stock-badge in">{product.stockLabel}</span>
+                            <span className="stock-badge in">
+                              {product.stockLabel}
+                            </span>
                           ) : (
-                            <span className="stock-badge out">{product.stockLabel}</span>
+                            <span className="stock-badge out">
+                              {product.stockLabel}
+                            </span>
                           )}
                         </div>
 
@@ -1364,9 +1460,9 @@ export default function TiendaPage() {
                           <h2 className="card-name">{product.name}</h2>
 
                           <p className="card-unit">
-                            {product.saleUnit === 'KG'
-                              ? 'Venta por kilogramo'
-                              : 'Venta por unidad'}
+                            {product.saleUnit === "KG"
+                              ? "Venta por kilogramo"
+                              : "Venta por unidad"}
                           </p>
 
                           <div className="card-footer">
@@ -1374,14 +1470,20 @@ export default function TiendaPage() {
                               <p className="price-label">{priceLabel}</p>
 
                               {product.canSell ? (
-                                <p className="price">{formatMoney(product.price)}</p>
+                                <p className="price">
+                                  {formatMoney(product.price)}
+                                </p>
                               ) : (
                                 <p className="out-price">Agotado</p>
                               )}
                             </div>
 
                             {!isLoggedIn ? (
-                              <Link href="/tienda/login" className="lock-btn" title="Iniciar sesión">
+                              <Link
+                                href="/tienda/login"
+                                className="lock-btn"
+                                title="Iniciar sesión"
+                              >
                                 <Lock size={16} />
                               </Link>
                             ) : (
@@ -1421,9 +1523,10 @@ export default function TiendaPage() {
             </div>
 
             <div className="footer-links">
-              <Link href="/tienda/login">Mi cuenta</Link>
+              <Link href={isLoggedIn ? "/tienda/cuenta" : "/tienda/login"}>
+                {isLoggedIn ? "Mi cuenta" : "Login"}
+              </Link>
               <Link href="/tienda/carrito">Carrito</Link>
-              <Link href="/tienda/register">Registrarse</Link>
             </div>
           </div>
         </footer>

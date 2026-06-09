@@ -1,12 +1,31 @@
-'use client';
+"use client";
 
-import Image from 'next/image';
-import { FormEvent, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, Lock, Mail } from 'lucide-react';
-import { shopApi } from '@/lib/shop';
-import toast from 'react-hot-toast';
+import Image from "next/image";
+import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Lock, Mail, MessageCircle } from "lucide-react";
+import { shopApi } from "@/lib/shop";
+import toast from "react-hot-toast";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+const WHATSAPP_ACCOUNT_URL =
+  "https://wa.me/5493513790057?text=Hola%20Grupo%20VJ%2C%20quiero%20pedir%20una%20cuenta%20para%20poder%20comprar%20en%20la%20tienda.";
+
+async function isAlreadyLoggedIn() {
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
@@ -20,25 +39,42 @@ function getErrorMessage(error: unknown, fallback: string) {
     };
   };
 
-  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+  return (
+    apiError.response?.data?.message ??
+    apiError.response?.data?.error ??
+    fallback
+  );
 }
 
 export default function TiendaLoginPage() {
   const router = useRouter();
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    isAlreadyLoggedIn().then((logged) => {
+      if (!alive || !logged) return;
+      router.replace("/tienda/cuenta");
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [router]);
 
   function validateForm() {
     if (!email.trim()) {
-      toast.error('Ingresá tu correo electrónico');
+      toast.error("Ingresá tu correo electrónico");
       return false;
     }
 
     if (!password.trim()) {
-      toast.error('Ingresá tu contraseña');
+      toast.error("Ingresá tu contraseña");
       return false;
     }
 
@@ -51,9 +87,9 @@ export default function TiendaLoginPage() {
     if (!validateForm()) return;
 
     setSaving(true);
-    setError('');
+    setError("");
 
-    const toastId = toast.loading('Iniciando sesión...');
+    const toastId = toast.loading("Iniciando sesión...");
 
     try {
       await shopApi.login({
@@ -61,12 +97,12 @@ export default function TiendaLoginPage() {
         password,
       });
 
-      toast.success('Sesión iniciada correctamente', { id: toastId });
+      toast.success("Sesión iniciada correctamente", { id: toastId });
 
-      router.push('/tienda/carrito');
+      router.push("/tienda/cuenta");
       router.refresh();
     } catch (err: unknown) {
-      const message = getErrorMessage(err, 'No se pudo iniciar sesión');
+      const message = getErrorMessage(err, "No se pudo iniciar sesión");
 
       setError(message);
       toast.error(message, { id: toastId });
@@ -92,6 +128,9 @@ export default function TiendaLoginPage() {
           --primary-hover: #030712;
           --blue: #2563eb;
           --blue-soft: #eff6ff;
+          --green: #16a34a;
+          --green-hover: #15803d;
+          --green-soft: #f0fdf4;
           --red: #dc2626;
           --red-soft: #fef2f2;
           --shadow: 0 24px 70px rgba(15, 23, 42, 0.10);
@@ -305,17 +344,40 @@ export default function TiendaLoginPage() {
           color: var(--muted);
           text-align: center;
           font-size: 13px;
-          font-weight: 600;
+          font-weight: 700;
+          line-height: 1.45;
         }
 
-        .auth-footer a {
-          color: var(--text);
-          font-weight: 900;
+        .whatsapp-account {
+          margin-top: 14px;
+          width: 100%;
+          min-height: 48px;
+          border-radius: 16px;
+          background: var(--green);
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 9px;
           text-decoration: none;
+          font-size: 14px;
+          font-weight: 950;
+          transition: 0.18s ease;
+          box-shadow: 0 14px 30px rgba(22, 163, 74, 0.22);
         }
 
-        .auth-footer a:hover {
-          text-decoration: underline;
+        .whatsapp-account:hover {
+          background: var(--green-hover);
+          transform: translateY(-1px);
+        }
+
+        .whatsapp-help {
+          margin: 10px 0 0;
+          color: var(--muted);
+          text-align: center;
+          font-size: 12px;
+          font-weight: 650;
+          line-height: 1.45;
         }
 
         .back-to-shop {
@@ -362,6 +424,11 @@ export default function TiendaLoginPage() {
 
           .form-title {
             font-size: 26px;
+          }
+
+          .whatsapp-account {
+            min-height: 50px;
+            font-size: 13px;
           }
         }
       `}</style>
@@ -434,14 +501,28 @@ export default function TiendaLoginPage() {
             </div>
 
             <button type="submit" disabled={saving} className="btn-submit">
-              {saving ? 'Ingresando...' : 'Ingresar'}
+              {saving ? "Ingresando..." : "Ingresar"}
             </button>
           </form>
 
           <div className="divider" />
 
           <p className="auth-footer">
-            ¿No tenés cuenta? <Link href="/tienda/register">Registrate</Link>
+            ¿No tenés cuenta? Pedila por WhatsApp y te la activamos.
+          </p>
+
+          <a
+            className="whatsapp-account"
+            href={WHATSAPP_ACCOUNT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <MessageCircle size={18} />
+            Pedir cuenta por WhatsApp
+          </a>
+
+          <p className="whatsapp-help">
+            También podés escribirnos al +54 9 3513 79-0057.
           </p>
 
           <Link className="back-to-shop" href="/tienda">

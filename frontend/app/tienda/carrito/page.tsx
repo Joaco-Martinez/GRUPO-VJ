@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import Image from 'next/image';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import {
   Trash2,
   ArrowLeft,
@@ -15,10 +15,41 @@ import {
   Minus,
   AlertTriangle,
   X,
-} from 'lucide-react';
-import { formatMoney, shopApi } from '@/lib/shop';
-import { useCartStore } from '@/store/cart';
-import toast from 'react-hot-toast';
+} from "lucide-react";
+import { formatMoney, shopApi } from "@/lib/shop";
+import { useCartStore } from "@/store/cart";
+import toast from "react-hot-toast";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+type ShopAuthUser = {
+  id: string;
+  email: string;
+  name?: string | null;
+  client?: {
+    id: string;
+    nombre?: string | null;
+    apellido?: string | null;
+    category?: string | null;
+  } | null;
+};
+
+async function getCurrentUser(): Promise<ShopAuthUser | null> {
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    return data?.content ?? data?.user ?? data ?? null;
+  } catch {
+    return null;
+  }
+}
 
 type ConfirmState = {
   title: string;
@@ -40,7 +71,11 @@ function getErrorMessage(error: unknown, fallback: string) {
     };
   };
 
-  return apiError.response?.data?.message ?? apiError.response?.data?.error ?? fallback;
+  return (
+    apiError.response?.data?.message ??
+    apiError.response?.data?.error ??
+    fallback
+  );
 }
 
 export default function TiendaCarritoPage() {
@@ -52,84 +87,99 @@ export default function TiendaCarritoPage() {
   const remove = useCartStore((state) => state.remove);
   const clear = useCartStore((state) => state.clear);
 
-  const [notes, setNotes] = useState('');
-  const [error, setError] = useState('');
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [customerCategory, setCustomerCategory] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   const storeSuffix = useMemo(() => {
-    if (customerCategory === 'Mayorista') return 'Mayorista';
-    if (customerCategory === 'Cliente') return 'Clientes';
-    return 'Minorista';
+    if (customerCategory === "Mayorista") return "Mayorista";
+    if (customerCategory === "Cliente") return "Clientes";
+    return "Minorista";
   }, [customerCategory]);
 
   const priceLabel = useMemo(() => {
-    if (customerCategory === 'Mayorista') return 'Precio mayorista';
-    if (customerCategory === 'Cliente') return 'Precio cliente';
-    return 'Precio público';
+    if (customerCategory === "Mayorista") return "Precio mayorista";
+    if (customerCategory === "Cliente") return "Precio cliente";
+    return "Precio público";
   }, [customerCategory]);
 
   useEffect(() => {
     let alive = true;
 
-    shopApi
-      .getProducts({ limit: 1 })
-      .then((result) => {
-        if (!alive) return;
-        setCustomerCategory(result.customer?.category ?? null);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setCustomerCategory(null);
-      });
+    getCurrentUser().then((user) => {
+      if (!alive) return;
+
+      if (!user) {
+        toast.error("Para ver el carrito tenés que iniciar sesión");
+        router.replace("/tienda/login");
+        return;
+      }
+
+      setCustomerCategory(user.client?.category ?? null);
+      setAuthChecked(true);
+    });
 
     return () => {
       alive = false;
     };
-  }, []);
+  }, [router]);
 
   async function checkout() {
+    if (!authChecked) {
+      toast.error("Verificando tu sesión. Intentá de nuevo.");
+      return;
+    }
+
     if (!items.length) {
-      toast.error('Tu carrito está vacío');
+      toast.error("Tu carrito está vacío");
       return;
     }
 
     setSaving(true);
-    setError('');
+    setError("");
 
-    const toastId = toast.loading('Creando pedido...');
+    const toastId = toast.loading("Creando pedido...");
 
     try {
       const result = await shopApi.checkoutWhatsapp({
-        paymentMethod: 'TRANSFERENCIA',
+        paymentMethod: "TRANSFERENCIA",
         customerNotes: notes.trim(),
         items: items.map((item) => ({
           productId: item.product.id,
-          quantity: item.product.saleUnit === 'KG' ? undefined : item.quantity,
-          quantityKg: item.product.saleUnit === 'KG' ? item.quantity : undefined,
+          quantity: item.product.saleUnit === "KG" ? undefined : item.quantity,
+          quantityKg:
+            item.product.saleUnit === "KG" ? item.quantity : undefined,
         })),
       });
 
       clear();
 
       if (result.whatsappUrl) {
-        toast.success('Pedido creado. Abriendo WhatsApp...', { id: toastId });
+        toast.success("Pedido creado. Abriendo WhatsApp...", { id: toastId });
         window.location.href = result.whatsappUrl;
         return;
       }
 
-      const message = 'Pedido creado, pero falta configurar STORE_WHATSAPP_NUMBER en el backend.';
+      const message =
+        "Pedido creado, pero falta configurar STORE_WHATSAPP_NUMBER en el backend.";
       setError(message);
       toast.error(message, { id: toastId });
     } catch (err: unknown) {
-      const message = getErrorMessage(err, 'No se pudo finalizar el pedido');
+      const message = getErrorMessage(err, "No se pudo finalizar el pedido");
 
-      if (message.toLowerCase().includes('token') || message.toLowerCase().includes('sesión')) {
-        toast.error('Tu sesión venció. Iniciá sesión nuevamente', { id: toastId });
-        router.push('/tienda/login');
+      if (
+        message.toLowerCase().includes("token") ||
+        message.toLowerCase().includes("sesión")
+      ) {
+        toast.error("Tu sesión venció. Iniciá sesión nuevamente", {
+          id: toastId,
+        });
+        router.push("/tienda/login");
         return;
       }
 
@@ -142,14 +192,14 @@ export default function TiendaCarritoPage() {
 
   function openCheckoutConfirm() {
     if (!items.length) {
-      toast.error('Tu carrito está vacío');
+      toast.error("Tu carrito está vacío");
       return;
     }
 
     setConfirmModal({
-      title: 'Finalizar pedido',
+      title: "Finalizar pedido",
       message: `¿Confirmás crear el pedido por ${formatMoney(total)} y abrir WhatsApp con el detalle?`,
-      confirmText: 'Finalizar por WhatsApp',
+      confirmText: "Finalizar por WhatsApp",
       danger: false,
       onConfirm: checkout,
     });
@@ -168,19 +218,34 @@ export default function TiendaCarritoPage() {
     }
   }
 
-  function decreaseQuantity(productId: string, currentQuantity: number, isKg: boolean) {
+  function decreaseQuantity(
+    productId: string,
+    currentQuantity: number,
+    isKg: boolean,
+  ) {
     const step = isKg ? 0.1 : 1;
-    const nextQuantity = Math.max(step, Number((currentQuantity - step).toFixed(2)));
+    const nextQuantity = Math.max(
+      step,
+      Number((currentQuantity - step).toFixed(2)),
+    );
     setQuantity(productId, nextQuantity);
   }
 
-  function increaseQuantity(productId: string, currentQuantity: number, isKg: boolean) {
+  function increaseQuantity(
+    productId: string,
+    currentQuantity: number,
+    isKg: boolean,
+  ) {
     const step = isKg ? 0.1 : 1;
     const nextQuantity = Number((currentQuantity + step).toFixed(2));
     setQuantity(productId, nextQuantity);
   }
 
-  function handleQuantityInput(productId: string, value: string, isKg: boolean) {
+  function handleQuantityInput(
+    productId: string,
+    value: string,
+    isKg: boolean,
+  ) {
     const parsed = Number(value);
     const min = isKg ? 0.1 : 1;
 
@@ -194,7 +259,7 @@ export default function TiendaCarritoPage() {
 
   function handleRemove(productId: string) {
     remove(productId);
-    toast.success('Producto quitado del carrito');
+    toast.success("Producto quitado del carrito");
   }
 
   return (
@@ -1485,7 +1550,8 @@ export default function TiendaCarritoPage() {
             <div className="info-item">
               <MapPin size={14} />
               <span>
-                Retiro y atención en <strong>Paso de los Andes 893, Córdoba</strong>
+                Retiro y atención en{" "}
+                <strong>Paso de los Andes 893, Córdoba</strong>
               </span>
             </div>
           </div>
@@ -1503,7 +1569,8 @@ export default function TiendaCarritoPage() {
             <div className="head-chips">
               <div className="cart-count-chip">
                 <ShoppingBag size={15} />
-                <strong>{items.length}</strong> {items.length === 1 ? 'producto' : 'productos'}
+                <strong>{items.length}</strong>{" "}
+                {items.length === 1 ? "producto" : "productos"}
               </div>
 
               <div className="price-chip">
@@ -1521,7 +1588,8 @@ export default function TiendaCarritoPage() {
               <h2>Tu carrito está vacío</h2>
 
               <p>
-                Agregá productos desde el catálogo para armar tu pedido y continuar por WhatsApp.
+                Agregá productos desde el catálogo para armar tu pedido y
+                continuar por WhatsApp.
               </p>
 
               <Link className="btn-go-shop" href="/tienda">
@@ -1540,7 +1608,7 @@ export default function TiendaCarritoPage() {
                 </div>
 
                 {items.map((item) => {
-                  const isKg = item.product.saleUnit === 'KG';
+                  const isKg = item.product.saleUnit === "KG";
 
                   return (
                     <div className="cart-row" key={item.product.id}>
@@ -1548,8 +1616,9 @@ export default function TiendaCarritoPage() {
                         <p className="row-name">{item.product.name}</p>
 
                         <div className="row-unit-price">
-                          <strong>{priceLabel}:</strong> {formatMoney(item.product.price)}{' '}
-                          {isKg ? '/ kg' : 'c/u'}
+                          <strong>{priceLabel}:</strong>{" "}
+                          {formatMoney(item.product.price)}{" "}
+                          {isKg ? "/ kg" : "c/u"}
                         </div>
                       </div>
 
@@ -1558,7 +1627,13 @@ export default function TiendaCarritoPage() {
                           <button
                             type="button"
                             className="qty-btn"
-                            onClick={() => decreaseQuantity(item.product.id, item.quantity, isKg)}
+                            onClick={() =>
+                              decreaseQuantity(
+                                item.product.id,
+                                item.quantity,
+                                isKg,
+                              )
+                            }
                             title="Restar"
                           >
                             <Minus size={14} />
@@ -1571,14 +1646,24 @@ export default function TiendaCarritoPage() {
                             step={isKg ? 0.1 : 1}
                             value={item.quantity}
                             onChange={(e) =>
-                              handleQuantityInput(item.product.id, e.target.value, isKg)
+                              handleQuantityInput(
+                                item.product.id,
+                                e.target.value,
+                                isKg,
+                              )
                             }
                           />
 
                           <button
                             type="button"
                             className="qty-btn"
-                            onClick={() => increaseQuantity(item.product.id, item.quantity, isKg)}
+                            onClick={() =>
+                              increaseQuantity(
+                                item.product.id,
+                                item.quantity,
+                                isKg,
+                              )
+                            }
                             title="Sumar"
                           >
                             <Plus size={14} />
@@ -1624,7 +1709,9 @@ export default function TiendaCarritoPage() {
 
                 <div className="summary-total">
                   <span className="summary-total-label">Total</span>
-                  <span className="summary-total-amount">{formatMoney(total)}</span>
+                  <span className="summary-total-amount">
+                    {formatMoney(total)}
+                  </span>
                 </div>
 
                 {error && <div className="error-box">⚠ {error}</div>}
@@ -1642,9 +1729,13 @@ export default function TiendaCarritoPage() {
                   disabled={saving}
                 />
 
-                <button className="btn-checkout" disabled={saving} onClick={openCheckoutConfirm}>
+                <button
+                  className="btn-checkout"
+                  disabled={saving}
+                  onClick={openCheckoutConfirm}
+                >
                   <MessageCircle size={18} />
-                  {saving ? 'Creando pedido...' : 'Finalizar por WhatsApp'}
+                  {saving ? "Creando pedido..." : "Finalizar por WhatsApp"}
                 </button>
 
                 <p className="payment-note">
@@ -1656,8 +1747,8 @@ export default function TiendaCarritoPage() {
                 <div className="secure-note">
                   <ShieldCheck size={16} />
                   <span>
-                    Al finalizar, se crea la venta en el ERP y se abre WhatsApp con el detalle
-                    del pedido.
+                    Al finalizar, se crea la venta en el ERP y se abre WhatsApp
+                    con el detalle del pedido.
                   </span>
                 </div>
               </aside>
@@ -1711,7 +1802,9 @@ export default function TiendaCarritoPage() {
                 onClick={confirmAction}
                 disabled={confirmLoading}
               >
-                {confirmLoading ? 'Creando...' : confirmModal.confirmText ?? 'Confirmar'}
+                {confirmLoading
+                  ? "Creando..."
+                  : (confirmModal.confirmText ?? "Confirmar")}
               </button>
             </div>
           </div>

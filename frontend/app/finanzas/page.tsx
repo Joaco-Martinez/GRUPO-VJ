@@ -3,6 +3,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { FinanceEntry, Product, Sale } from '@/types';
@@ -45,6 +46,9 @@ const fmt = (n: number) =>
 const pct = (n: number) => `${Number(n || 0).toFixed(1)}%`;
 
 const MOVEMENTS_PAGE_SIZE = 5;
+const MOBILE_MARGIN_PAGE_SIZE = 6;
+
+type FinanceMobileTab = 'resumen' | 'margenes' | 'movimientos';
 
 const FINANCE_CATEGORIES = [
   { value: 'VENTA', label: 'Venta' },
@@ -262,6 +266,8 @@ export default function FinanzasPage() {
   const [marginSearch, setMarginSearch] = useState('');
   const [marginSort, setMarginSort] = useState<MarginSort>('finalMargin');
   const [movementsPage, setMovementsPage] = useState(1);
+  const [marginPage, setMarginPage] = useState(1);
+  const [mobileTab, setMobileTab] = useState<FinanceMobileTab>('resumen');
 
   const [stats, setStats] = useState<StatsState>({
     week: 0,
@@ -452,6 +458,14 @@ export default function FinanzasPage() {
       return Number(b[marginSort] || 0) - Number(a[marginSort] || 0);
     });
   }, [marginRows, marginSearch, marginSort]);
+
+  const totalMarginPages = Math.max(1, Math.ceil(filteredMarginRows.length / MOBILE_MARGIN_PAGE_SIZE));
+  const currentMarginPage = Math.min(marginPage, totalMarginPages);
+
+  const paginatedMarginRows = useMemo(() => {
+    const start = (currentMarginPage - 1) * MOBILE_MARGIN_PAGE_SIZE;
+    return filteredMarginRows.slice(start, start + MOBILE_MARGIN_PAGE_SIZE);
+  }, [filteredMarginRows, currentMarginPage]);
 
   const marginSummary = useMemo(() => {
     const rowsWithCost = marginRows.filter(row => row.cost > 0);
@@ -652,6 +666,7 @@ export default function FinanzasPage() {
         </div>
       }
     >
+      <div className={`finance-page finance-tab-${mobileTab}`}>
       <div className="card finance-filter-card" style={{ padding: 16, marginBottom: 20 }}>
         <div
           className="finance-filter-grid"
@@ -690,8 +705,34 @@ export default function FinanzasPage() {
         </div>
       </div>
 
+      <div className="finance-mobile-tabs" role="tablist" aria-label="Secciones de finanzas">
+        <button
+          type="button"
+          className={mobileTab === 'resumen' ? 'is-active' : ''}
+          onClick={() => setMobileTab('resumen')}
+        >
+          Resumen
+        </button>
+
+        <button
+          type="button"
+          className={mobileTab === 'margenes' ? 'is-active' : ''}
+          onClick={() => setMobileTab('margenes')}
+        >
+          Márgenes
+        </button>
+
+        <button
+          type="button"
+          className={mobileTab === 'movimientos' ? 'is-active' : ''}
+          onClick={() => setMobileTab('movimientos')}
+        >
+          Movimientos
+        </button>
+      </div>
+
       <div
-        className="finance-stats-grid"
+        className="finance-stats-grid finance-summary-section"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
@@ -822,7 +863,7 @@ export default function FinanzasPage() {
       </div>
 
       <div
-        className="finance-stats-grid finance-stats-grid-secondary"
+        className="finance-stats-grid finance-stats-grid-secondary finance-summary-section"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
@@ -956,13 +997,19 @@ export default function FinanzasPage() {
             />
             <input
               value={marginSearch}
-              onChange={e => setMarginSearch(e.target.value)}
+              onChange={e => {
+                setMarginSearch(e.target.value);
+                setMarginPage(1);
+              }}
               placeholder="Buscar producto, SKU o categoría..."
               style={{ paddingLeft: 36 }}
             />
           </div>
 
-          <select value={marginSort} onChange={e => setMarginSort(e.target.value as MarginSort)}>
+          <select value={marginSort} onChange={e => {
+              setMarginSort(e.target.value as MarginSort);
+              setMarginPage(1);
+            }}>
             <option value="finalMargin">Ordenar por margen final</option>
             <option value="clientMargin">Ordenar por margen cliente</option>
             <option value="wholesaleMargin">Ordenar por margen mayorista</option>
@@ -1030,8 +1077,8 @@ export default function FinanzasPage() {
         </div>
 
         <div className="finance-mobile-list">
-          {filteredMarginRows.map(row => (
-            <article key={row.id} className="finance-mobile-item">
+          {paginatedMarginRows.map(row => (
+            <article key={row.id} className="finance-mobile-item finance-margin-mobile-item">
               <div className="finance-mobile-head">
                 <div>
                   <h4>{row.name}</h4>
@@ -1095,10 +1142,34 @@ export default function FinanzasPage() {
             </div>
           )}
         </div>
+
+        {!loading && filteredMarginRows.length > MOBILE_MARGIN_PAGE_SIZE && (
+          <div className="finance-pagination finance-margin-pagination">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMarginPage(page => Math.max(1, page - 1))}
+              disabled={currentMarginPage <= 1}
+            >
+              Anterior
+            </button>
+
+            <span>
+              Página {currentMarginPage} de {totalMarginPages} · {filteredMarginRows.length} productos
+            </span>
+
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setMarginPage(page => Math.min(totalMarginPages, page + 1))}
+              disabled={currentMarginPage >= totalMarginPages}
+            >
+              Siguiente
+            </button>
+          </div>
+        )}
       </div>
 
       <div
-        className="finance-mini-stats-grid"
+        className="finance-mini-stats-grid finance-summary-section"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(3, 1fr)',
@@ -1150,7 +1221,7 @@ export default function FinanzasPage() {
       </div>
 
       {chartData.length > 0 && (
-        <div className="card finance-chart-card" style={{ padding: 24, marginBottom: 20 }}>
+        <div className="card finance-chart-card finance-summary-section" style={{ padding: 24, marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>
             Flujo de caja y utilidad del rango
           </div>
@@ -1221,7 +1292,7 @@ export default function FinanzasPage() {
       )}
 
       {categoryStats.length > 0 && (
-        <div className="card finance-category-card" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="card finance-category-card finance-summary-section" style={{ padding: 20, marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
             <Tags size={16} style={{ color: 'var(--accent2)' }} />
 
@@ -1271,7 +1342,7 @@ export default function FinanzasPage() {
       )}
 
       <div
-        className="finance-products-grid"
+        className="finance-products-grid finance-summary-section"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(2, 1fr)',
@@ -1509,8 +1580,9 @@ export default function FinanzasPage() {
           </div>
         )}
       </div>
+      </div>
 
-      {modal && (
+      {modal && typeof document !== 'undefined' && createPortal(
         <div
           className="modal-overlay"
           onClick={e => e.target === e.currentTarget && setModal(false)}
@@ -1607,7 +1679,7 @@ export default function FinanzasPage() {
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
       <style jsx>{`
 
@@ -1651,6 +1723,16 @@ export default function FinanzasPage() {
           display: none;
         }
 
+
+        .finance-mobile-tabs {
+          display: none;
+        }
+
+        .finance-page {
+          min-width: 0;
+        }
+
+
         .finance-positive {
           color: var(--accent);
         }
@@ -1675,6 +1757,59 @@ export default function FinanzasPage() {
         }
 
         @media (max-width: 768px) {
+
+          .finance-page {
+            display: grid;
+            gap: 0;
+          }
+
+          .finance-mobile-tabs {
+            position: sticky;
+            top: 0;
+            z-index: 40;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 7px;
+            padding: 8px;
+            margin: 0 0 10px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: color-mix(in srgb, var(--surface) 92%, transparent);
+            backdrop-filter: blur(12px);
+          }
+
+          .finance-mobile-tabs button {
+            border: 1px solid transparent;
+            border-radius: 999px;
+            min-height: 34px;
+            background: transparent;
+            color: var(--text2);
+            font-size: 11px;
+            font-weight: 900;
+            cursor: pointer;
+          }
+
+          .finance-mobile-tabs button.is-active {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+            color: var(--accent);
+          }
+
+          .finance-tab-resumen .finance-margin-card,
+          .finance-tab-resumen .finance-movements-card {
+            display: none !important;
+          }
+
+          .finance-tab-margenes .finance-summary-section,
+          .finance-tab-margenes .finance-movements-card {
+            display: none !important;
+          }
+
+          .finance-tab-movimientos .finance-summary-section,
+          .finance-tab-movimientos .finance-margin-card {
+            display: none !important;
+          }
+
           .finance-actions {
             width: 100%;
             display: grid !important;
@@ -1719,22 +1854,39 @@ export default function FinanzasPage() {
           .finance-stats-grid,
           .finance-stats-grid-secondary,
           .finance-mini-stats-grid {
-            grid-template-columns: 1fr !important;
-            gap: 10px !important;
-            margin-bottom: 14px !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
           }
 
           .finance-stats-grid .stat-card,
           .finance-stats-grid-secondary .stat-card,
           .finance-mini-stats-grid .stat-card {
             min-width: 0;
-            border-radius: 18px;
+            min-height: 78px;
+            border-radius: 16px;
+            padding: 10px !important;
+          }
+
+          .finance-stats-grid .stat-card > div:first-child,
+          .finance-stats-grid-secondary .stat-card > div:first-child,
+          .finance-mini-stats-grid .stat-card > div:first-child {
+            margin-bottom: 7px !important;
+            gap: 6px !important;
+          }
+
+          .finance-stats-grid .stat-card span,
+          .finance-stats-grid-secondary .stat-card span,
+          .finance-mini-stats-grid .stat-card span {
+            font-size: 10px !important;
+            line-height: 1.2;
           }
 
           .finance-stats-grid .stat-value,
           .finance-stats-grid-secondary .stat-value,
           .finance-mini-stats-grid .stat-value {
-            font-size: 20px !important;
+            font-size: 15px !important;
+            line-height: 1.15;
             overflow-wrap: anywhere;
           }
 
@@ -1837,19 +1989,17 @@ export default function FinanzasPage() {
 
           .finance-mobile-data {
             display: grid;
-            grid-template-columns: 1fr;
-            gap: 8px;
-            margin-top: 12px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+            margin-top: 10px;
           }
 
           .finance-mobile-data > div {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
+            display: grid;
+            gap: 4px;
             border-radius: 12px;
             background: var(--surface);
-            padding: 9px 10px;
+            padding: 8px;
             min-width: 0;
           }
 
@@ -1861,8 +2011,8 @@ export default function FinanzasPage() {
 
           .finance-mobile-data strong {
             font-family: var(--mono);
-            font-size: 12px;
-            text-align: right;
+            font-size: 11px;
+            text-align: left;
             overflow-wrap: anywhere;
           }
 
@@ -1941,12 +2091,63 @@ export default function FinanzasPage() {
           }
 
 
+
+          .modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            padding: 0;
+            background: rgba(0, 0, 0, 0.52);
+          }
+
           .finance-modal {
-            width: calc(100vw - 24px);
-            max-width: calc(100vw - 24px);
-            max-height: calc(100dvh - 24px);
-            overflow: auto;
-            border-radius: 18px;
+            width: 100vw !important;
+            max-width: 100vw !important;
+            max-height: min(88dvh, 640px) !important;
+            margin: 0 !important;
+            border-radius: 22px 22px 0 0 !important;
+            overflow: hidden !important;
+            display: flex;
+            flex-direction: column;
+            background: var(--surface);
+          }
+
+          .finance-modal .modal-header {
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+          }
+
+          .finance-modal .modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 14px !important;
+            background: var(--bg);
+          }
+
+          .finance-modal .modal-body .form-group,
+          .finance-modal .modal-body .finance-form-row {
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 10px;
+            background: var(--surface);
+          }
+
+          .finance-modal .modal-body .finance-form-row .form-group {
+            border: 0;
+            padding: 0;
+            background: transparent;
+          }
+
+          .finance-modal-footer {
+            flex-shrink: 0;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom)) !important;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
           }
 
           .finance-form-row {

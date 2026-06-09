@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { ClientCategory, Role, User } from '@/types';
@@ -34,6 +35,8 @@ const emptyForm = {
 };
 
 type UserForm = typeof emptyForm;
+
+const USERS_MOBILE_PAGE_SIZE = 8;
 
 type ConfirmState = {
   title: string;
@@ -121,6 +124,8 @@ export default function UsuariosPage() {
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [mobileUserSheet, setMobileUserSheet] = useState<User | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -178,6 +183,23 @@ export default function UsuariosPage() {
       );
     });
   }, [users, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / USERS_MOBILE_PAGE_SIZE));
+
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const mobilePaginatedUsers = useMemo(() => {
+    const start = (safeCurrentPage - 1) * USERS_MOBILE_PAGE_SIZE;
+    return filtered.slice(start, start + USERS_MOBILE_PAGE_SIZE);
+  }, [filtered, safeCurrentPage]);
+
+  const mobilePageStart = filtered.length ? (safeCurrentPage - 1) * USERS_MOBILE_PAGE_SIZE + 1 : 0;
+  const mobilePageEnd = Math.min(safeCurrentPage * USERS_MOBILE_PAGE_SIZE, filtered.length);
+
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    setCurrentPage(1);
+  };
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -468,7 +490,7 @@ export default function UsuariosPage() {
 
         <input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => handleSearchChange(e.target.value)}
           placeholder="Buscar por nombre, email, rol, DNI o categoría..."
           style={{ paddingLeft: 34 }}
         />
@@ -645,7 +667,7 @@ export default function UsuariosPage() {
               ))}
             </div>
           ) : (
-            filtered.map((u) => (
+            mobilePaginatedUsers.map((u) => (
               <article className="users-mobile-item" key={u.id}>
                 <div className="users-mobile-head">
                   <div className="users-mobile-user">
@@ -706,21 +728,18 @@ export default function UsuariosPage() {
                 <div className="users-mobile-actions">
                   <button
                     className="btn btn-secondary btn-sm"
+                    onClick={() => setMobileUserSheet(u)}
+                  >
+                    Ver más
+                  </button>
+
+                  <button
+                    className="btn btn-primary btn-sm"
                     onClick={() => openEdit(u)}
                   >
                     <Edit2 size={13} />
                     Editar
                   </button>
-
-                  {u.id !== me?.id && (
-                    <button
-                      className="btn btn-danger btn-sm"
-                      onClick={() => handleDelete(u)}
-                    >
-                      <Trash2 size={13} />
-                      Eliminar
-                    </button>
-                  )}
                 </div>
               </article>
             ))
@@ -733,9 +752,135 @@ export default function UsuariosPage() {
             </div>
           )}
         </div>
+
+        {!loading && filtered.length > USERS_MOBILE_PAGE_SIZE && (
+          <div className="users-mobile-pagination">
+            <div>
+              Mostrando {mobilePageStart} - {mobilePageEnd} de {filtered.length}
+            </div>
+
+            <div className="users-mobile-pagination-actions">
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={safeCurrentPage === 1}
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              >
+                Anterior
+              </button>
+
+              <span>Página {safeCurrentPage} de {totalPages}</span>
+
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={safeCurrentPage === totalPages}
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {modal && (
+      {mobileUserSheet && typeof document !== 'undefined' &&
+        createPortal(
+          <div className="users-mobile-sheet-backdrop" onClick={() => setMobileUserSheet(null)}>
+            <div className="users-mobile-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="users-mobile-sheet-handle" />
+
+              <div className="users-mobile-sheet-header">
+                <div className="users-mobile-sheet-user">
+                  <div className={`users-avatar ${mobileUserSheet.role === 'ADMIN' ? 'users-avatar-admin' : ''}`}>
+                    {mobileUserSheet.name?.[0]?.toUpperCase() ?? 'U'}
+                  </div>
+
+                  <div>
+                    <b>
+                      {mobileUserSheet.name}
+                      {mobileUserSheet.id === me?.id && <span> vos</span>}
+                    </b>
+                    <small>{mobileUserSheet.email}</small>
+                  </div>
+                </div>
+
+                <button className="btn btn-ghost btn-sm" onClick={() => setMobileUserSheet(null)}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="users-mobile-sheet-body">
+                <div className="users-mobile-sheet-grid">
+                  <div>
+                    <small>Rol</small>
+                    <strong>{mobileUserSheet.role}</strong>
+                  </div>
+
+                  <div>
+                    <small>Estado</small>
+                    <strong>{mobileUserSheet.isActive === false ? 'Inactivo' : 'Activo'}</strong>
+                  </div>
+
+                  <div>
+                    <small>Email</small>
+                    <strong>{mobileUserSheet.email}</strong>
+                  </div>
+
+                  <div>
+                    <small>ID</small>
+                    <strong>{mobileUserSheet.id}</strong>
+                  </div>
+                </div>
+
+                {mobileUserSheet.client ? (
+                  <div className="users-mobile-sheet-box">
+                    <small>Cliente vinculado</small>
+                    <p>
+                      <b>{mobileUserSheet.client.nombre} {mobileUserSheet.client.apellido}</b>
+                      <span>{mobileUserSheet.client.category} · DNI/CUIT {mobileUserSheet.client.dni}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="users-mobile-sheet-box">
+                    <small>Cliente vinculado</small>
+                    <p>Este usuario no tiene cliente vinculado.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="users-mobile-sheet-actions">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const user = mobileUserSheet;
+                    setMobileUserSheet(null);
+                    openEdit(user);
+                  }}
+                >
+                  <Edit2 size={15} />
+                  Editar
+                </button>
+
+                {mobileUserSheet.id !== me?.id && (
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => {
+                      const user = mobileUserSheet;
+                      setMobileUserSheet(null);
+                      handleDelete(user);
+                    }}
+                  >
+                    <Trash2 size={15} />
+                    Eliminar
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {modal && typeof document !== 'undefined' && createPortal(
+        (
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
@@ -935,9 +1080,10 @@ export default function UsuariosPage() {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
 
-      {confirmModal && (
+      {confirmModal && typeof document !== 'undefined' && createPortal(
+        (
         <div
           className="modal-overlay"
           onClick={(e) => {
@@ -1006,12 +1152,18 @@ export default function UsuariosPage() {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
 
       <style jsx>{`
         .users-mobile-list {
           display: none;
         }
+
+
+        .users-mobile-pagination {
+          display: none;
+        }
+
 
         .users-avatar {
           width: 34px;
@@ -1053,19 +1205,37 @@ export default function UsuariosPage() {
           }
 
           .users-stats-grid {
-            grid-template-columns: 1fr !important;
-            gap: 10px !important;
-            margin-bottom: 14px !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
+          }
+
+          .users-stats-grid .stat-card {
+            min-height: 64px;
+            padding: 10px !important;
+          }
+
+          .users-stats-grid .stat-value {
+            font-size: 18px !important;
+            line-height: 1.1;
+          }
+
+          .users-stats-grid .stat-label {
+            font-size: 10px !important;
+            line-height: 1.2;
           }
 
           .users-search {
             max-width: none !important;
             width: 100%;
-            margin-bottom: 14px !important;
+            margin-bottom: 10px !important;
           }
 
           .users-search input {
             width: 100%;
+            min-height: 36px;
+            height: 36px;
+            font-size: 13px;
           }
 
           .users-card {
@@ -1079,17 +1249,17 @@ export default function UsuariosPage() {
 
           .users-mobile-list {
             display: grid;
-            gap: 10px;
-            padding: 12px;
+            gap: 8px;
+            padding: 10px;
           }
 
           .users-mobile-item {
             border: 1px solid var(--border);
-            border-radius: 16px;
+            border-radius: 15px;
             background: var(--surface2);
-            padding: 12px;
+            padding: 10px;
             display: grid;
-            gap: 12px;
+            gap: 8px;
             min-width: 0;
           }
 
@@ -1141,15 +1311,21 @@ export default function UsuariosPage() {
           .users-mobile-badges {
             display: flex;
             flex-wrap: wrap;
-            gap: 7px;
+            gap: 6px;
+          }
+
+          .users-mobile-badges .badge,
+          .users-mobile-head > .badge {
+            font-size: 9px;
+            padding: 3px 6px;
           }
 
           .users-mobile-client {
             display: grid;
-            gap: 4px;
-            border-radius: 12px;
+            gap: 3px;
+            border-radius: 11px;
             background: var(--bg);
-            padding: 9px 10px;
+            padding: 8px 9px;
           }
 
           .users-mobile-client small {
@@ -1175,13 +1351,249 @@ export default function UsuariosPage() {
             justify-content: center;
           }
 
+
+          .users-mobile-pagination {
+            display: grid;
+            gap: 8px;
+            padding: 10px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            text-align: center;
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 800;
+          }
+
+          .users-mobile-pagination-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+
+          .users-mobile-pagination-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .users-mobile-pagination-actions span {
+            color: var(--text2);
+            font-size: 12px;
+            font-weight: 900;
+          }
+
+          .users-mobile-sheet-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.5);
+          }
+
+          .users-mobile-sheet {
+            width: 100%;
+            max-height: min(82dvh, 620px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border-radius: 22px 22px 0 0;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.38);
+          }
+
+          .users-mobile-sheet-handle {
+            width: 44px;
+            height: 4px;
+            border-radius: 999px;
+            background: var(--border);
+            margin: 10px auto 8px;
+            flex-shrink: 0;
+          }
+
+          .users-mobile-sheet-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 0 14px 12px;
+            border-bottom: 1px solid var(--border);
+          }
+
+          .users-mobile-sheet-user {
+            min-width: 0;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+
+          .users-mobile-sheet-user b {
+            display: block;
+            font-size: 14px;
+            line-height: 1.2;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .users-mobile-sheet-user b span {
+            color: var(--text3);
+            font-size: 10px;
+            font-family: var(--mono);
+          }
+
+          .users-mobile-sheet-user small {
+            display: block;
+            margin-top: 3px;
+            color: var(--text3);
+            font-size: 11px;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .users-mobile-sheet-body {
+            overflow-y: auto;
+            padding: 12px 14px;
+            display: grid;
+            gap: 10px;
+          }
+
+          .users-mobile-sheet-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+
+          .users-mobile-sheet-grid > div,
+          .users-mobile-sheet-box {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--surface2);
+            padding: 10px;
+            min-width: 0;
+          }
+
+          .users-mobile-sheet-grid small,
+          .users-mobile-sheet-box small {
+            display: block;
+            color: var(--text3);
+            font-size: 10px;
+            font-weight: 800;
+            margin-bottom: 5px;
+          }
+
+          .users-mobile-sheet-grid strong {
+            display: block;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text);
+            overflow-wrap: anywhere;
+          }
+
+          .users-mobile-sheet-box p {
+            display: grid;
+            gap: 4px;
+            margin: 0;
+            color: var(--text2);
+            font-size: 12px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+          }
+
+          .users-mobile-sheet-box p span {
+            color: var(--text3);
+            font-family: var(--mono);
+            font-size: 11px;
+          }
+
+          .users-mobile-sheet-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+          }
+
+          .users-mobile-sheet-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .modal-overlay {
+            align-items: flex-end;
+            justify-content: center;
+            padding: 0;
+            overflow: hidden;
+          }
+
           .users-modal,
           .users-confirm-modal {
-            width: calc(100vw - 24px);
-            max-width: calc(100vw - 24px) !important;
-            max-height: calc(100dvh - 24px);
-            overflow: auto;
-            border-radius: 18px;
+            width: 100vw !important;
+            max-width: 100vw !important;
+            max-height: min(92dvh, calc(100dvh - 8px));
+            height: auto;
+            overflow: hidden;
+            border-radius: 22px 22px 0 0;
+            display: flex;
+            flex-direction: column;
+            margin: 0;
+          }
+
+          .users-modal .modal-header,
+          .users-confirm-modal .modal-header {
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+          }
+
+          .users-modal .modal-body,
+          .users-confirm-modal .modal-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 12px !important;
+          }
+
+          .users-modal .modal-body {
+            background: var(--bg);
+          }
+
+          .users-modal .form-group,
+          .users-modal .form-row,
+          .users-modal .card {
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            background: var(--surface);
+            padding: 10px;
+          }
+
+          .users-modal .form-row .form-group,
+          .users-modal .card .form-group,
+          .users-modal .card .form-row {
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            padding: 0;
+          }
+
+          .users-modal input,
+          .users-modal select {
+            min-height: 38px;
+            font-size: 14px;
+          }
+
+          .users-modal-footer {
+            flex-shrink: 0;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.22);
           }
 
           .users-form-row {
@@ -1221,6 +1633,11 @@ export default function UsuariosPage() {
           }
 
           .users-mobile-actions {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .users-mobile-sheet-grid,
+          .users-mobile-sheet-actions {
             grid-template-columns: 1fr;
           }
         }

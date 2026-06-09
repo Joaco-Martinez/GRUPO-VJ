@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { ProductCategory } from '@/types';
@@ -43,6 +44,8 @@ const emptyForm: CategoryForm = {
   description: '',
   isActive: true,
 };
+
+const MOBILE_PAGE_SIZE = 8;
 
 function useIsMobile(maxWidth = 768) {
   const [isMobile, setIsMobile] = useState(false);
@@ -93,6 +96,8 @@ export default function CategoriasPage() {
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [mobilePage, setMobilePage] = useState(1);
+  const [mobileCategorySheet, setMobileCategorySheet] = useState<ProductCategory | null>(null);
 
   const isMobile = useIsMobile();
 
@@ -172,6 +177,15 @@ export default function CategoriasPage() {
     [categories]
   );
 
+  const mobileTotalPages = Math.max(1, Math.ceil(filtered.length / MOBILE_PAGE_SIZE));
+  const safeMobilePage = Math.min(mobilePage, mobileTotalPages);
+  const mobilePageStart = (safeMobilePage - 1) * MOBILE_PAGE_SIZE;
+  const mobileCategories = filtered.slice(mobilePageStart, mobilePageStart + MOBILE_PAGE_SIZE);
+  const mobileShowingFrom = filtered.length ? mobilePageStart + 1 : 0;
+  const mobileShowingTo = Math.min(mobilePageStart + MOBILE_PAGE_SIZE, filtered.length);
+
+  const resetMobilePage = () => setMobilePage(1);
+
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
@@ -179,6 +193,7 @@ export default function CategoriasPage() {
   };
 
   const openEdit = (category: ProductCategory) => {
+    setMobileCategorySheet(null);
     setEditing(category);
     setForm({
       name: category.name ?? '',
@@ -249,6 +264,7 @@ export default function CategoriasPage() {
   };
 
   const deleteCategory = async (category: ProductCategory) => {
+    setMobileCategorySheet(null);
     const count = productsCount(category);
 
     const message =
@@ -281,6 +297,7 @@ export default function CategoriasPage() {
   };
 
   const restoreCategory = async (category: ProductCategory) => {
+    setMobileCategorySheet(null);
     try {
       await toast.promise(api.patch(`/categories/${category.id}/restore`), {
         loading: 'Restaurando categoría...',
@@ -327,16 +344,16 @@ export default function CategoriasPage() {
       }
     >
       <button
-            className="btn btn-primary btn-sm"
-            onClick={openCreate}
-            style={{
-              flex: isMobile ? '1 1 0' : undefined,
-              minWidth: isMobile ? 0 : undefined,
-            }}
-          >
-            <Plus size={14} />
-            Nueva categoría
-          </button>
+        className="btn btn-primary btn-sm categories-mobile-create-btn"
+        onClick={openCreate}
+        style={{
+          flex: isMobile ? '1 1 0' : undefined,
+          minWidth: isMobile ? 0 : undefined,
+        }}
+      >
+        <Plus size={14} />
+        Nueva categoría
+      </button>
       <div
         style={{
           display: 'grid',
@@ -398,7 +415,10 @@ export default function CategoriasPage() {
 
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              resetMobilePage();
+            }}
             placeholder={isMobile ? 'Buscar categoría...' : 'Buscar por nombre, slug o descripción...'}
             style={{
               paddingLeft: 34,
@@ -409,7 +429,10 @@ export default function CategoriasPage() {
 
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+          onChange={(e) => {
+            setStatusFilter(e.target.value as 'all' | 'active' | 'inactive');
+            resetMobilePage();
+          }}
           style={{
             width: isMobile ? '100%' : 220,
           }}
@@ -454,177 +477,93 @@ export default function CategoriasPage() {
                 padding: 12,
               }}
             >
-              {filtered.map((category) => (
-                <div
-                  key={category.id}
-                  style={{
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 12,
-                    padding: 14,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 10,
-                      alignItems: 'flex-start',
-                      justifyContent: 'space-between',
-                    }}
+              {mobileCategories.map((category) => {
+                const count = productsCount(category);
+
+                return (
+                  <article
+                    key={category.id}
+                    className="categories-mobile-card"
+                    onClick={() => setMobileCategorySheet(category)}
                   >
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 10,
-                        alignItems: 'center',
-                        minWidth: 0,
-                        flex: 1,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 8,
-                          background: 'var(--surface2)',
-                          display: 'grid',
-                          placeItems: 'center',
-                          flexShrink: 0,
-                        }}
-                      >
+                    <div className="categories-mobile-card-head">
+                      <span className="categories-mobile-icon">
                         <Tags size={15} />
                       </span>
 
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontWeight: 800,
-                            fontSize: 13,
-                            lineHeight: 1.25,
-                            overflowWrap: 'anywhere',
-                          }}
-                        >
-                          {category.name}
+                      <div className="categories-mobile-title">
+                        <div>
+                          <b>{category.name}</b>
+                          <span className={`badge ${category.isActive ? 'badge-green' : 'badge-gray'}`}>
+                            {category.isActive ? 'ACTIVA' : 'INACTIVA'}
+                          </span>
                         </div>
 
-                        <div
-                          style={{
-                            fontFamily: 'var(--mono)',
-                            color: 'var(--text3)',
-                            fontSize: 11,
-                            marginTop: 2,
-                          }}
-                        >
-                          ID {String(category.id).slice(0, 8)}
-                        </div>
+                        <small>
+                          {category.slug || `ID ${String(category.id).slice(0, 8)}`}
+                        </small>
                       </div>
                     </div>
 
-                    <span
-                      className={`badge ${category.isActive ? 'badge-green' : 'badge-gray'}`}
-                      style={{ flexShrink: 0 }}
-                    >
-                      {category.isActive ? 'ACTIVA' : 'INACTIVA'}
-                    </span>
-                  </div>
+                    <div className="categories-mobile-meta">
+                      <div>
+                        <small>Productos</small>
+                        <strong>{count}</strong>
+                      </div>
 
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <span className="badge badge-gray">{category.slug}</span>
-
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        fontFamily: 'var(--mono)',
-                        fontWeight: 800,
-                        fontSize: 12,
-                        color: 'var(--text2)',
-                      }}
-                    >
-                      <Package size={13} />
-                      {productsCount(category)} producto/s
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--text2)',
-                      lineHeight: 1.45,
-                      overflowWrap: 'anywhere',
-                    }}
-                  >
-                    {category.description || 'Sin descripción'}
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      alignItems: 'center',
-                      borderTop: '1px solid var(--border)',
-                      paddingTop: 12,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontFamily: 'var(--mono)',
-                        color: 'var(--text3)',
-                        fontSize: 11,
-                      }}
-                    >
-                      Creada: {formatDate(category.createdAt)}
+                      <div>
+                        <small>Creada</small>
+                        <strong>{formatDate(category.createdAt)}</strong>
+                      </div>
                     </div>
 
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 6,
-                        flexShrink: 0,
-                      }}
-                    >
+                    <p className="categories-mobile-description">
+                      {category.description || 'Sin descripción'}
+                    </p>
+
+                    <div className="categories-mobile-actions" onClick={(e) => e.stopPropagation()}>
                       <button
-                        className="btn btn-ghost btn-sm"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setMobileCategorySheet(category)}
+                      >
+                        Ver más
+                      </button>
+
+                      <button
+                        className="btn btn-primary btn-sm"
                         onClick={() => openEdit(category)}
-                        title="Editar"
                       >
                         <Edit2 size={13} />
-                      </button>
-
-                      {!category.isActive && (
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => restoreCategory(category)}
-                          title="Restaurar"
-                        >
-                          <RotateCcw size={13} />
-                        </button>
-                      )}
-
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={() => deleteCategory(category)}
-                        title="Eliminar o desactivar"
-                      >
-                        <Trash2 size={13} />
+                        Editar
                       </button>
                     </div>
-                  </div>
+                  </article>
+                );
+              })}
+
+              {filtered.length > MOBILE_PAGE_SIZE && (
+                <div className="categories-mobile-pagination">
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={safeMobilePage === 1}
+                    onClick={() => setMobilePage((prev) => Math.max(1, prev - 1))}
+                  >
+                    Anterior
+                  </button>
+
+                  <span>
+                    {mobileShowingFrom}-{mobileShowingTo} de {filtered.length}
+                  </span>
+
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={safeMobilePage === mobileTotalPages}
+                    onClick={() => setMobilePage((prev) => Math.min(mobileTotalPages, prev + 1))}
+                  >
+                    Siguiente
+                  </button>
                 </div>
-              ))}
+              )}
             </div>
           ) : (
             <table>
@@ -762,9 +701,89 @@ export default function CategoriasPage() {
         </div>
       </div>
 
-      {(modal === 'create' || modal === 'edit') && (
+      {isMobile && mobileCategorySheet && (
         <div
-          className="modal-overlay"
+          className="categories-mobile-sheet-backdrop"
+          onClick={() => setMobileCategorySheet(null)}
+        >
+          <div className="categories-mobile-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="categories-mobile-sheet-handle" />
+
+            <div className="categories-mobile-sheet-header">
+              <div>
+                <b>{mobileCategorySheet.name}</b>
+                <small>{mobileCategorySheet.slug || `ID ${String(mobileCategorySheet.id).slice(0, 8)}`}</small>
+              </div>
+
+              <button className="btn btn-ghost btn-sm" onClick={() => setMobileCategorySheet(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="categories-mobile-sheet-body">
+              <div className="categories-mobile-sheet-grid">
+                <div>
+                  <small>Estado</small>
+                  <strong>{mobileCategorySheet.isActive ? 'Activa' : 'Inactiva'}</strong>
+                </div>
+
+                <div>
+                  <small>Productos</small>
+                  <strong>{productsCount(mobileCategorySheet)}</strong>
+                </div>
+
+                <div>
+                  <small>Creada</small>
+                  <strong>{formatDate(mobileCategorySheet.createdAt)}</strong>
+                </div>
+
+                <div>
+                  <small>ID</small>
+                  <strong>{String(mobileCategorySheet.id).slice(0, 8)}</strong>
+                </div>
+              </div>
+
+              <div className="categories-mobile-sheet-box">
+                <small>Descripción</small>
+                <p>{mobileCategorySheet.description || 'Sin descripción cargada.'}</p>
+              </div>
+            </div>
+
+            <div className="categories-mobile-sheet-actions">
+              <button
+                className="btn btn-primary"
+                onClick={() => openEdit(mobileCategorySheet)}
+              >
+                <Edit2 size={15} />
+                Editar
+              </button>
+
+              {!mobileCategorySheet.isActive && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => restoreCategory(mobileCategorySheet)}
+                >
+                  <RotateCcw size={15} />
+                  Restaurar
+                </button>
+              )}
+
+              <button
+                className="btn btn-danger"
+                onClick={() => deleteCategory(mobileCategorySheet)}
+              >
+                <Trash2 size={15} />
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(modal === 'create' || modal === 'edit') && typeof document !== 'undefined' &&
+        createPortal(
+        <div
+          className="modal-overlay categories-modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
         >
           <div
@@ -891,11 +910,15 @@ export default function CategoriasPage() {
             </div>
           </div>
         </div>
-      )}
+,
+          document.body
+        )}
 
-      {confirmModal && (
+
+      {confirmModal && typeof document !== 'undefined' &&
+        createPortal(
         <div
-          className="modal-overlay"
+          className="modal-overlay categories-modal-overlay"
           onClick={(e) => {
             if (confirmLoading) return;
             if (e.target === e.currentTarget) setConfirmModal(null);
@@ -993,7 +1016,429 @@ export default function CategoriasPage() {
             </div>
           </div>
         </div>
-      )}
+,
+          document.body
+        )}
+
+
+      <style jsx>{`
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 10020;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          background: rgba(0, 0, 0, 0.52);
+          overflow-y: auto;
+        }
+
+        .modal {
+          margin: auto;
+          max-height: calc(100dvh - 36px);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .modal-body {
+          overflow-y: auto;
+        }
+
+        .categories-mobile-create-btn {
+          margin-bottom: 14px;
+        }
+
+        @media (min-width: 769px) {
+          .categories-mobile-create-btn {
+            margin-bottom: 0;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .categories-mobile-create-btn {
+            width: 100%;
+            height: 40px;
+            justify-content: center;
+            border-radius: 12px;
+          }
+
+          .categories-mobile-card {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: var(--surface);
+            padding: 11px;
+            display: grid;
+            gap: 9px;
+            min-width: 0;
+          }
+
+          .categories-mobile-card-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .categories-mobile-icon {
+            width: 34px;
+            height: 34px;
+            border-radius: 11px;
+            background: var(--surface2);
+            display: grid;
+            place-items: center;
+            color: var(--accent);
+            flex-shrink: 0;
+          }
+
+          .categories-mobile-title {
+            min-width: 0;
+            flex: 1;
+            display: grid;
+            gap: 3px;
+          }
+
+          .categories-mobile-title > div {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+          }
+
+          .categories-mobile-title b {
+            color: var(--text);
+            font-size: 14px;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+          }
+
+          .categories-mobile-title .badge {
+            flex-shrink: 0;
+            font-size: 9px;
+            padding: 3px 6px;
+          }
+
+          .categories-mobile-title small {
+            color: var(--text3);
+            font-family: var(--mono);
+            font-size: 10.5px;
+            line-height: 1.2;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .categories-mobile-meta {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+          }
+
+          .categories-mobile-meta > div {
+            background: var(--bg);
+            border-radius: 12px;
+            padding: 8px 9px;
+            min-width: 0;
+          }
+
+          .categories-mobile-meta small {
+            display: block;
+            color: var(--text3);
+            font-size: 10px;
+            font-weight: 900;
+            margin-bottom: 3px;
+          }
+
+          .categories-mobile-meta strong {
+            display: block;
+            font-family: var(--mono);
+            color: var(--text);
+            font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .categories-mobile-description {
+            margin: 0;
+            color: var(--text2);
+            font-size: 12px;
+            line-height: 1.35;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+          }
+
+          .categories-mobile-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+          }
+
+          .categories-mobile-actions button {
+            width: 100%;
+            justify-content: center;
+            min-height: 33px;
+          }
+
+          .categories-mobile-pagination {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 8px;
+            align-items: center;
+            padding-top: 2px;
+          }
+
+          .categories-mobile-pagination button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .categories-mobile-pagination span {
+            color: var(--text3);
+            font-size: 11px;
+            font-weight: 900;
+            white-space: nowrap;
+          }
+
+          .categories-mobile-sheet-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: rgba(0, 0, 0, 0.52);
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+          }
+
+          .categories-mobile-sheet {
+            width: 100%;
+            max-height: min(82dvh, 620px);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 22px 22px 0 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.38);
+          }
+
+          .categories-mobile-sheet-handle {
+            width: 44px;
+            height: 4px;
+            border-radius: 999px;
+            background: var(--border);
+            margin: 10px auto 8px;
+            flex-shrink: 0;
+          }
+
+          .categories-mobile-sheet-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 0 14px 12px;
+            border-bottom: 1px solid var(--border);
+          }
+
+          .categories-mobile-sheet-header b {
+            display: block;
+            font-size: 15px;
+            line-height: 1.2;
+            color: var(--text);
+            overflow-wrap: anywhere;
+          }
+
+          .categories-mobile-sheet-header small {
+            display: block;
+            color: var(--text3);
+            font-family: var(--mono);
+            font-size: 11px;
+            margin-top: 4px;
+          }
+
+          .categories-mobile-sheet-body {
+            padding: 12px 14px;
+            overflow-y: auto;
+            display: grid;
+            gap: 10px;
+          }
+
+          .categories-mobile-sheet-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+
+          .categories-mobile-sheet-grid > div,
+          .categories-mobile-sheet-box {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--surface2);
+            padding: 10px;
+            min-width: 0;
+          }
+
+          .categories-mobile-sheet-grid small,
+          .categories-mobile-sheet-box small {
+            display: block;
+            color: var(--text3);
+            font-size: 10px;
+            font-weight: 900;
+            margin-bottom: 5px;
+          }
+
+          .categories-mobile-sheet-grid strong {
+            display: block;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 12px;
+            overflow-wrap: anywhere;
+          }
+
+          .categories-mobile-sheet-box p {
+            margin: 0;
+            color: var(--text2);
+            font-size: 12px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+          }
+
+          .categories-mobile-sheet-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+          }
+
+          .categories-mobile-sheet-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .modal-overlay {
+            align-items: flex-end;
+            padding: 0;
+          }
+
+          .modal {
+            width: 100vw !important;
+            max-width: 100vw !important;
+            max-height: min(88dvh, calc(100dvh - 8px)) !important;
+            margin: 0;
+            border-radius: 22px 22px 0 0 !important;
+            overflow: hidden !important;
+            display: flex;
+            flex-direction: column;
+          }
+
+          .modal-header {
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--border);
+          }
+
+          .modal-body {
+            overflow-y: auto;
+            padding: 14px !important;
+          }
+
+          .modal-footer {
+            flex-shrink: 0;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom)) !important;
+            border-top: 1px solid var(--border);
+          }
+        }
+
+        @media (max-width: 420px) {
+          .categories-mobile-card {
+            border-radius: 14px;
+            padding: 10px;
+          }
+
+          .categories-mobile-meta {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .categories-mobile-sheet-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+
+
+      <style jsx global>{`
+        @media (max-width: 768px) {
+          body:has(.categories-modal-overlay) {
+            overflow: hidden;
+          }
+
+          .categories-modal-overlay {
+            position: fixed !important;
+            inset: 0 !important;
+            z-index: 10050 !important;
+            display: flex !important;
+            align-items: flex-end !important;
+            justify-content: center !important;
+            padding: 0 !important;
+            background: rgba(0, 0, 0, 0.56) !important;
+            overflow: hidden !important;
+          }
+
+          .categories-modal-overlay .modal {
+            width: 100vw !important;
+            max-width: 100vw !important;
+            max-height: min(88dvh, calc(100dvh - 8px)) !important;
+            margin: 0 !important;
+            border-radius: 22px 22px 0 0 !important;
+            overflow: hidden !important;
+            display: flex !important;
+            flex-direction: column !important;
+            background: var(--surface) !important;
+            border: 1px solid var(--border) !important;
+            box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.38) !important;
+          }
+
+          .categories-modal-overlay .modal-header {
+            flex-shrink: 0 !important;
+            border-bottom: 1px solid var(--border) !important;
+            min-height: 54px !important;
+          }
+
+          .categories-modal-overlay .modal-body {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            padding: 14px !important;
+            display: grid !important;
+            gap: 12px !important;
+          }
+
+          .categories-modal-overlay .modal-footer {
+            flex-shrink: 0 !important;
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom)) !important;
+            border-top: 1px solid var(--border) !important;
+            background: var(--surface) !important;
+          }
+
+          .categories-modal-overlay .modal-footer button,
+          .categories-modal-overlay .modal-body button {
+            width: 100%;
+            justify-content: center;
+          }
+        }
+      `}</style>
+
     </AppLayout>
   );
 }

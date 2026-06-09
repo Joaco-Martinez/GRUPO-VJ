@@ -184,7 +184,6 @@ function resolveUnitPrice(product: any, client: ClientMini) {
   const isKg = product.saleUnit === SaleUnit.KG;
 
   const publicPrice = isKg ? product.pricePerKg : product.price;
-  const clientPrice = isKg ? product.clientPricePerKg : product.clientPrice;
   const wholesalePrice = isKg
     ? product.wholesalePricePerKg
     : product.wholesalePrice;
@@ -199,16 +198,8 @@ function resolveUnitPrice(product: any, client: ClientMini) {
     return p;
   };
 
-  if (!client || client.category === CategoryClient.Price) {
-    return validate(Number(publicPrice), "público");
-  }
-
-  if (client.category === CategoryClient.Mayorista) {
+  if (client?.category === CategoryClient.Mayorista) {
     return validate(Number(wholesalePrice ?? publicPrice), "mayorista");
-  }
-
-  if (client.category === CategoryClient.Cliente) {
-    return validate(Number(clientPrice ?? publicPrice), "cliente");
   }
 
   return validate(Number(publicPrice), "público");

@@ -78,6 +78,14 @@ type ConfirmState = {
 
 const DELIVERY_SKU = "ENVIO-FLETE2";
 
+function stockLocationLabel(stockLocation: StockLocation) {
+  return stockLocation === "DEPOSITO" ? "Minorista" : "Mayorista";
+}
+
+function stockLocationLabelLower(stockLocation: StockLocation) {
+  return stockLocation === "DEPOSITO" ? "minorista" : "mayorista";
+}
+
 function normalizeText(value?: string | null) {
   return String(value ?? "")
     .trim()
@@ -278,6 +286,15 @@ function buildClientAddress(client?: Client | null) {
   return [street, floor, city, client.addressNotes].filter(Boolean).join(" - ");
 }
 
+
+function clientCategoryLabel(category?: string | null) {
+  if (category === "Mayorista") return "Mayorista";
+
+  // Si llega "Price" desde Prisma, para el usuario se muestra como Minorista.
+  // Si quedara algún dato viejo como "Cliente", también lo mostramos como Minorista.
+  return "Minorista";
+}
+
 async function fetchPosData() {
   const [p, c, cl, bl] = await Promise.all([
     api.get("/products"),
@@ -435,11 +452,7 @@ export default function POSPage() {
   );
 
   const priceType: CartItem["priceType"] =
-    selectedClient?.category === "Mayorista"
-      ? "wholesalePrice"
-      : selectedClient
-        ? "clientPrice"
-        : "price";
+    selectedClient?.category === "Mayorista" ? "wholesalePrice" : "price";
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
@@ -546,7 +559,7 @@ export default function POSPage() {
       if (requirement.required > available) {
         toast.error(
           `Stock insuficiente para ${requirement.product.name} en ${
-            stockLocation === "DEPOSITO" ? "depósito" : "local"
+            stockLocationLabelLower(stockLocation)
           }. Disponible: ${available}${requirement.product.saleUnit === "KG" ? " kg" : ""}`,
         );
 
@@ -591,11 +604,11 @@ export default function POSPage() {
       toast.error(
         isCompositeProduct(product)
           ? `No se puede agregar la promo porque faltan componentes en ${
-              stockLocation === "DEPOSITO" ? "depósito" : "local"
+              stockLocationLabelLower(stockLocation)
             }`
           : stockLocation === "DEPOSITO"
-            ? "Sin stock disponible en depósito"
-            : "Sin stock disponible en local",
+            ? "Sin stock disponible en minorista"
+            : "Sin stock disponible en mayorista",
       );
 
       return;
@@ -719,7 +732,7 @@ export default function POSPage() {
     }
 
     if (!businessLocationId || !selectedBusinessLocation) {
-      toast.error("Seleccioná la sucursal o depósito de salida");
+      toast.error("Seleccioná la sucursal o ubicación de salida");
       return;
     }
 
@@ -872,7 +885,7 @@ export default function POSPage() {
       }
 
       if (!businessLocationId) {
-        toast.error("Seleccioná la sucursal o depósito de salida");
+        toast.error("Seleccioná la sucursal o ubicación de salida");
         return false;
       }
 
@@ -1093,8 +1106,8 @@ export default function POSPage() {
                 style={{ width: 210 }}
                 title="Depósito desde donde se descuenta la mercadería"
               >
-                <option value="LOCAL">Descontar de Local</option>
-                <option value="DEPOSITO">Descontar de Depósito</option>
+                <option value="LOCAL">Descontar de Mayorista</option>
+                <option value="DEPOSITO">Descontar de Minorista</option>
               </select>
 
               <button
@@ -1246,7 +1259,7 @@ export default function POSPage() {
                         }}
                       >
                         Stock{" "}
-                        {stockLocation === "DEPOSITO" ? "depósito" : "local"}:{" "}
+                        {stockLocationLabelLower(stockLocation)}:{" "}
                         {stockLabel(p, stockLocation)}
                       </div>
                     </button>
@@ -1307,19 +1320,19 @@ export default function POSPage() {
               >
                 <Warehouse size={13} />
                 Descuenta de:{" "}
-                {stockLocation === "DEPOSITO" ? "Depósito" : "Local"}
+                {stockLocationLabel(stockLocation)}
               </div>
 
               <div className="form-group">
-                <label className="form-label">Depósito / origen de stock</label>
+                <label className="form-label">Origen de stock</label>
                 <select
                   value={stockLocation}
                   onChange={(e) =>
                     setStockLocation(e.target.value as StockLocation)
                   }
                 >
-                  <option value="LOCAL">Local</option>
-                  <option value="DEPOSITO">Depósito</option>
+                  <option value="LOCAL">Mayorista</option>
+                  <option value="DEPOSITO">Minorista</option>
                 </select>
               </div>
 
@@ -1341,7 +1354,7 @@ export default function POSPage() {
 
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {clientName(c)} · {c.category} · deuda{" "}
+                      {clientName(c)} · {clientCategoryLabel(c.category)} · deuda{" "}
                       {fmtMoney(c.currentBalance)}
                     </option>
                   ))}
@@ -1938,7 +1951,7 @@ export default function POSPage() {
               <p className="pos-kicker">Venta rápida</p>
               <p>
                 {filtered.length} productos · {selectedCategoryName} · Stock{" "}
-                {stockLocation === "DEPOSITO" ? "depósito" : "local"}
+                {stockLocationLabelLower(stockLocation)}
               </p>
             </div>
 
@@ -1981,8 +1994,8 @@ export default function POSPage() {
                     setStockLocation(e.target.value as StockLocation)
                   }
                 >
-                  <option value="LOCAL">Local</option>
-                  <option value="DEPOSITO">Depósito</option>
+                  <option value="LOCAL">Mayorista</option>
+                  <option value="DEPOSITO">Minorista</option>
                 </select>
               </label>
 
@@ -2002,7 +2015,7 @@ export default function POSPage() {
                   <option value="">Consumidor final</option>
                   {clients.map((client) => (
                     <option key={client.id} value={client.id}>
-                      {clientName(client)} · {client.category}
+                      {clientName(client)} · {clientCategoryLabel(client.category)}
                     </option>
                   ))}
                 </select>
@@ -2210,7 +2223,7 @@ export default function POSPage() {
                       <div className="pos-mini-summary">
                         <span>
                           <Warehouse size={14} />
-                          {stockLocation === "DEPOSITO" ? "Depósito" : "Local"}
+                          {stockLocationLabel(stockLocation)}
                         </span>
 
                         {debt > 0 && (
@@ -2721,8 +2734,11 @@ export default function POSPage() {
           )}
       </div>
 
-      {confirmModal && (
-        <div className="modal-overlay">
+      {confirmModal &&
+        mounted &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="modal-overlay">
           <div className="modal pos-confirm-modal" style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <b>{confirmModal.title}</b>
@@ -2800,10 +2816,20 @@ export default function POSPage() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
 
       <style jsx global>{`
+        div[data-rht-toaster],
+        div[data-rht-toaster] * {
+          z-index: 2147483647 !important;
+        }
+
+        .modal-overlay {
+          z-index: 2147483600 !important;
+        }
+
         @media (max-width: 1100px) {
           .pos-root {
             grid-template-columns: minmax(0, 1fr) 380px !important;

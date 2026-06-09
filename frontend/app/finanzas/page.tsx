@@ -117,25 +117,20 @@ type MarginRow = {
   saleUnit: Product['saleUnit'];
   category: string;
   cost: number;
-  finalPrice: number;
-  clientPrice: number;
+  retailPrice: number;
   wholesalePrice: number;
-  finalProfit: number;
-  clientProfit: number;
+  retailProfit: number;
   wholesaleProfit: number;
-  finalMargin: number;
-  clientMargin: number;
+  retailMargin: number;
   wholesaleMargin: number;
 };
 
 type MarginSort =
   | 'name'
   | 'cost'
-  | 'finalMargin'
-  | 'clientMargin'
+  | 'retailMargin'
   | 'wholesaleMargin'
-  | 'finalProfit'
-  | 'clientProfit'
+  | 'retailProfit'
   | 'wholesaleProfit';
 
 const normalizeArray = <T,>(data: any): T[] => {
@@ -222,16 +217,9 @@ const getProductCategoryName = (product: Product) => {
 
 const getProductCost = (product: Product) => Number(product.purchasePrice || 0);
 
-const getProductFinalPrice = (product: Product) => {
+const getProductRetailPrice = (product: Product) => {
   if (product.saleUnit === 'KG') return Number(product.pricePerKg ?? product.price ?? 0);
   return Number(product.price || 0);
-};
-
-const getProductClientPrice = (product: Product) => {
-  if (product.saleUnit === 'KG') {
-    return Number(product.clientPricePerKg ?? product.clientPrice ?? product.pricePerKg ?? product.price ?? 0);
-  }
-  return Number(product.clientPrice ?? product.price ?? 0);
 };
 
 const getProductWholesalePrice = (product: Product) => {
@@ -264,7 +252,7 @@ export default function FinanzasPage() {
   const [dateTo, setDateTo] = useState(today());
 
   const [marginSearch, setMarginSearch] = useState('');
-  const [marginSort, setMarginSort] = useState<MarginSort>('finalMargin');
+  const [marginSort, setMarginSort] = useState<MarginSort>('retailMargin');
   const [movementsPage, setMovementsPage] = useState(1);
   const [marginPage, setMarginPage] = useState(1);
   const [mobileTab, setMobileTab] = useState<FinanceMobileTab>('resumen');
@@ -415,11 +403,9 @@ export default function FinanzasPage() {
       .filter(product => product.isActive !== false)
       .map(product => {
         const cost = getProductCost(product);
-        const finalPrice = getProductFinalPrice(product);
-        const clientPrice = getProductClientPrice(product);
+        const retailPrice = getProductRetailPrice(product);
         const wholesalePrice = getProductWholesalePrice(product);
-        const finalProfit = finalPrice - cost;
-        const clientProfit = clientPrice - cost;
+        const retailProfit = retailPrice - cost;
         const wholesaleProfit = wholesalePrice - cost;
 
         return {
@@ -429,14 +415,11 @@ export default function FinanzasPage() {
           saleUnit: product.saleUnit,
           category: getProductCategoryName(product),
           cost,
-          finalPrice,
-          clientPrice,
+          retailPrice,
           wholesalePrice,
-          finalProfit,
-          clientProfit,
+          retailProfit,
           wholesaleProfit,
-          finalMargin: getMargin(finalPrice, cost),
-          clientMargin: getMargin(clientPrice, cost),
+          retailMargin: getMargin(retailPrice, cost),
           wholesaleMargin: getMargin(wholesalePrice, cost),
         };
       });
@@ -470,12 +453,11 @@ export default function FinanzasPage() {
   const marginSummary = useMemo(() => {
     const rowsWithCost = marginRows.filter(row => row.cost > 0);
     if (!rowsWithCost.length) {
-      return { avgFinalMargin: 0, avgClientMargin: 0, avgWholesaleMargin: 0, productsWithoutCost: marginRows.length };
+      return { avgRetailMargin: 0, avgWholesaleMargin: 0, productsWithoutCost: marginRows.length };
     }
 
     return {
-      avgFinalMargin: rowsWithCost.reduce((acc, row) => acc + row.finalMargin, 0) / rowsWithCost.length,
-      avgClientMargin: rowsWithCost.reduce((acc, row) => acc + row.clientMargin, 0) / rowsWithCost.length,
+      avgRetailMargin: rowsWithCost.reduce((acc, row) => acc + row.retailMargin, 0) / rowsWithCost.length,
       avgWholesaleMargin: rowsWithCost.reduce((acc, row) => acc + row.wholesaleMargin, 0) / rowsWithCost.length,
       productsWithoutCost: marginRows.filter(row => row.cost <= 0).length,
     };
@@ -666,7 +648,10 @@ export default function FinanzasPage() {
         </div>
       }
     >
-      <div className={`finance-page finance-tab-${mobileTab}`}>
+      <div
+        className={`finance-page finance-tab-${mobileTab}`}
+        style={{ minWidth: 0, maxWidth: '100%' }}
+      >
       <div className="card finance-filter-card" style={{ padding: 16, marginBottom: 20 }}>
         <div
           className="finance-filter-grid"
@@ -956,7 +941,7 @@ export default function FinanzasPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <BadgeDollarSign size={17} style={{ color: 'var(--accent)' }} />
               <h3 style={{ margin: 0, fontSize: 16 }}>
-                Margen por producto según precio de venta
+                Margen por producto según precio minorista y mayorista
               </h3>
             </div>
 
@@ -966,8 +951,7 @@ export default function FinanzasPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <span className="badge badge-green">Final prom. {pct(marginSummary.avgFinalMargin)}</span>
-            <span className="badge badge-blue">Cliente prom. {pct(marginSummary.avgClientMargin)}</span>
+            <span className="badge badge-green">Minorista prom. {pct(marginSummary.avgRetailMargin)}</span>
             <span className="badge badge-gray">Mayorista prom. {pct(marginSummary.avgWholesaleMargin)}</span>
             {marginSummary.productsWithoutCost > 0 && (
               <span className="badge badge-red">{marginSummary.productsWithoutCost} sin costo</span>
@@ -1010,11 +994,9 @@ export default function FinanzasPage() {
               setMarginSort(e.target.value as MarginSort);
               setMarginPage(1);
             }}>
-            <option value="finalMargin">Ordenar por margen final</option>
-            <option value="clientMargin">Ordenar por margen cliente</option>
+            <option value="retailMargin">Ordenar por margen minorista</option>
             <option value="wholesaleMargin">Ordenar por margen mayorista</option>
-            <option value="finalProfit">Ordenar por ganancia final</option>
-            <option value="clientProfit">Ordenar por ganancia cliente</option>
+            <option value="retailProfit">Ordenar por ganancia minorista</option>
             <option value="wholesaleProfit">Ordenar por ganancia mayorista</option>
             <option value="cost">Ordenar por costo</option>
             <option value="name">Ordenar por nombre</option>
@@ -1027,12 +1009,9 @@ export default function FinanzasPage() {
               <tr>
                 <th>Producto</th>
                 <th>Costo</th>
-                <th>Final</th>
-                <th>Gana final</th>
-                <th>Margen final</th>
-                <th>Cliente</th>
-                <th>Gana cliente</th>
-                <th>Margen cliente</th>
+                <th>Minorista</th>
+                <th>Gana minorista</th>
+                <th>Margen minorista</th>
                 <th>Mayorista</th>
                 <th>Gana mayorista</th>
                 <th>Margen mayorista</th>
@@ -1054,12 +1033,9 @@ export default function FinanzasPage() {
                   <td style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
                     {row.cost > 0 ? fmt(row.cost) : <span style={{ color: 'var(--danger)' }}>Sin costo</span>}
                   </td>
-                  <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.finalPrice)}</td>
-                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.finalProfit) }}>{fmt(row.finalProfit)}</td>
-                  <td><span className={`badge ${row.finalMargin > 0 ? 'badge-green' : row.finalMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.finalMargin)}</span></td>
-                  <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.clientPrice)}</td>
-                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.clientProfit) }}>{fmt(row.clientProfit)}</td>
-                  <td><span className={`badge ${row.clientMargin > 0 ? 'badge-green' : row.clientMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.clientMargin)}</span></td>
+                  <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.retailPrice)}</td>
+                  <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.retailProfit) }}>{fmt(row.retailProfit)}</td>
+                  <td><span className={`badge ${row.retailMargin > 0 ? 'badge-green' : row.retailMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.retailMargin)}</span></td>
                   <td style={{ fontFamily: 'var(--mono)' }}>{fmt(row.wholesalePrice)}</td>
                   <td style={{ fontFamily: 'var(--mono)', fontWeight: 800, color: getProfitColor(row.wholesaleProfit) }}>{fmt(row.wholesaleProfit)}</td>
                   <td><span className={`badge ${row.wholesaleMargin > 0 ? 'badge-green' : row.wholesaleMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.wholesaleMargin)}</span></td>
@@ -1096,28 +1072,16 @@ export default function FinanzasPage() {
                   <strong>{row.cost > 0 ? fmt(row.cost) : 'Sin costo'}</strong>
                 </div>
                 <div>
-                  <small>Final</small>
-                  <strong>{fmt(row.finalPrice)}</strong>
+                  <small>Minorista</small>
+                  <strong>{fmt(row.retailPrice)}</strong>
                 </div>
                 <div>
-                  <small>Gana final</small>
-                  <strong style={{ color: getProfitColor(row.finalProfit) }}>{fmt(row.finalProfit)}</strong>
+                  <small>Gana minorista</small>
+                  <strong style={{ color: getProfitColor(row.retailProfit) }}>{fmt(row.retailProfit)}</strong>
                 </div>
                 <div>
-                  <small>Margen final</small>
-                  <span className={`badge ${row.finalMargin > 0 ? 'badge-green' : row.finalMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.finalMargin)}</span>
-                </div>
-                <div>
-                  <small>Cliente</small>
-                  <strong>{fmt(row.clientPrice)}</strong>
-                </div>
-                <div>
-                  <small>Gana cliente</small>
-                  <strong style={{ color: getProfitColor(row.clientProfit) }}>{fmt(row.clientProfit)}</strong>
-                </div>
-                <div>
-                  <small>Margen cliente</small>
-                  <span className={`badge ${row.clientMargin > 0 ? 'badge-green' : row.clientMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.clientMargin)}</span>
+                  <small>Margen minorista</small>
+                  <span className={`badge ${row.retailMargin > 0 ? 'badge-green' : row.retailMargin < 0 ? 'badge-red' : 'badge-gray'}`}>{pct(row.retailMargin)}</span>
                 </div>
                 <div>
                   <small>Mayorista</small>
@@ -1719,19 +1683,111 @@ export default function FinanzasPage() {
           text-align: center;
         }
 
+        .finance-page {
+          position: relative;
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          overflow-x: hidden;
+          box-sizing: border-box;
+        }
+
+        .finance-page *,
+        .finance-page *::before,
+        .finance-page *::after {
+          box-sizing: border-box;
+        }
+
+        .finance-page :global(.card),
+        .finance-page :global(.stat-card),
+        .finance-page :global(.table-wrap) {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+        }
+
+        .finance-page :global(input),
+        .finance-page :global(select),
+        .finance-page :global(button) {
+          max-width: 100%;
+        }
+
+        .finance-filter-card,
+        .finance-margin-card,
+        .finance-movements-card,
+        .finance-chart-card,
+        .finance-category-card,
+        .finance-product-card {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .finance-filter-grid,
+        .finance-stats-grid,
+        .finance-stats-grid-secondary,
+        .finance-mini-stats-grid,
+        .finance-products-grid,
+        .finance-margin-controls {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+        }
+
+        .finance-desktop-table {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          overflow-x: auto;
+          overflow-y: hidden;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .finance-desktop-table table {
+          width: 100%;
+          max-width: 100%;
+          min-width: 760px;
+          table-layout: fixed;
+        }
+
+        .finance-desktop-table th,
+        .finance-desktop-table td {
+          min-width: 0;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
+        .finance-desktop-table th:first-child,
+        .finance-desktop-table td:first-child {
+          width: 26%;
+          min-width: 180px;
+          white-space: normal;
+        }
+
+        .finance-margin-card .finance-desktop-table table {
+          min-width: 820px;
+        }
+
+        .finance-movements-card .finance-desktop-table table {
+          min-width: 680px;
+        }
+
+        .finance-chart-wrap {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          overflow: hidden;
+        }
+
         .finance-mobile-list {
           display: none;
         }
 
-
         .finance-mobile-tabs {
           display: none;
         }
-
-        .finance-page {
-          min-width: 0;
-        }
-
 
         .finance-positive {
           color: var(--accent);
@@ -1739,6 +1795,23 @@ export default function FinanzasPage() {
 
         .finance-negative {
           color: var(--danger);
+        }
+
+        @media (min-width: 769px) {
+          .finance-page {
+            padding-right: 0;
+          }
+
+          .finance-stats-grid,
+          .finance-stats-grid-secondary,
+          .finance-mini-stats-grid,
+          .finance-products-grid {
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)) !important;
+          }
+
+          .finance-margin-controls {
+            grid-template-columns: minmax(0, 1fr) minmax(180px, 260px) !important;
+          }
         }
 
         @media (max-width: 1100px) {

@@ -13,7 +13,10 @@ function normalizeRole(value: string): Role {
 
 function normalizeCategory(value?: string | null): CategoryClient {
   if (value === "Mayorista") return CategoryClient.Mayorista;
-  if (value === "Cliente") return CategoryClient.Cliente;
+
+  // Compatibilidad: si algo viejo manda "Cliente", ahora lo tratamos como minorista.
+  if (value === "Cliente") return CategoryClient.Price;
+
   return CategoryClient.Price;
 }
 

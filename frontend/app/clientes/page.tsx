@@ -54,7 +54,7 @@ const emptyForm = {
   dni: '',
   telefono: '',
   gmail: '',
-  category: 'Cliente',
+  category: 'Price',
   creditLimit: '',
   isAccountEnabled: 'true',
 
@@ -130,6 +130,18 @@ function getErrorMessage(error: unknown, fallback: string) {
       ?.error ??
     fallback
   );
+}
+
+function normalizeClientCategory(value?: string | null): ClientCategory {
+  if (value === 'Mayorista') return 'Mayorista' as ClientCategory;
+
+  // Compatibilidad: si quedó algo viejo como "Cliente" o no llega categoría,
+  // ahora lo tratamos como Minorista / Price.
+  return 'Price' as ClientCategory;
+}
+
+function clientCategoryLabel(value?: string | null) {
+  return value === 'Mayorista' ? 'Mayorista' : 'Minorista';
 }
 
 export default function ClientesPage() {
@@ -257,7 +269,7 @@ export default function ClientesPage() {
       dni: c.dni ?? '',
       telefono: c.telefono ?? '',
       gmail: c.gmail ?? '',
-      category: c.category ?? 'Cliente',
+      category: normalizeClientCategory(c.category as string | null | undefined),
       creditLimit: String(c.creditLimit ?? ''),
       isAccountEnabled: String(c.isAccountEnabled !== false),
 
@@ -359,7 +371,7 @@ export default function ClientesPage() {
         dni: form.dni.trim(),
         telefono: cleanString(form.telefono),
         gmail: cleanString(form.gmail),
-        category: form.category as ClientCategory,
+        category: normalizeClientCategory(form.category),
         creditLimit: form.creditLimit ? num(form.creditLimit) : null,
         isAccountEnabled: form.isAccountEnabled === 'true',
 
@@ -632,7 +644,7 @@ export default function ClientesPage() {
                         }`}
                         style={{ flexShrink: 0, fontSize: 9, padding: '3px 6px' }}
                       >
-                        {c.category}
+                        {clientCategoryLabel(c.category)}
                       </span>
                     </div>
 
@@ -873,7 +885,7 @@ export default function ClientesPage() {
                             c.category === 'Mayorista' ? 'badge-blue' : 'badge-green'
                           }`}
                         >
-                          {c.category}
+                          {clientCategoryLabel(c.category)}
                         </span>
                       </td>
 
@@ -1091,7 +1103,7 @@ export default function ClientesPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
                     <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Categoría</small>
-                    <b style={{ display: 'block', marginTop: 5, fontSize: 12 }}>{mobileClientSheet.category}</b>
+                    <b style={{ display: 'block', marginTop: 5, fontSize: 12 }}>{clientCategoryLabel(mobileClientSheet.category)}</b>
                   </div>
                   <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
                     <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Saldo</small>
@@ -1322,9 +1334,8 @@ export default function ClientesPage() {
                     value={form.category}
                     onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))}
                   >
-                    <option value="Cliente">Cliente</option>
+                    <option value="Price">Minorista</option>
                     <option value="Mayorista">Mayorista</option>
-                    <option value="Price">Consumidor final / Minorista</option>
                   </select>
                 </div>
               </div>
@@ -1917,6 +1928,21 @@ export default function ClientesPage() {
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        div[data-rht-toaster],
+        div[data-rht-toaster] * {
+          z-index: 2147483647 !important;
+        }
+
+        .modal-overlay {
+          z-index: 2147483000 !important;
+        }
+
+        .clients-mobile-sheet-backdrop {
+          z-index: 2147483000 !important;
+        }
+      `}</style>
     </AppLayout>
   );
 }

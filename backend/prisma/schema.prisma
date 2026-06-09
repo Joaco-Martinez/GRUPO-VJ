@@ -123,9 +123,9 @@ model Product {
   type        ProductType @default(SIMPLE)
 
   // Precios para venta por unidad
-  // price = precio público
-  // clientPrice = precio cliente
+  // price = precio minorista / público
   // wholesalePrice = precio mayorista
+  // clientPrice queda por compatibilidad, pero ya no se usa visualmente.
   price          Float
   wholesalePrice Float
   clientPrice    Float
@@ -158,6 +158,9 @@ model Product {
   saleUnit SaleUnit @default(UNIT)
 
   // Precios por KG
+  // pricePerKg = precio minorista / público por kg
+  // wholesalePricePerKg = precio mayorista por kg
+  // clientPricePerKg queda por compatibilidad, pero ya no se usa visualmente.
   pricePerKg          Float?
   wholesalePricePerKg Float?
   clientPricePerKg    Float?
@@ -774,7 +777,6 @@ enum ArcaConfigStatus {
 
 enum CategoryClient {
   Price
-  Cliente
   Mayorista
 }
 

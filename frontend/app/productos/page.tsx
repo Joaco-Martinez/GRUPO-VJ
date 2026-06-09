@@ -80,13 +80,6 @@ function getProductPublicPrice(product: Product) {
     : num(product.price);
 }
 
-function getProductClientPrice(product: Product) {
-  const fallback = getProductPublicPrice(product);
-
-  return product.saleUnit === 'KG'
-    ? num((product as any).clientPricePerKg ?? (product as any).clientPrice ?? fallback)
-    : num((product as any).clientPrice ?? fallback);
-}
 
 function getProductWholesalePrice(product: Product) {
   const fallback = getProductPublicPrice(product);
@@ -276,12 +269,12 @@ export default function ProductosPage() {
       saleUnit: product.saleUnit,
 
       price: String(product.price ?? ''),
-      clientPrice: String(product.clientPrice ?? ''),
+      clientPrice: String(getProductPublicPrice(product) || ''),
       wholesalePrice: String(product.wholesalePrice ?? ''),
       purchasePrice: String(getProductGrossCost(product) || ''),
 
       pricePerKg: String(product.pricePerKg ?? ''),
-      clientPricePerKg: String(product.clientPricePerKg ?? ''),
+      clientPricePerKg: String((product as any).pricePerKg ?? ''),
       wholesalePricePerKg: String(product.wholesalePricePerKg ?? ''),
 
       stockLocal: String(product.stockLocal ?? 0),
@@ -335,13 +328,13 @@ export default function ProductosPage() {
       description: form.description?.trim() || '',
 
       price: num(form.price),
-      clientPrice: num(form.clientPrice),
+      clientPrice: num(form.price),
       wholesalePrice: num(form.wholesalePrice),
       purchasePrice: num(form.purchasePrice),
 
       pricePerKg: form.pricePerKg === '' ? undefined : num(form.pricePerKg),
       clientPricePerKg:
-        form.clientPricePerKg === '' ? undefined : num(form.clientPricePerKg),
+        form.pricePerKg === '' ? undefined : num(form.pricePerKg),
       wholesalePricePerKg:
         form.wholesalePricePerKg === '' ? undefined : num(form.wholesalePricePerKg),
 
@@ -530,59 +523,63 @@ export default function ProductosPage() {
         </div>
       }
     >
-      {toast && (
-        <div
-          className="products-toast"
-          style={{
-            position: 'fixed',
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            minWidth: 280,
-            maxWidth: 420,
-            borderRadius: 14,
-            border:
-              toast.type === 'success'
-                ? '1px solid rgba(34,197,94,0.35)'
-                : '1px solid rgba(239,68,68,0.35)',
-            background: 'rgba(255,255,255,0.96)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            padding: '14px 16px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 10,
-          }}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
-          )}
-
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
-              {toast.type === 'success' ? 'Listo' : 'Atención'}
-            </div>
-
-            <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
-              {toast.message}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setToast(null)}
+      {toast &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="products-toast"
             style={{
-              border: 0,
-              background: 'transparent',
-              color: 'var(--text3)',
-              cursor: 'pointer',
-              padding: 2,
+              position: 'fixed',
+              top: 18,
+              right: 18,
+              zIndex: 2147483647,
+              minWidth: 280,
+              maxWidth: 420,
+              borderRadius: 14,
+              border:
+                toast.type === 'success'
+                  ? '1px solid rgba(34,197,94,0.35)'
+                  : '1px solid rgba(239,68,68,0.35)',
+              background: 'rgba(255,255,255,0.98)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
+              padding: '14px 16px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              pointerEvents: 'auto',
             }}
           >
-            <X size={15} />
-          </button>
-        </div>
-      )}
+            {toast.type === 'success' ? (
+              <CheckCircle2 size={18} style={{ color: 'var(--success)', marginTop: 1 }} />
+            ) : (
+              <AlertTriangle size={18} style={{ color: 'var(--danger)', marginTop: 1 }} />
+            )}
+
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>
+                {toast.type === 'success' ? 'Listo' : 'Atención'}
+              </div>
+
+              <div style={{ color: 'var(--text2)', fontSize: 12, lineHeight: 1.45 }}>
+                {toast.message}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setToast(null)}
+              style={{
+                border: 0,
+                background: 'transparent',
+                color: 'var(--text3)',
+                cursor: 'pointer',
+                padding: 2,
+              }}
+            >
+              <X size={15} />
+            </button>
+          </div>,
+          document.body
+        )}
 
       <div
         className="products-stats-grid"
@@ -764,13 +761,9 @@ export default function ProductosPage() {
                     <td>
                       <div style={{ display: 'grid', gap: 4, fontFamily: 'var(--mono)', fontSize: 12 }}>
                         <strong>
-                          Público: {fmtMoney(getProductPublicPrice(p))}
+                          Minorista: {fmtMoney(getProductPublicPrice(p))}
                           {unitSuffix(p)}
                         </strong>
-                        <span style={{ color: 'var(--text2)' }}>
-                          Cliente: {fmtMoney(getProductClientPrice(p))}
-                          {unitSuffix(p)}
-                        </span>
                         <span style={{ color: 'var(--text2)' }}>
                           Mayorista: {fmtMoney(getProductWholesalePrice(p))}
                           {unitSuffix(p)}
@@ -1034,17 +1027,9 @@ export default function ProductosPage() {
               <div className="products-mobile-sheet-body">
                 <div className="products-mobile-sheet-grid">
                   <div>
-                    <small>Precio público</small>
+                    <small>Precio minorista</small>
                     <strong>
                       {fmtMoney(getProductPublicPrice(mobileProductSheet))}
-                      {unitSuffix(mobileProductSheet)}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <small>Precio cliente</small>
-                    <strong>
-                      {fmtMoney(getProductClientPrice(mobileProductSheet))}
                       {unitSuffix(mobileProductSheet)}
                     </strong>
                   </div>
@@ -1427,31 +1412,17 @@ export default function ProductosPage() {
                   className="products-price-grid"
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
                     gap: 12,
                   }}
                 >
                   <div className="form-group">
-                    <label className="form-label">Precio público/kg</label>
+                    <label className="form-label">Precio minorista/kg</label>
                     <input
                       type="number"
                       value={form.pricePerKg}
                       onChange={(e) =>
                         setForm((p) => ({ ...p, pricePerKg: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Cliente/kg</label>
-                    <input
-                      type="number"
-                      value={form.clientPricePerKg}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          clientPricePerKg: e.target.value,
-                        }))
                       }
                     />
                   </div>
@@ -1514,28 +1485,17 @@ export default function ProductosPage() {
                   className="products-price-grid"
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
                     gap: 12,
                   }}
                 >
                   <div className="form-group">
-                    <label className="form-label">Precio público</label>
+                    <label className="form-label">Precio minorista</label>
                     <input
                       type="number"
                       value={form.price}
                       onChange={(e) =>
                         setForm((p) => ({ ...p, price: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Precio cliente</label>
-                    <input
-                      type="number"
-                      value={form.clientPrice}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, clientPrice: e.target.value }))
                       }
                     />
                   </div>
@@ -1814,7 +1774,7 @@ export default function ProductosPage() {
         .modal-overlay {
           position: fixed;
           inset: 0;
-          z-index: 11000;
+          z-index: 13000;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -2143,6 +2103,7 @@ export default function ProductosPage() {
             left: 12px !important;
             min-width: 0 !important;
             max-width: none !important;
+            z-index: 2147483647 !important;
           }
 
           .products-stats-grid {
@@ -2412,7 +2373,7 @@ export default function ProductosPage() {
           .products-mobile-sheet-backdrop {
             position: fixed;
             inset: 0;
-            z-index: 10000;
+            z-index: 12000;
             display: flex;
             align-items: flex-end;
             justify-content: center;

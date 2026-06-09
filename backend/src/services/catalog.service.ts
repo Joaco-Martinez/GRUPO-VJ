@@ -60,6 +60,16 @@ function normalizeSearch(search?: string) {
   return value.length ? value : undefined;
 }
 
+function normalizeCategory(value?: string | null): CategoryClient {
+  if (value === CategoryClient.Mayorista || value === "Mayorista") {
+    return CategoryClient.Mayorista;
+  }
+
+  // Compatibilidad: si algún dato/front viejo manda "Cliente",
+  // ahora lo tratamos como minorista.
+  return CategoryClient.Price;
+}
+
 function getProductStock(product: any) {
   if (product.type === ProductType.COMPUESTO) {
     if (!Array.isArray(product.components) || product.components.length === 0) {
@@ -121,32 +131,42 @@ function getProductStock(product: any) {
 function resolvePrice(product: any, category: CategoryClient) {
   const isKg = product.saleUnit === SaleUnit.KG;
 
-  const publicPrice = Number(isKg ? product.pricePerKg : product.price);
-  const clientPriceRaw = isKg ? product.clientPricePerKg : product.clientPrice;
-  const wholesalePriceRaw = isKg ? product.wholesalePricePerKg : product.wholesalePrice;
+  const publicPriceRaw = isKg ? product.pricePerKg : product.price;
+  const wholesalePriceRaw = isKg
+    ? product.wholesalePricePerKg
+    : product.wholesalePrice;
 
-  const clientPrice = Number(clientPriceRaw ?? publicPrice);
-  const wholesalePrice = Number(wholesalePriceRaw ?? publicPrice);
+  const publicPrice = Number(publicPriceRaw);
+  const safePublicPrice = Number.isFinite(publicPrice) ? publicPrice : 0;
 
-  let price = publicPrice;
-  let priceList: "PUBLIC" | "CLIENT" | "WHOLESALE" = "PUBLIC";
+  const wholesalePrice = Number(wholesalePriceRaw ?? safePublicPrice);
+  const safeWholesalePrice = Number.isFinite(wholesalePrice)
+    ? wholesalePrice
+    : safePublicPrice;
 
-  if (category === CategoryClient.Cliente) {
-    price = Number.isFinite(clientPrice) ? clientPrice : publicPrice;
-    priceList = "CLIENT";
-  }
+  let price = safePublicPrice;
+  let priceList: "PUBLIC" | "WHOLESALE" = "PUBLIC";
 
   if (category === CategoryClient.Mayorista) {
-    price = Number.isFinite(wholesalePrice) ? wholesalePrice : publicPrice;
+    price = safeWholesalePrice;
     priceList = "WHOLESALE";
   }
 
   return {
     price: round2(Number.isFinite(price) ? price : 0),
     priceList,
-    publicPrice: round2(Number.isFinite(publicPrice) ? publicPrice : 0),
-    clientPrice: round2(Number.isFinite(clientPrice) ? clientPrice : publicPrice),
-    wholesalePrice: round2(Number.isFinite(wholesalePrice) ? wholesalePrice : publicPrice),
+
+    // Minorista / público
+    publicPrice: round2(safePublicPrice),
+
+    // Compatibilidad temporal:
+    // Ya no existe precio Cliente, pero lo dejamos igual al público
+    // para que ningún frontend viejo rompa si todavía lee clientPrice.
+    clientPrice: round2(safePublicPrice),
+
+    // Mayorista
+    wholesalePrice: round2(safeWholesalePrice),
+
     currency: "ARS",
   };
 }
@@ -231,9 +251,13 @@ function buildWhatsappMessage(params: {
   const { sale, customer, customerNotes } = params;
 
   const lines = sale.items.map((item: any) => {
-    const productName = item.product?.name || item.productNameSnapshot || "Producto";
+    const productName =
+      item.product?.name || item.productNameSnapshot || "Producto";
     const saleUnit = item.product?.saleUnit || "UNIT";
-    const qty = saleUnit === SaleUnit.KG ? `${round2(Number(item.quantityKg || 0))} kg` : `x${item.quantity}`;
+    const qty =
+      saleUnit === SaleUnit.KG
+        ? `${round2(Number(item.quantityKg || 0))} kg`
+        : `x${item.quantity}`;
 
     return `- ${productName} ${qty} — ${formatMoney(Number(item.subtotal || 0))}`;
   });
@@ -296,8 +320,12 @@ export const catalogService = {
     return {
       userId: user.id,
       clientId: user.client.id,
-      category: user.client.category,
-      customerName: [user.client.nombre, user.client.apellido].filter(Boolean).join(" ").trim() || user.name,
+      category: normalizeCategory(user.client.category),
+      customerName:
+        [user.client.nombre, user.client.apellido]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || user.name,
       dni: user.client.dni,
       phone: user.client.telefono,
       email: user.client.gmail || user.email,
@@ -416,7 +444,9 @@ export const catalogService = {
     const customer = await this.getCustomerContext(data.userId);
 
     if (!customer.clientId) {
-      throw new Error("Solo los usuarios cliente pueden finalizar pedidos desde la tienda");
+      throw new Error(
+        "Solo los usuarios cliente pueden finalizar pedidos desde la tienda"
+      );
     }
 
     if (!Array.isArray(data.items) || data.items.length === 0) {
@@ -425,8 +455,10 @@ export const catalogService = {
 
     const normalizedItems = data.items.map((item) => ({
       productId: String(item.productId || ""),
-      quantity: item.quantity !== undefined ? Number(item.quantity) : undefined,
-      quantityKg: item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
+      quantity:
+        item.quantity !== undefined ? Number(item.quantity) : undefined,
+      quantityKg:
+        item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
     }));
 
     for (const item of normalizedItems) {

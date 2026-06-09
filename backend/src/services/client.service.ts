@@ -6,7 +6,8 @@ type ClientCategory = "Price" | "Cliente" | "Mayorista";
 
 function normalizeCategory(value?: string | null): CategoryClient {
   if (value === "Mayorista") return CategoryClient.Mayorista;
-  if (value === "Cliente") return CategoryClient.Cliente;
+
+  // Si llega "Cliente" desde algún frontend viejo, ahora lo tratamos como minorista.
   return CategoryClient.Price;
 }
 

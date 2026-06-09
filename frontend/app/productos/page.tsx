@@ -273,6 +273,7 @@ export default function ProductosPage() {
   const [scannerLoading, setScannerLoading] = useState(false);
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
+  const productModalBeforeScannerRef = useRef<Modal>(null);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
@@ -706,13 +707,23 @@ export default function ProductosPage() {
   };
 
   const closeSkuScanner = async () => {
+    const previousModal = productModalBeforeScannerRef.current;
+
     await stopSkuScanner();
     setScannerError('');
     setScannerLoading(false);
+    productModalBeforeScannerRef.current = null;
+
+    if (previousModal === 'product-create' || previousModal === 'product-edit') {
+      setModal(previousModal);
+      return;
+    }
+
     setModal(null);
   };
 
   const openSkuScanner = () => {
+    productModalBeforeScannerRef.current = modal;
     setScannerError('');
     setScannerLoading(true);
     scannerHandledRef.current = false;
@@ -764,7 +775,6 @@ export default function ProductosPage() {
               sku,
             }));
 
-            showToast('success', `SKU escaneado: ${sku}`);
             await closeSkuScanner();
           },
           () => {

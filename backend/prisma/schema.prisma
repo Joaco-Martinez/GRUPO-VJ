@@ -137,9 +137,11 @@ model Product {
   purchasePrice Float @default(0)
 
   // Stock por unidad
-  minStock      Int?
-  stockLocal    Int  @default(0)
-  stockDeposito Int  @default(0)
+  // minStock queda como mínimo del LOCAL para no romper compatibilidad.
+  minStock          Int?
+  minStockDeposito  Int?
+  stockLocal        Int @default(0)
+  stockDeposito     Int @default(0)
 
   // Categoría dinámica
   categoryId String?
@@ -166,9 +168,11 @@ model Product {
   clientPricePerKg    Float?
 
   // Stock por KG
-  stockLocalKg    Float  @default(0)
-  stockDepositoKg Float  @default(0)
-  minStockKg      Float? @default(0)
+  // minStockKg queda como mínimo KG del LOCAL para no romper compatibilidad.
+  stockLocalKg         Float  @default(0)
+  stockDepositoKg      Float  @default(0)
+  minStockKg           Float? @default(0)
+  minStockDepositoKg   Float?
 
   // Producto compuesto:
   // Si este producto es una promo/pack/caja, acá van sus componentes.

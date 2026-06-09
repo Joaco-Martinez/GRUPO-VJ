@@ -98,12 +98,16 @@ function isCompositeProduct(product: Product) {
   );
 }
 
-function getProductMinStock(product: Product) {
+function getProductMinStock(product: Product, location: StockLocationKey) {
   if (product.saleUnit === "KG") {
-    return num(product.minStockKg);
+    return location === "DEPOSITO"
+      ? num((product as any).minStockDepositoKg)
+      : num(product.minStockKg);
   }
 
-  return num(product.minStock);
+  return location === "DEPOSITO"
+    ? num((product as any).minStockDeposito)
+    : num(product.minStock);
 }
 
 function getSimpleProductStock(
@@ -324,10 +328,12 @@ export default function StockPage() {
   );
 
   const lowStockCount = products.filter((p) => {
-    const min = getProductMinStock(p);
+    const localMin = getProductMinStock(p, "LOCAL");
+    const depositoMin = getProductMinStock(p, "DEPOSITO");
+
     return (
-      isLowStock(getProductLocalStock(p), min) ||
-      isLowStock(getProductDepositoStock(p), min)
+      isLowStock(getProductLocalStock(p), localMin) ||
+      isLowStock(getProductDepositoStock(p), depositoMin)
     );
   }).length;
 
@@ -677,7 +683,8 @@ export default function StockPage() {
                   <th>Unidad</th>
                   <th>Mayorista</th>
                   <th>Minorista</th>
-                  <th>Mínimo</th>
+                  <th>Mín. Mayorista</th>
+                  <th>Mín. Minorista</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -686,11 +693,12 @@ export default function StockPage() {
                 {filtered.map((p) => {
                   const local = getProductLocalStock(p);
                   const deposito = getProductDepositoStock(p);
-                  const min = getProductMinStock(p);
+                  const localMin = getProductMinStock(p, "LOCAL");
+                  const depositoMin = getProductMinStock(p, "DEPOSITO");
                   const unit = getStockUnit(p);
 
-                  const localLow = isLowStock(local, min);
-                  const depositoLow = isLowStock(deposito, min);
+                  const localLow = isLowStock(local, localMin);
+                  const depositoLow = isLowStock(deposito, depositoMin);
                   const status = getStockStatus(localLow, depositoLow);
                   const badgeClass = getStockBadgeClass(localLow, depositoLow);
 
@@ -741,7 +749,12 @@ export default function StockPage() {
                       </td>
 
                       <td>
-                        {min}
+                        {localMin}
+                        {unit}
+                      </td>
+
+                      <td>
+                        {depositoMin}
                         {unit}
                       </td>
 
@@ -785,11 +798,12 @@ export default function StockPage() {
             mobileStockItems.map((p) => {
               const local = getProductLocalStock(p);
               const deposito = getProductDepositoStock(p);
-              const min = getProductMinStock(p);
+              const localMin = getProductMinStock(p, "LOCAL");
+              const depositoMin = getProductMinStock(p, "DEPOSITO");
               const unit = getStockUnit(p);
 
-              const localLow = isLowStock(local, min);
-              const depositoLow = isLowStock(deposito, min);
+              const localLow = isLowStock(local, localMin);
+              const depositoLow = isLowStock(deposito, depositoMin);
               const status = getStockStatus(localLow, depositoLow);
               const badgeClass = getStockBadgeClass(localLow, depositoLow);
 
@@ -800,8 +814,9 @@ export default function StockPage() {
                       <h3>{p.name}</h3>
                       <span>
                         {p.sku || "Sin SKU"} ·{" "}
-                        {isCompositeProduct(p) ? "PROMO" : p.saleUnit} · Mín.{" "}
-                        {min}
+                        {isCompositeProduct(p) ? "PROMO" : p.saleUnit} · Mín. May.{" "}
+                        {localMin}
+                        {unit} · Mín. Min. {depositoMin}
                         {unit}
                       </span>
                     </div>

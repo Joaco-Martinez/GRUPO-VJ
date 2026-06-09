@@ -4,25 +4,36 @@ import { useEffect, useMemo, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { Alert, Product } from '@/types';
-import { AlertTriangle, Bell, Package, RefreshCcw, Search } from 'lucide-react';
+import { AlertTriangle, Bell, RefreshCcw, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { num } from '@/lib/helpers';
 
+type ProductWithMinStock = Product & {
+  minStockDeposito?: number | string | null;
+  minStockDepositoKg?: number | string | null;
+};
+
 type AlertExtra = Alert & {
-  product?: Product | null;
+  product?: ProductWithMinStock | null;
   productName?: string | null;
   productSku?: string | null;
   sku?: string | null;
   message?: string | null;
   title?: string | null;
+
   stock?: number | string | null;
   currentStock?: number | string | null;
+
   stockLocal?: number | string | null;
   stockDeposito?: number | string | null;
   stockLocalKg?: number | string | null;
   stockDepositoKg?: number | string | null;
+
   minStock?: number | string | null;
+  minStockDeposito?: number | string | null;
   minStockKg?: number | string | null;
+  minStockDepositoKg?: number | string | null;
+
   location?: string | null;
   saleUnit?: string | null;
   createdAt?: string | Date | null;
@@ -35,12 +46,16 @@ type AlertView = {
   sku: string;
   date: string;
   unit: string;
+
   localStock: number;
   depositoStock: number;
-  minStock: number;
-  currentStock: number;
+
+  minStockLocal: number;
+  minStockDeposito: number;
+
   lowLocal: boolean;
   lowDeposito: boolean;
+
   message: string;
 };
 
@@ -94,32 +109,63 @@ function buildAlertView(alert: AlertExtra): AlertView {
   const isKg = unit === 'kg';
 
   const localStock = isKg
-    ? num(alert.stockLocalKg ?? alert.product?.stockLocalKg ?? alert.stockLocal ?? alert.product?.stockLocal)
-    : num(alert.stockLocal ?? alert.product?.stockLocal ?? alert.stock ?? alert.currentStock);
+    ? num(
+        alert.stockLocalKg ??
+          alert.product?.stockLocalKg ??
+          alert.stockLocal ??
+          alert.product?.stockLocal
+      )
+    : num(
+        alert.stockLocal ??
+          alert.product?.stockLocal ??
+          alert.stock ??
+          alert.currentStock
+      );
 
   const depositoStock = isKg
-    ? num(alert.stockDepositoKg ?? alert.product?.stockDepositoKg ?? alert.stockDeposito ?? alert.product?.stockDeposito)
+    ? num(
+        alert.stockDepositoKg ??
+          alert.product?.stockDepositoKg ??
+          alert.stockDeposito ??
+          alert.product?.stockDeposito
+      )
     : num(alert.stockDeposito ?? alert.product?.stockDeposito);
 
-  const minStock = isKg
-    ? num(alert.minStockKg ?? alert.product?.minStockKg ?? alert.minStock ?? alert.product?.minStock)
-    : num(alert.minStock ?? alert.product?.minStock);
+  const minStockLocal = isKg
+    ? num(alert.minStockKg ?? alert.product?.minStockKg ?? 0)
+    : num(alert.minStock ?? alert.product?.minStock ?? 0);
 
-  const explicitCurrent = num(alert.currentStock ?? alert.stock);
-  const currentStock = explicitCurrent > 0 ? explicitCurrent : Math.min(localStock, depositoStock || localStock);
+  const minStockDeposito = isKg
+    ? num(
+        alert.minStockDepositoKg ??
+          alert.product?.minStockDepositoKg ??
+          0
+      )
+    : num(
+        alert.minStockDeposito ??
+          alert.product?.minStockDeposito ??
+          0
+      );
 
-  const lowLocal = minStock > 0 && localStock <= minStock;
-  const lowDeposito = minStock > 0 && depositoStock <= minStock;
+  const lowLocal = minStockLocal > 0 && localStock <= minStockLocal;
+  const lowDeposito =
+    minStockDeposito > 0 && depositoStock <= minStockDeposito;
 
   const productName = getAlertProductName(alert);
   const sku = getAlertSku(alert);
   const date = formatAlertDate(alert.createdAt ?? alert.updatedAt);
 
-  let message = 'Revisar stock del producto.';
-  if (lowLocal && lowDeposito) message = 'Stock bajo en Mayorista y Minorista.';
-  else if (lowLocal) message = 'Stock bajo en Mayorista.';
-  else if (lowDeposito) message = 'Stock bajo en Minorista.';
-  else if (minStock > 0) message = 'El producto figura en alertas, pero el stock actual parece recuperado.';
+  let message = alert.message || 'Revisar stock del producto.';
+
+  if (lowLocal && lowDeposito) {
+    message = 'Stock bajo en Mayorista y Minorista.';
+  } else if (lowLocal) {
+    message = 'Stock bajo en Mayorista.';
+  } else if (lowDeposito) {
+    message = 'Stock bajo en Minorista.';
+  } else if (minStockLocal > 0 || minStockDeposito > 0) {
+    message = 'El producto figura en alertas, pero el stock actual parece recuperado.';
+  }
 
   return {
     id: String(alert.id ?? `${productName}-${sku}-${date}`),
@@ -129,8 +175,8 @@ function buildAlertView(alert: AlertExtra): AlertView {
     unit,
     localStock,
     depositoStock,
-    minStock,
-    currentStock,
+    minStockLocal,
+    minStockDeposito,
     lowLocal,
     lowDeposito,
     message,
@@ -215,7 +261,11 @@ export default function AlertasPage() {
       title="Alertas de stock"
       subtitle="Productos con stock bajo el mínimo"
       actions={
-        <button className="btn btn-secondary btn-sm alerts-refresh-btn" onClick={() => loadAlerts(true)} disabled={loading}>
+        <button
+          className="btn btn-secondary btn-sm alerts-refresh-btn"
+          onClick={() => loadAlerts(true)}
+          disabled={loading}
+        >
           <RefreshCcw size={14} /> Actualizar
         </button>
       }
@@ -227,14 +277,20 @@ export default function AlertasPage() {
         </div>
 
         <div className="stat-card alerts-stat-card">
-          <div className="stat-value" style={{ color: criticalCount > 0 ? 'var(--danger)' : 'var(--accent)' }}>
+          <div
+            className="stat-value"
+            style={{ color: criticalCount > 0 ? 'var(--danger)' : 'var(--accent)' }}
+          >
             {criticalCount}
           </div>
           <div className="stat-label">Críticas</div>
         </div>
 
         <div className="stat-card alerts-stat-card">
-          <div className="stat-value" style={{ color: lowCount > 0 ? 'var(--warn)' : 'var(--accent)' }}>
+          <div
+            className="stat-value"
+            style={{ color: lowCount > 0 ? 'var(--warn)' : 'var(--accent)' }}
+          >
             {lowCount}
           </div>
           <div className="stat-label">Stock bajo</div>
@@ -298,23 +354,30 @@ export default function AlertasPage() {
 
                   <div className="alerts-stock-grid">
                     <div className={alert.lowLocal ? 'is-low' : ''}>
-                      <small>Mayorista</small>
+                      <small>Stock Mayorista</small>
                       <strong>
                         {alert.localStock} {alert.unit}
                       </strong>
                     </div>
 
+                    <div className={alert.lowLocal ? 'is-low' : ''}>
+                      <small>Mín. Mayorista</small>
+                      <strong>
+                        {alert.minStockLocal} {alert.unit}
+                      </strong>
+                    </div>
+
                     <div className={alert.lowDeposito ? 'is-low' : ''}>
-                      <small>Minorista</small>
+                      <small>Stock Minorista</small>
                       <strong>
                         {alert.depositoStock} {alert.unit}
                       </strong>
                     </div>
 
-                    <div>
-                      <small>Mínimo</small>
+                    <div className={alert.lowDeposito ? 'is-low' : ''}>
+                      <small>Mín. Minorista</small>
                       <strong>
-                        {alert.minStock} {alert.unit}
+                        {alert.minStockDeposito} {alert.unit}
                       </strong>
                     </div>
                   </div>
@@ -449,7 +512,7 @@ export default function AlertasPage() {
 
         .alerts-stock-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 8px;
         }
 
@@ -604,7 +667,7 @@ export default function AlertasPage() {
           }
 
           .alerts-stock-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 6px;
           }
 

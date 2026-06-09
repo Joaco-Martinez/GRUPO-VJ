@@ -14,8 +14,6 @@ import {
   fmtMoney,
   normalizeArray,
   num,
-  productMinStock,
-  productStock,
 } from '@/lib/helpers';
 import {
   Layers,
@@ -69,7 +67,9 @@ const emptyProductForm = {
   stockLocalKg: '0',
   stockDepositoKg: '0',
   minStock: '0',
+  minStockDeposito: '0',
   minStockKg: '0',
+  minStockDepositoKg: '0',
 };
 
 const PRODUCTS_PAGE_SIZE = 12;
@@ -142,6 +142,49 @@ function getProfitPercent(product: Product): number | null {
 function unitSuffix(product: Product) {
   return product.saleUnit === 'KG' ? '/kg' : '';
 }
+
+function getProductStockMayorista(product: Product): number {
+  return product.saleUnit === 'KG'
+    ? num((product as any).stockLocalKg)
+    : num((product as any).stockLocal);
+}
+
+function getProductStockMinorista(product: Product): number {
+  return product.saleUnit === 'KG'
+    ? num((product as any).stockDepositoKg)
+    : num((product as any).stockDeposito);
+}
+
+function getProductMinStockMayorista(product: Product): number {
+  return product.saleUnit === 'KG'
+    ? num((product as any).minStockKg)
+    : num((product as any).minStock);
+}
+
+function getProductMinStockMinorista(product: Product): number {
+  return product.saleUnit === 'KG'
+    ? num((product as any).minStockDepositoKg)
+    : num((product as any).minStockDeposito);
+}
+
+function isProductLowStock(product: Product): boolean {
+  if ((product as any).isService) return false;
+
+  const mayoristaStock = getProductStockMayorista(product);
+  const mayoristaMin = getProductMinStockMayorista(product);
+  const minoristaStock = getProductStockMinorista(product);
+  const minoristaMin = getProductMinStockMinorista(product);
+
+  return (
+    (mayoristaMin > 0 && mayoristaStock <= mayoristaMin) ||
+    (minoristaMin > 0 && minoristaStock <= minoristaMin)
+  );
+}
+
+function stockLabel(product: Product, stock: number) {
+  return `${stock}${product.saleUnit === 'KG' ? ' kg' : ''}`;
+}
+
 
 export default function ProductosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -283,7 +326,9 @@ export default function ProductosPage() {
       stockDepositoKg: String(product.stockDepositoKg ?? 0),
 
       minStock: String(product.minStock ?? 0),
+      minStockDeposito: String((product as any).minStockDeposito ?? 0),
       minStockKg: String(product.minStockKg ?? 0),
+      minStockDepositoKg: String((product as any).minStockDepositoKg ?? 0),
     });
 
     setComponents(
@@ -344,7 +389,9 @@ export default function ProductosPage() {
       stockDepositoKg: isService ? 0 : num(form.stockDepositoKg),
 
       minStock: isService ? 0 : num(form.minStock),
+      minStockDeposito: isService ? 0 : num(form.minStockDeposito),
       minStockKg: isService ? 0 : num(form.minStockKg),
+      minStockDepositoKg: isService ? 0 : num(form.minStockDepositoKg),
 
       components:
         !isService && form.type === 'COMPUESTO'
@@ -611,7 +658,7 @@ export default function ProductosPage() {
 
         <div className="stat-card">
           <div className="stat-value">
-            {products.filter((p) => productStock(p) <= productMinStock(p)).length}
+            {products.filter(isProductLowStock).length}
           </div>
           <div className="stat-label">Stock bajo</div>
         </div>
@@ -801,18 +848,22 @@ export default function ProductosPage() {
                         style={{
                           fontFamily: 'var(--mono)',
                           color:
-                            productStock(p) <= productMinStock(p)
+                            isProductLowStock(p)
                               ? 'var(--danger)'
                               : 'var(--text)',
                         }}
                       >
-                        {(p as any).isService ? 'No descuenta stock' : `${productStock(p)} ${p.saleUnit === 'KG' ? 'kg' : ''}`}
+                        {(p as any).isService
+                          ? 'No descuenta stock'
+                          : stockLabel(p, getProductStockMayorista(p))}
                       </span>
                     </td>
 
                     <td>
                       <span style={{ fontFamily: 'var(--mono)' }}>
-                        {(p as any).isService ? '-' : p.saleUnit === 'KG' ? num(p.stockDepositoKg) : num(p.stockDeposito)}
+                        {(p as any).isService
+                          ? '-'
+                          : stockLabel(p, getProductStockMinorista(p))}
                       </span>
                     </td>
 
@@ -882,16 +933,14 @@ export default function ProductosPage() {
           ) : (
             paginatedProducts.map((p) => {
               const isService = Boolean((p as any).isService);
-              const isLowStock = !isService && productStock(p) <= productMinStock(p);
+              const isLowStock = isProductLowStock(p);
               const typeLabel = isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE';
-              const stockLabel = isService
+              const mayoristaStockLabel = isService
                 ? 'Servicio'
-                : `${productStock(p)}${p.saleUnit === 'KG' ? ' kg' : ''}`;
-              const secondaryStockLabel = isService
+                : stockLabel(p, getProductStockMayorista(p));
+              const minoristaStockLabel = isService
                 ? '—'
-                : p.saleUnit === 'KG'
-                  ? `${num(p.stockDepositoKg)} kg`
-                  : String(num(p.stockDeposito));
+                : stockLabel(p, getProductStockMinorista(p));
 
               return (
                 <article className="products-mobile-item" key={p.id}>
@@ -932,13 +981,13 @@ export default function ProductosPage() {
                     <div>
                       <small>Stock mayorista</small>
                       <strong className={isLowStock ? 'products-danger-text' : ''}>
-                        {stockLabel}
+                        {mayoristaStockLabel}
                       </strong>
                     </div>
 
                     <div>
                       <small>Stock minorista</small>
-                      <strong>{secondaryStockLabel}</strong>
+                      <strong>{minoristaStockLabel}</strong>
                     </div>
                   </div>
 
@@ -1064,15 +1113,14 @@ export default function ProductosPage() {
                     <small>Stock mayorista</small>
                     <strong
                       className={
-                        !(mobileProductSheet as any).isService &&
-                        productStock(mobileProductSheet) <= productMinStock(mobileProductSheet)
+                        isProductLowStock(mobileProductSheet)
                           ? 'products-danger-text'
                           : ''
                       }
                     >
                       {(mobileProductSheet as any).isService
                         ? 'No descuenta'
-                        : `${productStock(mobileProductSheet)}${mobileProductSheet.saleUnit === 'KG' ? ' kg' : ''}`}
+                        : stockLabel(mobileProductSheet, getProductStockMayorista(mobileProductSheet))}
                     </strong>
                   </div>
 
@@ -1081,9 +1129,7 @@ export default function ProductosPage() {
                     <strong>
                       {(mobileProductSheet as any).isService
                         ? '—'
-                        : mobileProductSheet.saleUnit === 'KG'
-                          ? `${num(mobileProductSheet.stockDepositoKg)} kg`
-                          : num(mobileProductSheet.stockDeposito)}
+                        : stockLabel(mobileProductSheet, getProductStockMinorista(mobileProductSheet))}
                     </strong>
                   </div>
 
@@ -1356,7 +1402,9 @@ export default function ProductosPage() {
                         stockLocalKg: nextIsService ? '0' : p.stockLocalKg,
                         stockDepositoKg: nextIsService ? '0' : p.stockDepositoKg,
                         minStock: nextIsService ? '0' : p.minStock,
+                        minStockDeposito: nextIsService ? '0' : p.minStockDeposito,
                         minStockKg: nextIsService ? '0' : p.minStockKg,
+                        minStockDepositoKg: nextIsService ? '0' : p.minStockDepositoKg,
                       }));
 
                       if (nextIsService) setComponents([]);
@@ -1381,22 +1429,6 @@ export default function ProductosPage() {
                   </select>
                 </div>
 
-{form.isService !== 'true' && (
-                <div className="form-group">
-                  <label className="form-label">Stock mínimo</label>
-                  <input
-                    type="number"
-                    value={form.saleUnit === 'KG' ? form.minStockKg : form.minStock}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        [form.saleUnit === 'KG' ? 'minStockKg' : 'minStock']:
-                          e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                )}
               </div>
 
               </section>
@@ -1475,6 +1507,34 @@ export default function ProductosPage() {
                         setForm((p) => ({
                           ...p,
                           stockDepositoKg: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Stock mínimo Mayorista kg</label>
+                    <input
+                      type="number"
+                      value={form.minStockKg}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          minStockKg: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Stock mínimo Minorista kg</label>
+                    <input
+                      type="number"
+                      value={form.minStockDepositoKg}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          minStockDepositoKg: e.target.value,
                         }))
                       }
                     />
@@ -1559,6 +1619,34 @@ export default function ProductosPage() {
                           }
                         />
                       </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Stock mínimo Mayorista</label>
+                        <input
+                          type="number"
+                          value={form.minStock}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              minStock: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Stock mínimo Minorista</label>
+                        <input
+                          type="number"
+                          value={form.minStockDeposito}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              minStockDeposito: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
                     </>
                   )}
                 </div>
@@ -1603,8 +1691,7 @@ export default function ProductosPage() {
                           <option value="">Seleccionar producto simple...</option>
                           {simpleProducts.map((p) => (
                             <option key={p.id} value={p.id}>
-                              {p.name} · stock {productStock(p)}{' '}
-                              {p.saleUnit === 'KG' ? 'kg' : ''}
+                              {p.name} · stock {stockLabel(p, getProductStockMayorista(p))}
                             </option>
                           ))}
                         </select>

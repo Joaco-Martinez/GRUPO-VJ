@@ -51,25 +51,31 @@ class AlertService {
   }
 
   async checkProductStockFromData(product: Product) {
-    const alerts: { id: string; productId: string; message: string; createdAt: Date; resolved: boolean; }[] = [];
+    const alerts: {
+      id: string;
+      productId: string;
+      message: string;
+      createdAt: Date;
+      resolved: boolean;
+    }[] = [];
 
     if (product.isService) return alerts;
     if (!product.isActive) return alerts;
 
     if (product.saleUnit === SaleUnit.KG) {
-      const minStockKg = Number(product.minStockKg ?? 0);
-
-      if (minStockKg <= 0) return alerts;
+      // minStockKg queda como mínimo del LOCAL para no romper compatibilidad.
+      const minStockLocalKg = Number(product.minStockKg ?? 0);
+      const minStockDepositoKg = Number(product.minStockDepositoKg ?? 0);
 
       const stockLocalKg = Number(product.stockLocalKg ?? 0);
       const stockDepositoKg = Number(product.stockDepositoKg ?? 0);
 
-      if (stockLocalKg <= minStockKg) {
+      if (minStockLocalKg > 0 && stockLocalKg <= minStockLocalKg) {
         const alert = await this.createAlert(
           product.id,
           product.name,
           stockLocalKg,
-          minStockKg,
+          minStockLocalKg,
           "kg",
           "LOCAL"
         );
@@ -77,12 +83,12 @@ class AlertService {
         alerts.push(alert);
       }
 
-      if (stockDepositoKg <= minStockKg) {
+      if (minStockDepositoKg > 0 && stockDepositoKg <= minStockDepositoKg) {
         const alert = await this.createAlert(
           product.id,
           product.name,
           stockDepositoKg,
-          minStockKg,
+          minStockDepositoKg,
           "kg",
           "DEPÓSITO"
         );
@@ -93,19 +99,19 @@ class AlertService {
       return alerts;
     }
 
-    const minStock = Number(product.minStock ?? 0);
-
-    if (minStock <= 0) return alerts;
+    // minStock queda como mínimo del LOCAL para no romper compatibilidad.
+    const minStockLocal = Number(product.minStock ?? 0);
+    const minStockDeposito = Number(product.minStockDeposito ?? 0);
 
     const stockLocal = Number(product.stockLocal ?? 0);
     const stockDeposito = Number(product.stockDeposito ?? 0);
 
-    if (stockLocal <= minStock) {
+    if (minStockLocal > 0 && stockLocal <= minStockLocal) {
       const alert = await this.createAlert(
         product.id,
         product.name,
         stockLocal,
-        minStock,
+        minStockLocal,
         "unidades",
         "LOCAL"
       );
@@ -113,12 +119,12 @@ class AlertService {
       alerts.push(alert);
     }
 
-    if (stockDeposito <= minStock) {
+    if (minStockDeposito > 0 && stockDeposito <= minStockDeposito) {
       const alert = await this.createAlert(
         product.id,
         product.name,
         stockDeposito,
-        minStock,
+        minStockDeposito,
         "unidades",
         "DEPÓSITO"
       );

@@ -112,7 +112,9 @@ export const productController = {
   stockDepositoKg: req.body.stockDepositoKg,
 
   minStock: req.body.minStock,
+  minStockDeposito: req.body.minStockDeposito,
   minStockKg: req.body.minStockKg,
+  minStockDepositoKg: req.body.minStockDepositoKg,
 
   file: req.file,
 
@@ -203,6 +205,10 @@ export const productController = {
         cleanBody.minStock = toNumberOrUndefined(body.minStock);
       }
 
+      if (body.minStockDeposito !== undefined) {
+        cleanBody.minStockDeposito = toNumberOrUndefined(body.minStockDeposito);
+      }
+
       if (body.stockLocalKg !== undefined) {
         cleanBody.stockLocalKg = toNumberOrUndefined(body.stockLocalKg);
       }
@@ -213,6 +219,10 @@ export const productController = {
 
       if (body.minStockKg !== undefined) {
         cleanBody.minStockKg = toNumberOrUndefined(body.minStockKg);
+      }
+
+      if (body.minStockDepositoKg !== undefined) {
+        cleanBody.minStockDepositoKg = toNumberOrUndefined(body.minStockDepositoKg);
       }
 
       const updated = await productService.update(getParamAsString(req.params.id, "id"), cleanBody);

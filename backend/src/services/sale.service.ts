@@ -482,6 +482,22 @@ async function restoreStockLines(
   }
 }
 
+function queueStockAlerts(productIds: string[]) {
+  const uniqueProductIds = [...new Set(productIds)];
+
+  if (uniqueProductIds.length === 0) return;
+
+  void Promise.all(
+    uniqueProductIds.map(async (productId) => {
+      try {
+        await alertService.checkProductStock(productId);
+      } catch (error) {
+        console.error("Error revisando alerta de stock:", error);
+      }
+    })
+  );
+}
+
 type PaymentCalcResult = {
   hasPayments: boolean;
   totalPaid: number;
@@ -962,12 +978,18 @@ export const saleService = {
 
       const manualPrice = item.price !== undefined ? Number(item.price) : NaN;
 
-      if (item.price !== undefined && (!Number.isFinite(manualPrice) || manualPrice < 0)) {
+      if (
+        item.price !== undefined &&
+        (!Number.isFinite(manualPrice) || manualPrice < 0)
+      ) {
         throw new Error(`Precio inválido para ${product.name}`);
       }
 
       const unitPrice =
-        item.price !== undefined ? round2(manualPrice) : resolveUnitPrice(product, client);
+        item.price !== undefined
+          ? round2(manualPrice)
+          : resolveUnitPrice(product, client);
+
       const subtotal = round2(unitPrice * qtyUsedForTotal);
       const purchasePriceSnapshot = resolvePurchasePriceSnapshot(product);
       const costTotal = round2(purchasePriceSnapshot * qtyUsedForTotal);
@@ -1221,18 +1243,7 @@ export const saleService = {
       }
     );
 
-    const uniqueProductIds = [...new Set(pendingAlerts)];
-
-    void Promise.all(
-      uniqueProductIds.map(async (productId) => {
-        try {
-          await alertService.checkProductStock(productId);
-        } catch (error) {
-          console.error("Error revisando alerta de stock:", error);
-        }
-      })
-    );
-
+    queueStockAlerts(pendingAlerts);
     queueSalePdfGeneration(result.id);
 
     return {
@@ -1377,19 +1388,7 @@ export const saleService = {
       }
     );
 
-    if (pendingAlerts.length > 0) {
-      const uniqueProductIds = [...new Set(pendingAlerts)];
-
-      void Promise.all(
-        uniqueProductIds.map(async (productId) => {
-          try {
-            await alertService.checkProductStock(productId);
-          } catch (error) {
-            console.error("Error revisando alerta de stock:", error);
-          }
-        })
-      );
-    }
+    queueStockAlerts(pendingAlerts);
 
     if (status === SaleStatus.COMPLETED) {
       await financeService.registerIncomeFromSale(id);

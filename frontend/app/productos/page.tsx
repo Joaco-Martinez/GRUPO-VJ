@@ -4,7 +4,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
@@ -29,14 +29,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   Calculator,
-  ChevronUp,
-  ChevronDown,
-  ArrowUpDown,
+  ScanBarcode,
 } from 'lucide-react';
 
-type Modal = 'product-create' | 'product-edit' | 'category' | null;
+type Modal = 'product-create' | 'product-edit' | 'category' | 'sku-scanner' | null;
 type ProductFormStep = 'basico' | 'precios' | 'componentes';
-type ProductSortMode = 'manual' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
+type ProductSortMode = 'default' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 type ComponentForm = { componentId: string; quantity: string; quantityKg: string };
 
 type ToastState = {
@@ -86,7 +84,7 @@ const EMPTY_PROFIT_CALC = {
 };
 
 const PROFIT_CALCULATOR_STORAGE_KEY = 'grupo-vj-products-profit-calculator';
-const PRODUCT_ORDER_STORAGE_KEY = 'grupo-vj-products-custom-order';
+const SKU_SCANNER_ELEMENT_ID = 'grupo-vj-sku-scanner';
 
 function getInitialProfitCalculator() {
   if (typeof window === 'undefined') return EMPTY_PROFIT_CALC;
@@ -104,23 +102,6 @@ function getInitialProfitCalculator() {
     };
   } catch {
     return EMPTY_PROFIT_CALC;
-  }
-}
-
-function getInitialCustomOrder(): string[] {
-  if (typeof window === 'undefined') return [];
-
-  try {
-    const saved = window.localStorage.getItem(PRODUCT_ORDER_STORAGE_KEY);
-    if (!saved) return [];
-
-    const parsed = JSON.parse(saved);
-
-    return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === 'string' && id.length > 0)
-      : [];
-  } catch {
-    return [];
   }
 }
 
@@ -287,8 +268,11 @@ export default function ProductosPage() {
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
   const [profitCalc, setProfitCalc] = useState(getInitialProfitCalculator);
   const [showProfitCalculator, setShowProfitCalculator] = useState(false);
-  const [sortMode, setSortMode] = useState<ProductSortMode>('manual');
-  const [customOrder, setCustomOrder] = useState<string[]>(getInitialCustomOrder);
+  const [sortMode, setSortMode] = useState<ProductSortMode>('default');
+  const [scannerError, setScannerError] = useState('');
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const scannerInstanceRef = useRef<any>(null);
+  const scannerHandledRef = useRef(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
@@ -335,23 +319,6 @@ export default function ProductosPage() {
   }, [profitCalc]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(PRODUCT_ORDER_STORAGE_KEY, JSON.stringify(customOrder));
-  }, [customOrder]);
-
-  useEffect(() => {
-    setCustomOrder((prev) => {
-      const existingIds = new Set(products.map((p) => p.id));
-      const orderedExisting = prev.filter((id) => existingIds.has(id));
-      const missingIds = products
-        .map((p) => p.id)
-        .filter((id) => !orderedExisting.includes(id));
-
-      return [...orderedExisting, ...missingIds];
-    });
-  }, [products]);
-
-  useEffect(() => {
     if (productFormStep === 'componentes' && (form.isService === 'true' || form.type !== 'COMPUESTO')) {
       setProductFormStep('basico');
     }
@@ -377,7 +344,7 @@ export default function ProductosPage() {
       return matchesText && matchesCat;
     });
 
-    const orderIndex = new Map(customOrder.map((id, index) => [id, index]));
+    if (sortMode === 'default') return result;
 
     return [...result].sort((a, b) => {
       if (sortMode === 'name-asc') return compareText(a.name, b.name);
@@ -393,12 +360,9 @@ export default function ProductosPage() {
         return byCategory || compareText(a.name, b.name);
       }
 
-      const aIndex = orderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-      const bIndex = orderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-
-      return aIndex - bIndex || compareText(a.name, b.name);
+      return 0;
     });
-  }, [products, search, categoryId, sortMode, customOrder]);
+  }, [products, search, categoryId, sortMode]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PRODUCTS_PAGE_SIZE));
 
@@ -715,41 +679,124 @@ export default function ProductosPage() {
       prev.map((c, i) => (i === idx ? { ...c, [key]: value } : c))
     );
 
-  const moveProductInCustomOrder = (productId: string, direction: 'up' | 'down') => {
-    setSortMode('manual');
+  const stopSkuScanner = async () => {
+    const scanner = scannerInstanceRef.current;
 
-    setCustomOrder((prev) => {
-      const visibleIds = filtered.map((p) => p.id);
-      const currentOrder = [
-        ...prev.filter((id) => visibleIds.includes(id)),
-        ...visibleIds.filter((id) => !prev.includes(id)),
-      ];
+    scannerHandledRef.current = false;
 
-      const currentIndex = currentOrder.indexOf(productId);
-      if (currentIndex < 0) return prev;
+    if (!scanner) return;
 
-      const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-      if (nextIndex < 0 || nextIndex >= currentOrder.length) return prev;
+    try {
+      const state = scanner.getState?.();
 
-      const nextVisibleOrder = [...currentOrder];
-      const [removed] = nextVisibleOrder.splice(currentIndex, 1);
-      nextVisibleOrder.splice(nextIndex, 0, removed);
+      if (state === 2) {
+        await scanner.stop();
+      }
+    } catch (e) {
+      console.warn('No se pudo detener el scanner', e);
+    }
 
-      const nextVisibleIndex = new Map(nextVisibleOrder.map((id, index) => [id, index]));
-      const visibleSet = new Set(visibleIds);
-      const untouched = prev.filter((id) => !visibleSet.has(id));
+    try {
+      await scanner.clear?.();
+    } catch {
+      // html5-qrcode puede tirar error si el contenedor ya fue desmontado.
+    }
 
-      return [
-        ...nextVisibleOrder.sort((a, b) => (nextVisibleIndex.get(a) ?? 0) - (nextVisibleIndex.get(b) ?? 0)),
-        ...untouched,
-      ];
-    });
+    scannerInstanceRef.current = null;
   };
 
-  const resetCustomOrder = () => {
-    setSortMode('manual');
-    setCustomOrder(products.map((p) => p.id));
+  const closeSkuScanner = async () => {
+    await stopSkuScanner();
+    setScannerError('');
+    setScannerLoading(false);
+    setModal(null);
   };
+
+  const openSkuScanner = () => {
+    setScannerError('');
+    setScannerLoading(true);
+    scannerHandledRef.current = false;
+    setModal('sku-scanner');
+  };
+
+  useEffect(() => {
+    if (modal !== 'sku-scanner') return;
+
+    let cancelled = false;
+
+    const startScanner = async () => {
+      setScannerLoading(true);
+      setScannerError('');
+
+      try {
+        if (typeof window === 'undefined') return;
+
+        const { Html5Qrcode } = await import('html5-qrcode');
+
+        if (cancelled) return;
+
+        const scanner = new Html5Qrcode(SKU_SCANNER_ELEMENT_ID);
+        scannerInstanceRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+              const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
+
+              return {
+                width: Math.max(220, Math.min(size, 340)),
+                height: Math.max(120, Math.min(Math.floor(size * 0.55), 220)),
+              };
+            },
+            aspectRatio: 1.777,
+          },
+          async (decodedText: string) => {
+            const sku = decodedText.trim();
+
+            if (!sku || scannerHandledRef.current) return;
+
+            scannerHandledRef.current = true;
+
+            setForm((prev) => ({
+              ...prev,
+              sku,
+            }));
+
+            showToast('success', `SKU escaneado: ${sku}`);
+            await closeSkuScanner();
+          },
+          () => {
+            // Ignoramos lecturas fallidas mientras la cámara sigue buscando un código.
+          }
+        );
+
+        if (!cancelled) {
+          setScannerLoading(false);
+        }
+      } catch (e: any) {
+        console.error(e);
+
+        if (!cancelled) {
+          setScannerLoading(false);
+          setScannerError(
+            e?.message?.includes('Permission')
+              ? 'No se pudo acceder a la cámara. Revisá los permisos del navegador.'
+              : 'No se pudo iniciar la cámara. Probá con HTTPS, otro navegador o cargá el SKU manualmente.'
+          );
+        }
+      }
+    };
+
+    const timeoutId = window.setTimeout(startScanner, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      void stopSkuScanner();
+    };
+  }, [modal]);
 
   return (
     <AppLayout
@@ -917,18 +964,12 @@ export default function ProductosPage() {
           style={{ width: 230 }}
           title="Ordenar productos"
         >
-          <option value="manual">Orden personalizado</option>
+          <option value="default">Orden original</option>
           <option value="name-asc">Nombre A-Z / alfanumérico</option>
           <option value="name-desc">Nombre Z-A / alfanumérico</option>
           <option value="category-asc">Categoría A-Z</option>
           <option value="category-desc">Categoría Z-A</option>
         </select>
-
-        {sortMode === 'manual' && (
-          <button className="btn btn-secondary btn-sm products-reset-order-btn" onClick={resetCustomOrder}>
-            <ArrowUpDown size={14} /> Reset orden
-          </button>
-        )}
 
         <button className="btn btn-secondary btn-sm products-refresh-btn" onClick={load}>
           <RefreshCcw size={14} /> Actualizar
@@ -1200,26 +1241,6 @@ export default function ProductosPage() {
 
                     <td>
                       <div className="products-row-actions">
-                        {sortMode === 'manual' && (
-                          <div className="products-order-actions">
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => moveProductInCustomOrder(p.id, 'up')}
-                              title="Subir producto"
-                            >
-                              <ChevronUp size={13} />
-                            </button>
-
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => moveProductInCustomOrder(p.id, 'down')}
-                              title="Bajar producto"
-                            >
-                              <ChevronDown size={13} />
-                            </button>
-                          </div>
-                        )}
-
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => openEdit(p)}
@@ -1341,27 +1362,7 @@ export default function ProductosPage() {
                     </div>
                   </div>
 
-                  <div className={`products-mobile-actions ${sortMode === 'manual' ? 'products-mobile-actions-with-order' : ''}`}>
-                    {sortMode === 'manual' && (
-                      <div className="products-mobile-order-actions">
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => moveProductInCustomOrder(p.id, 'up')}
-                          title="Subir producto"
-                        >
-                          <ChevronUp size={13} />
-                        </button>
-
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => moveProductInCustomOrder(p.id, 'down')}
-                          title="Bajar producto"
-                        >
-                          <ChevronDown size={13} />
-                        </button>
-                      </div>
-                    )}
-
+                  <div className="products-mobile-actions">
                     <button className="btn btn-secondary btn-sm" onClick={() => setMobileProductSheet(p)}>
                       Ver más
                     </button>
@@ -1637,12 +1638,30 @@ export default function ProductosPage() {
 
                 <div className="form-group">
                   <label className="form-label">SKU *</label>
-                  <input
-                    value={form.sku}
-                    onChange={(e) =>
-                      setForm((p) => ({ ...p, sku: e.target.value }))
-                    }
-                  />
+
+                  <div className="products-sku-input-wrap">
+                    <input
+                      value={form.sku}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, sku: e.target.value }))
+                      }
+                      placeholder="Código / SKU"
+                    />
+
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm products-sku-scan-btn"
+                      onClick={openSkuScanner}
+                      title="Escanear SKU con cámara"
+                      aria-label="Escanear SKU con cámara"
+                    >
+                      <ScanBarcode size={16} />
+                    </button>
+                  </div>
+
+                  <small className="products-sku-helper">
+                    Podés escribirlo manualmente o escanear el código con la cámara.
+                  </small>
                 </div>
               </div>
 
@@ -2132,6 +2151,63 @@ export default function ProductosPage() {
         document.body
       )}
 
+      {modal === 'sku-scanner' && typeof document !== 'undefined' &&
+        createPortal(
+        <div className="modal-overlay">
+          <div className="modal products-scanner-modal">
+            <div className="modal-header">
+              <b>Escanear SKU</b>
+
+              <button className="btn btn-ghost btn-sm" onClick={closeSkuScanner}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body products-scanner-body">
+              <div className="products-scanner-info">
+                <ScanBarcode size={18} />
+                <div>
+                  <b>Apuntá al código de barras o QR</b>
+                  <small>
+                    Cuando lo detecte, se carga automáticamente en el campo SKU.
+                  </small>
+                </div>
+              </div>
+
+              <div className="products-scanner-frame">
+                <div id={SKU_SCANNER_ELEMENT_ID} className="products-scanner-reader" />
+
+                {scannerLoading && (
+                  <div className="products-scanner-loading">
+                    <span className="spinner" />
+                    <p>Iniciando cámara...</p>
+                  </div>
+                )}
+              </div>
+
+              {scannerError ? (
+                <div className="products-scanner-error">
+                  <AlertTriangle size={16} />
+                  <span>{scannerError}</span>
+                </div>
+              ) : (
+                <p className="products-scanner-note">
+                  Tip: acercá el código, evitá reflejos y usá buena luz.
+                </p>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={closeSkuScanner}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+        ,
+        document.body
+      )}
+
       {modal === 'category' && typeof document !== 'undefined' &&
         createPortal(
         <div className="modal-overlay">
@@ -2290,6 +2366,123 @@ export default function ProductosPage() {
           width: min(520px, calc(100vw - 36px));
         }
 
+        .products-scanner-modal {
+          width: min(520px, calc(100vw - 36px));
+        }
+
+        .products-scanner-body {
+          display: grid;
+          gap: 12px;
+          padding: 16px;
+        }
+
+        .products-scanner-info {
+          display: flex;
+          gap: 10px;
+          align-items: flex-start;
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          background: var(--surface2);
+          padding: 12px;
+        }
+
+        .products-scanner-info b {
+          display: block;
+          color: var(--text);
+          font-size: 13px;
+          line-height: 1.2;
+          margin-bottom: 4px;
+        }
+
+        .products-scanner-info small {
+          display: block;
+          color: var(--text3);
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .products-scanner-frame {
+          position: relative;
+          min-height: 300px;
+          overflow: hidden;
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          background: #000;
+        }
+
+        .products-scanner-reader {
+          width: 100%;
+          min-height: 300px;
+        }
+
+        .products-scanner-reader :global(video) {
+          width: 100% !important;
+          height: 300px !important;
+          object-fit: cover !important;
+        }
+
+        .products-scanner-loading {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          align-content: center;
+          gap: 10px;
+          background: rgba(0, 0, 0, 0.72);
+          color: white;
+          z-index: 2;
+        }
+
+        .products-scanner-loading p {
+          margin: 0;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .products-scanner-error {
+          display: flex;
+          gap: 8px;
+          align-items: flex-start;
+          border: 1px solid rgba(239, 68, 68, 0.28);
+          border-radius: 13px;
+          background: rgba(239, 68, 68, 0.1);
+          color: var(--danger);
+          padding: 10px 12px;
+          font-size: 12px;
+          line-height: 1.35;
+          font-weight: 800;
+        }
+
+        .products-scanner-note {
+          margin: 0;
+          color: var(--text3);
+          font-size: 12px;
+          line-height: 1.4;
+        }
+
+        .products-sku-input-wrap {
+          display: grid;
+          grid-template-columns: 1fr 42px;
+          gap: 8px;
+          align-items: center;
+        }
+
+        .products-sku-scan-btn {
+          width: 42px;
+          min-width: 42px;
+          height: 38px;
+          padding: 0 !important;
+          justify-content: center;
+        }
+
+        .products-sku-helper {
+          display: block;
+          margin-top: 6px;
+          color: var(--text3);
+          font-size: 11px;
+          line-height: 1.35;
+        }
+
         .products-product-modal-body {
           padding: 16px;
         }
@@ -2352,31 +2545,11 @@ export default function ProductosPage() {
           min-width: 210px;
         }
 
-        .products-reset-order-btn {
-          white-space: nowrap;
-        }
-
         .products-row-actions {
           display: flex;
           align-items: center;
           gap: 5px;
           flex-wrap: wrap;
-        }
-
-        .products-order-actions {
-          display: flex;
-          align-items: center;
-          gap: 2px;
-          padding-right: 4px;
-          margin-right: 2px;
-          border-right: 1px solid var(--border);
-        }
-
-        .products-order-actions .btn {
-          width: 24px;
-          height: 24px;
-          min-height: 24px;
-          padding: 0;
         }
 
         .products-table-card {
@@ -2820,12 +2993,10 @@ export default function ProductosPage() {
           .products-search input,
           .products-filter-select,
           .products-sort-select,
-          .products-reset-order-btn,
           .products-refresh-btn {
             width: 100% !important;
           }
 
-          .products-reset-order-btn,
           .products-refresh-btn {
             justify-content: center;
             height: 36px;
@@ -3033,16 +3204,6 @@ export default function ProductosPage() {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 7px;
-          }
-
-          .products-mobile-actions-with-order {
-            grid-template-columns: 72px 1fr 1fr;
-          }
-
-          .products-mobile-order-actions {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 5px;
           }
 
           .products-mobile-actions button {
@@ -3425,10 +3586,6 @@ export default function ProductosPage() {
 
           .products-mobile-actions {
             grid-template-columns: 1fr 1fr;
-          }
-
-          .products-mobile-actions-with-order {
-            grid-template-columns: 64px 1fr 1fr;
           }
 
           .products-mobile-sheet-grid,

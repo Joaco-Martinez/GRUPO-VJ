@@ -13,7 +13,6 @@ import {
   categoryName,
   fmtMoney,
   normalizeArray,
-  num,
 } from '@/lib/helpers';
 import {
   Layers,
@@ -85,6 +84,43 @@ const EMPTY_PROFIT_CALC = {
 
 const PROFIT_CALCULATOR_STORAGE_KEY = 'grupo-vj-products-profit-calculator';
 const SKU_SCANNER_ELEMENT_ID = 'grupo-vj-sku-scanner';
+
+function num(value: unknown, fallback = 0): number {
+  if (value === null || value === undefined || value === '') return fallback;
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  const raw = String(value)
+    .trim()
+    .replace(/\s/g, '')
+    .replace(/\$/g, '');
+
+  if (!raw) return fallback;
+
+  const hasComma = raw.includes(',');
+  const hasDot = raw.includes('.');
+
+  let normalized = raw;
+
+  if (hasComma && hasDot) {
+    // Formato argentino: 1.234,56 => 1234.56
+    normalized = raw.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    // Decimal con coma: 2500,50 => 2500.50
+    normalized = raw.replace(',', '.');
+  } else if (hasDot) {
+    const isThousandsOnly = /^-?\d{1,3}(\.\d{3})+$/.test(raw);
+
+    // 2.500 debe ser 2500, no 2.5.
+    normalized = isThousandsOnly ? raw.replace(/\./g, '') : raw;
+  }
+
+  const parsed = Number(normalized);
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 function getInitialProfitCalculator() {
   if (typeof window === 'undefined') return EMPTY_PROFIT_CALC;

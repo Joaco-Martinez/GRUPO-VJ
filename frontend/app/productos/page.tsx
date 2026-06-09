@@ -28,10 +28,15 @@ import {
   ImagePlus,
   AlertTriangle,
   CheckCircle2,
+  Calculator,
+  ChevronUp,
+  ChevronDown,
+  ArrowUpDown,
 } from 'lucide-react';
 
 type Modal = 'product-create' | 'product-edit' | 'category' | null;
 type ProductFormStep = 'basico' | 'precios' | 'componentes';
+type ProductSortMode = 'manual' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 type ComponentForm = { componentId: string; quantity: string; quantityKg: string };
 
 type ToastState = {
@@ -73,6 +78,58 @@ const emptyProductForm = {
 };
 
 const PRODUCTS_PAGE_SIZE = 12;
+
+const EMPTY_PROFIT_CALC = {
+  cost: '',
+  minoristPrice: '',
+  wholesalePrice: '',
+};
+
+const PROFIT_CALCULATOR_STORAGE_KEY = 'grupo-vj-products-profit-calculator';
+const PRODUCT_ORDER_STORAGE_KEY = 'grupo-vj-products-custom-order';
+
+function getInitialProfitCalculator() {
+  if (typeof window === 'undefined') return EMPTY_PROFIT_CALC;
+
+  try {
+    const saved = window.localStorage.getItem(PROFIT_CALCULATOR_STORAGE_KEY);
+    if (!saved) return EMPTY_PROFIT_CALC;
+
+    const parsed = JSON.parse(saved) as Partial<typeof EMPTY_PROFIT_CALC>;
+
+    return {
+      cost: String(parsed.cost ?? ''),
+      minoristPrice: String(parsed.minoristPrice ?? ''),
+      wholesalePrice: String(parsed.wholesalePrice ?? ''),
+    };
+  } catch {
+    return EMPTY_PROFIT_CALC;
+  }
+}
+
+function getInitialCustomOrder(): string[] {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const saved = window.localStorage.getItem(PRODUCT_ORDER_STORAGE_KEY);
+    if (!saved) return [];
+
+    const parsed = JSON.parse(saved);
+
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, 'es', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
 
 function getProductPublicPrice(product: Product) {
   return product.saleUnit === 'KG'
@@ -126,18 +183,47 @@ function getProductGrossCost(product: Product): number {
   }, 0);
 }
 
+function getPriceProfit(price: number, cost: number): number {
+  return price - cost;
+}
+
+function getPriceProfitPercent(price: number, cost: number): number | null {
+  if (cost <= 0) return null;
+
+  return (getPriceProfit(price, cost) / cost) * 100;
+}
+
+function getProductMinoristProfit(product: Product): number {
+  return getPriceProfit(getProductPublicPrice(product), getProductGrossCost(product));
+}
+
+function getProductMinoristProfitPercent(product: Product): number | null {
+  return getPriceProfitPercent(getProductPublicPrice(product), getProductGrossCost(product));
+}
+
+function getProductWholesaleProfit(product: Product): number {
+  return getPriceProfit(getProductWholesalePrice(product), getProductGrossCost(product));
+}
+
+function getProductWholesaleProfitPercent(product: Product): number | null {
+  return getPriceProfitPercent(getProductWholesalePrice(product), getProductGrossCost(product));
+}
+
 function getProfit(product: Product): number {
-  return getProductPublicPrice(product) - getProductGrossCost(product);
+  return getProductMinoristProfit(product);
 }
 
 function getProfitPercent(product: Product): number | null {
-  const cost = getProductGrossCost(product);
-  if (cost <= 0) return null;
-
-  return (getProfit(product) / cost) * 100;
+  return getProductMinoristProfitPercent(product);
 }
 
+function formatPercent(value: number | null): string {
+  return value === null ? 'Sin costo' : `${value.toFixed(1)}%`;
+}
 
+function profitColor(value: number): string {
+  return value >= 0 ? 'var(--success)' : 'var(--danger)';
+}
 
 function unitSuffix(product: Product) {
   return product.saleUnit === 'KG' ? '/kg' : '';
@@ -199,6 +285,10 @@ export default function ProductosPage() {
   const [productFormStep, setProductFormStep] = useState<ProductFormStep>('basico');
   const [components, setComponents] = useState<ComponentForm[]>([]);
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
+  const [profitCalc, setProfitCalc] = useState(getInitialProfitCalculator);
+  const [showProfitCalculator, setShowProfitCalculator] = useState(false);
+  const [sortMode, setSortMode] = useState<ProductSortMode>('manual');
+  const [customOrder, setCustomOrder] = useState<string[]>(getInitialCustomOrder);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
@@ -240,6 +330,28 @@ export default function ProductosPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PROFIT_CALCULATOR_STORAGE_KEY, JSON.stringify(profitCalc));
+  }, [profitCalc]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PRODUCT_ORDER_STORAGE_KEY, JSON.stringify(customOrder));
+  }, [customOrder]);
+
+  useEffect(() => {
+    setCustomOrder((prev) => {
+      const existingIds = new Set(products.map((p) => p.id));
+      const orderedExisting = prev.filter((id) => existingIds.has(id));
+      const missingIds = products
+        .map((p) => p.id)
+        .filter((id) => !orderedExisting.includes(id));
+
+      return [...orderedExisting, ...missingIds];
+    });
+  }, [products]);
+
+  useEffect(() => {
     if (productFormStep === 'componentes' && (form.isService === 'true' || form.type !== 'COMPUESTO')) {
       setProductFormStep('basico');
     }
@@ -253,7 +365,7 @@ export default function ProductosPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    return products.filter((p) => {
+    const result = products.filter((p) => {
       const matchesText =
         !q ||
         p.name.toLowerCase().includes(q) ||
@@ -264,7 +376,29 @@ export default function ProductosPage() {
 
       return matchesText && matchesCat;
     });
-  }, [products, search, categoryId]);
+
+    const orderIndex = new Map(customOrder.map((id, index) => [id, index]));
+
+    return [...result].sort((a, b) => {
+      if (sortMode === 'name-asc') return compareText(a.name, b.name);
+      if (sortMode === 'name-desc') return compareText(b.name, a.name);
+
+      if (sortMode === 'category-asc') {
+        const byCategory = compareText(categoryName(a), categoryName(b));
+        return byCategory || compareText(a.name, b.name);
+      }
+
+      if (sortMode === 'category-desc') {
+        const byCategory = compareText(categoryName(b), categoryName(a));
+        return byCategory || compareText(a.name, b.name);
+      }
+
+      const aIndex = orderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = orderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+
+      return aIndex - bIndex || compareText(a.name, b.name);
+    });
+  }, [products, search, categoryId, sortMode, customOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PRODUCTS_PAGE_SIZE));
 
@@ -278,13 +412,36 @@ export default function ProductosPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, categoryId]);
+  }, [search, categoryId, sortMode]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
   }, [currentPage, totalPages]);
+
+  const profitCalculatorResult = useMemo(() => {
+    const cost = num(profitCalc.cost);
+    const minoristPrice = num(profitCalc.minoristPrice);
+    const wholesalePrice = num(profitCalc.wholesalePrice);
+
+    return {
+      cost,
+      minoristProfit: getPriceProfit(minoristPrice, cost),
+      minoristPercent: getPriceProfitPercent(minoristPrice, cost),
+      wholesaleProfit: getPriceProfit(wholesalePrice, cost),
+      wholesalePercent: getPriceProfitPercent(wholesalePrice, cost),
+    };
+  }, [profitCalc]);
+
+  const formCost = num(form.purchasePrice);
+  const formMinoristPrice = form.saleUnit === 'KG' ? num(form.pricePerKg) : num(form.price);
+  const formWholesalePrice =
+    form.saleUnit === 'KG' ? num(form.wholesalePricePerKg) : num(form.wholesalePrice);
+  const formMinoristProfit = getPriceProfit(formMinoristPrice, formCost);
+  const formWholesaleProfit = getPriceProfit(formWholesalePrice, formCost);
+  const formMinoristPercent = getPriceProfitPercent(formMinoristPrice, formCost);
+  const formWholesalePercent = getPriceProfitPercent(formWholesalePrice, formCost);
 
   const resetImage = () => {
     setImageFile(null);
@@ -558,12 +715,57 @@ export default function ProductosPage() {
       prev.map((c, i) => (i === idx ? { ...c, [key]: value } : c))
     );
 
+  const moveProductInCustomOrder = (productId: string, direction: 'up' | 'down') => {
+    setSortMode('manual');
+
+    setCustomOrder((prev) => {
+      const visibleIds = filtered.map((p) => p.id);
+      const currentOrder = [
+        ...prev.filter((id) => visibleIds.includes(id)),
+        ...visibleIds.filter((id) => !prev.includes(id)),
+      ];
+
+      const currentIndex = currentOrder.indexOf(productId);
+      if (currentIndex < 0) return prev;
+
+      const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= currentOrder.length) return prev;
+
+      const nextVisibleOrder = [...currentOrder];
+      const [removed] = nextVisibleOrder.splice(currentIndex, 1);
+      nextVisibleOrder.splice(nextIndex, 0, removed);
+
+      const nextVisibleIndex = new Map(nextVisibleOrder.map((id, index) => [id, index]));
+      const visibleSet = new Set(visibleIds);
+      const untouched = prev.filter((id) => !visibleSet.has(id));
+
+      return [
+        ...nextVisibleOrder.sort((a, b) => (nextVisibleIndex.get(a) ?? 0) - (nextVisibleIndex.get(b) ?? 0)),
+        ...untouched,
+      ];
+    });
+  };
+
+  const resetCustomOrder = () => {
+    setSortMode('manual');
+    setCustomOrder(products.map((p) => p.id));
+  };
+
   return (
     <AppLayout
       title="Productos"
       subtitle="Catálogo empresarial, promos y stock"
       actions={
         <div className="products-actions" style={{ display: 'flex', gap: 8 }}>
+          <button
+            className={`btn btn-secondary btn-sm products-calculator-toggle ${showProfitCalculator ? 'is-active' : ''}`}
+            onClick={() => setShowProfitCalculator((prev) => !prev)}
+            title={showProfitCalculator ? 'Ocultar calculadora' : 'Abrir calculadora'}
+            aria-label={showProfitCalculator ? 'Ocultar calculadora' : 'Abrir calculadora'}
+          >
+            <Calculator size={16} />
+          </button>
+
           <button className="btn btn-primary btn-sm" onClick={openCreate}>
             <Plus size={14} /> Nuevo producto
           </button>
@@ -708,10 +910,112 @@ export default function ProductosPage() {
           ))}
         </select>
 
+        <select
+          className="products-sort-select"
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
+          style={{ width: 230 }}
+          title="Ordenar productos"
+        >
+          <option value="manual">Orden personalizado</option>
+          <option value="name-asc">Nombre A-Z / alfanumérico</option>
+          <option value="name-desc">Nombre Z-A / alfanumérico</option>
+          <option value="category-asc">Categoría A-Z</option>
+          <option value="category-desc">Categoría Z-A</option>
+        </select>
+
+        {sortMode === 'manual' && (
+          <button className="btn btn-secondary btn-sm products-reset-order-btn" onClick={resetCustomOrder}>
+            <ArrowUpDown size={14} /> Reset orden
+          </button>
+        )}
+
         <button className="btn btn-secondary btn-sm products-refresh-btn" onClick={load}>
           <RefreshCcw size={14} /> Actualizar
         </button>
       </div>
+
+      {showProfitCalculator && (
+        <div className="card products-profit-calculator">
+          <div className="products-profit-calculator-head">
+            <div>
+              <b>Calculadora de ganancia</b>
+              <small>
+                La podés usar rápido y cerrarla con la X cuando no la necesites.
+              </small>
+            </div>
+
+            <div className="products-profit-calculator-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setProfitCalc(EMPTY_PROFIT_CALC)}
+              >
+                Limpiar
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowProfitCalculator(false)}
+                title="Ocultar calculadora"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+
+          <div className="products-profit-calculator-grid">
+            <div className="form-group">
+              <label className="form-label">Costo bruto</label>
+              <input
+                type="number"
+                value={profitCalc.cost}
+                onChange={(e) => setProfitCalc((p) => ({ ...p, cost: e.target.value }))}
+                placeholder="Ej: 1000"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Precio minorista</label>
+              <input
+                type="number"
+                value={profitCalc.minoristPrice}
+                onChange={(e) => setProfitCalc((p) => ({ ...p, minoristPrice: e.target.value }))}
+                placeholder="Ej: 1600"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Precio mayorista</label>
+              <input
+                type="number"
+                value={profitCalc.wholesalePrice}
+                onChange={(e) => setProfitCalc((p) => ({ ...p, wholesalePrice: e.target.value }))}
+                placeholder="Ej: 1400"
+              />
+            </div>
+          </div>
+
+          <div className="products-profit-result-grid">
+            <div>
+              <small>Ganancia minorista</small>
+              <strong style={{ color: profitColor(profitCalculatorResult.minoristProfit) }}>
+                {fmtMoney(profitCalculatorResult.minoristProfit)}
+              </strong>
+              <span>{formatPercent(profitCalculatorResult.minoristPercent)}</span>
+            </div>
+
+            <div>
+              <small>Ganancia mayorista</small>
+              <strong style={{ color: profitColor(profitCalculatorResult.wholesaleProfit) }}>
+                {fmtMoney(profitCalculatorResult.wholesaleProfit)}
+              </strong>
+              <span>{formatPercent(profitCalculatorResult.wholesalePercent)}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card products-table-card">
         <div className="table-wrap products-desktop-table">
@@ -727,7 +1031,7 @@ export default function ProductosPage() {
                   <th>Categoría</th>
                   <th>Precios</th>
                   <th>Costo bruto</th>
-                  <th>Ganancia</th>
+                  <th>Ganancias</th>
                   <th>Stock Mayorista</th>
                   <th>Stock Minorista</th>
                   <th>Tipo</th>
@@ -824,22 +1128,22 @@ export default function ProductosPage() {
                     </td>
 
                     <td>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gap: 3,
-                          fontFamily: 'var(--mono)',
-                          fontSize: 12,
-                          color: getProfit(p) >= 0 ? 'var(--success)' : 'var(--danger)',
-                          fontWeight: 800,
-                        }}
-                      >
-                        <span>{fmtMoney(getProfit(p))}</span>
-                        <small style={{ color: 'var(--text3)' }}>
-                          {getProfitPercent(p) === null
-                            ? 'Sin costo'
-                            : `${getProfitPercent(p)!.toFixed(1)}%`}
-                        </small>
+                      <div className="products-profit-cell">
+                        <div>
+                          <small>Min.</small>
+                          <strong style={{ color: profitColor(getProductMinoristProfit(p)) }}>
+                            {fmtMoney(getProductMinoristProfit(p))}
+                          </strong>
+                          <span>{formatPercent(getProductMinoristProfitPercent(p))}</span>
+                        </div>
+
+                        <div>
+                          <small>May.</small>
+                          <strong style={{ color: profitColor(getProductWholesaleProfit(p)) }}>
+                            {fmtMoney(getProductWholesaleProfit(p))}
+                          </strong>
+                          <span>{formatPercent(getProductWholesaleProfitPercent(p))}</span>
+                        </div>
                       </div>
                     </td>
 
@@ -895,10 +1199,31 @@ export default function ProductosPage() {
                     </td>
 
                     <td>
-                      <div style={{ display: 'flex', gap: 6 }}>
+                      <div className="products-row-actions">
+                        {sortMode === 'manual' && (
+                          <div className="products-order-actions">
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => moveProductInCustomOrder(p.id, 'up')}
+                              title="Subir producto"
+                            >
+                              <ChevronUp size={13} />
+                            </button>
+
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => moveProductInCustomOrder(p.id, 'down')}
+                              title="Bajar producto"
+                            >
+                              <ChevronDown size={13} />
+                            </button>
+                          </div>
+                        )}
+
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => openEdit(p)}
+                          title="Editar producto"
                         >
                           <Edit2 size={13} />
                         </button>
@@ -906,6 +1231,7 @@ export default function ProductosPage() {
                         <button
                           className="btn btn-danger btn-sm"
                           onClick={() => deleteProduct(p)}
+                          title="Eliminar producto"
                         >
                           <Trash2 size={13} />
                         </button>
@@ -971,13 +1297,29 @@ export default function ProductosPage() {
 
                   <div className="products-mobile-quick">
                     <div>
-                      <small>Precio</small>
+                      <small>Precio min.</small>
                       <strong>
                         {fmtMoney(getProductPublicPrice(p))}
                         {unitSuffix(p)}
                       </strong>
                     </div>
 
+                    <div>
+                      <small>Gcia. min.</small>
+                      <strong style={{ color: profitColor(getProductMinoristProfit(p)) }}>
+                        {fmtMoney(getProductMinoristProfit(p))}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <small>Gcia. may.</small>
+                      <strong style={{ color: profitColor(getProductWholesaleProfit(p)) }}>
+                        {fmtMoney(getProductWholesaleProfit(p))}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="products-mobile-quick products-mobile-quick-stock">
                     <div>
                       <small>Stock mayorista</small>
                       <strong className={isLowStock ? 'products-danger-text' : ''}>
@@ -989,9 +1331,37 @@ export default function ProductosPage() {
                       <small>Stock minorista</small>
                       <strong>{minoristaStockLabel}</strong>
                     </div>
+
+                    <div>
+                      <small>Precio may.</small>
+                      <strong>
+                        {fmtMoney(getProductWholesalePrice(p))}
+                        {unitSuffix(p)}
+                      </strong>
+                    </div>
                   </div>
 
-                  <div className="products-mobile-actions">
+                  <div className={`products-mobile-actions ${sortMode === 'manual' ? 'products-mobile-actions-with-order' : ''}`}>
+                    {sortMode === 'manual' && (
+                      <div className="products-mobile-order-actions">
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => moveProductInCustomOrder(p.id, 'up')}
+                          title="Subir producto"
+                        >
+                          <ChevronUp size={13} />
+                        </button>
+
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => moveProductInCustomOrder(p.id, 'down')}
+                          title="Bajar producto"
+                        >
+                          <ChevronDown size={13} />
+                        </button>
+                      </div>
+                    )}
+
                     <button className="btn btn-secondary btn-sm" onClick={() => setMobileProductSheet(p)}>
                       Ver más
                     </button>
@@ -1100,12 +1470,22 @@ export default function ProductosPage() {
                   </div>
 
                   <div>
-                    <small>Ganancia</small>
-                    <strong className={getProfit(mobileProductSheet) < 0 ? 'products-danger-text' : ''}>
-                      {fmtMoney(getProfit(mobileProductSheet))}
-                      {getProfitPercent(mobileProductSheet) === null
+                    <small>Ganancia minorista</small>
+                    <strong className={getProductMinoristProfit(mobileProductSheet) < 0 ? 'products-danger-text' : ''}>
+                      {fmtMoney(getProductMinoristProfit(mobileProductSheet))}
+                      {getProductMinoristProfitPercent(mobileProductSheet) === null
                         ? ''
-                        : ` (${getProfitPercent(mobileProductSheet)!.toFixed(1)}%)`}
+                        : ` (${getProductMinoristProfitPercent(mobileProductSheet)!.toFixed(1)}%)`}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <small>Ganancia mayorista</small>
+                    <strong className={getProductWholesaleProfit(mobileProductSheet) < 0 ? 'products-danger-text' : ''}>
+                      {fmtMoney(getProductWholesaleProfit(mobileProductSheet))}
+                      {getProductWholesaleProfitPercent(mobileProductSheet) === null
+                        ? ''
+                        : ` (${getProductWholesaleProfitPercent(mobileProductSheet)!.toFixed(1)}%)`}
                     </strong>
                   </div>
 
@@ -1652,6 +2032,26 @@ export default function ProductosPage() {
                 </div>
               )}
 
+
+
+              <div className="products-form-profit-preview">
+                <div>
+                  <small>Ganancia minorista</small>
+                  <strong style={{ color: profitColor(formMinoristProfit) }}>
+                    {fmtMoney(formMinoristProfit)}
+                  </strong>
+                  <span>{formatPercent(formMinoristPercent)}</span>
+                </div>
+
+                <div>
+                  <small>Ganancia mayorista</small>
+                  <strong style={{ color: profitColor(formWholesaleProfit) }}>
+                    {fmtMoney(formWholesaleProfit)}
+                  </strong>
+                  <span>{formatPercent(formWholesalePercent)}</span>
+                </div>
+              </div>
+
               </section>
 
               <section className={`products-form-section ${productFormStep === 'componentes' ? 'products-form-section-active' : ''}`}>
@@ -1934,6 +2334,51 @@ export default function ProductosPage() {
           flex-shrink: 0;
         }
 
+        .products-calculator-toggle {
+          width: 34px;
+          min-width: 34px;
+          height: 34px;
+          padding: 0 !important;
+          justify-content: center;
+        }
+
+        .products-calculator-toggle.is-active {
+          border-color: var(--accent);
+          color: var(--accent);
+          background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+        }
+
+        .products-sort-select {
+          min-width: 210px;
+        }
+
+        .products-reset-order-btn {
+          white-space: nowrap;
+        }
+
+        .products-row-actions {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          flex-wrap: wrap;
+        }
+
+        .products-order-actions {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          padding-right: 4px;
+          margin-right: 2px;
+          border-right: 1px solid var(--border);
+        }
+
+        .products-order-actions .btn {
+          width: 24px;
+          height: 24px;
+          min-height: 24px;
+          padding: 0;
+        }
+
         .products-table-card {
           min-width: 0;
           overflow: hidden;
@@ -1974,6 +2419,104 @@ export default function ProductosPage() {
 
         .products-danger-text {
           color: var(--danger);
+        }
+
+        .products-profit-calculator {
+          padding: 14px;
+          margin-bottom: 18px;
+          display: grid;
+          gap: 12px;
+        }
+
+        .products-profit-calculator-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .products-profit-calculator-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+
+        .products-profit-calculator-head b {
+          display: block;
+          color: var(--text);
+          font-size: 14px;
+          line-height: 1.2;
+          margin-bottom: 3px;
+        }
+
+        .products-profit-calculator-head small {
+          display: block;
+          color: var(--text3);
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .products-profit-calculator-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .products-profit-result-grid,
+        .products-form-profit-preview {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+
+        .products-profit-result-grid > div,
+        .products-form-profit-preview > div {
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          background: var(--surface2);
+          padding: 10px 12px;
+          min-width: 0;
+        }
+
+        .products-profit-result-grid small,
+        .products-form-profit-preview small,
+        .products-profit-cell small {
+          display: block;
+          color: var(--text3);
+          font-size: 10px;
+          font-weight: 900;
+          line-height: 1.15;
+          margin-bottom: 3px;
+        }
+
+        .products-profit-result-grid strong,
+        .products-form-profit-preview strong,
+        .products-profit-cell strong {
+          display: block;
+          font-family: var(--mono);
+          font-size: 13px;
+          line-height: 1.15;
+          font-weight: 900;
+          overflow-wrap: anywhere;
+        }
+
+        .products-profit-result-grid span,
+        .products-form-profit-preview span,
+        .products-profit-cell span {
+          display: block;
+          margin-top: 3px;
+          color: var(--text3);
+          font-family: var(--mono);
+          font-size: 11px;
+          line-height: 1.15;
+        }
+
+        .products-profit-cell {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 6px;
+          min-width: 0;
         }
 
 
@@ -2078,7 +2621,7 @@ export default function ProductosPage() {
 
           .products-desktop-table th:nth-child(1),
           .products-desktop-table td:nth-child(1) {
-            width: 16%;
+            width: 15%;
           }
 
           .products-desktop-table th:nth-child(2),
@@ -2092,10 +2635,13 @@ export default function ProductosPage() {
           }
 
           .products-desktop-table th:nth-child(4),
-          .products-desktop-table td:nth-child(4),
+          .products-desktop-table td:nth-child(4) {
+            width: 8%;
+          }
+
           .products-desktop-table th:nth-child(5),
           .products-desktop-table td:nth-child(5) {
-            width: 9%;
+            width: 11%;
           }
 
           .products-desktop-table th:nth-child(6),
@@ -2112,12 +2658,12 @@ export default function ProductosPage() {
 
           .products-desktop-table th:nth-child(9),
           .products-desktop-table td:nth-child(9) {
-            width: 13%;
+            width: 8%;
           }
 
           .products-desktop-table th:nth-child(10),
           .products-desktop-table td:nth-child(10) {
-            width: 5%;
+            width: 9%;
           }
         }
 
@@ -2175,13 +2721,19 @@ export default function ProductosPage() {
           .products-actions {
             width: 100%;
             display: grid !important;
-            grid-template-columns: 1fr;
+            grid-template-columns: 44px 1fr;
             gap: 8px !important;
           }
 
           .products-actions button {
             width: 100%;
             justify-content: center;
+          }
+
+          .products-calculator-toggle {
+            width: 44px;
+            min-width: 44px;
+            height: 36px;
           }
 
           .products-toast {
@@ -2232,6 +2784,34 @@ export default function ProductosPage() {
             margin-bottom: 10px !important;
           }
 
+          .products-profit-calculator {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 18px;
+          }
+
+          .products-profit-calculator-head {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .products-profit-calculator-actions {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr auto;
+          }
+
+          .products-profit-calculator-actions .btn:first-child {
+            justify-content: center;
+          }
+
+          .products-profit-calculator-grid,
+          .products-profit-result-grid,
+          .products-form-profit-preview {
+            grid-template-columns: 1fr !important;
+            gap: 8px;
+          }
+
           .products-search {
             min-width: 0 !important;
             width: 100%;
@@ -2239,17 +2819,21 @@ export default function ProductosPage() {
 
           .products-search input,
           .products-filter-select,
+          .products-sort-select,
+          .products-reset-order-btn,
           .products-refresh-btn {
             width: 100% !important;
           }
 
+          .products-reset-order-btn,
           .products-refresh-btn {
             justify-content: center;
             height: 36px;
           }
 
           .products-search input,
-          .products-filter-select {
+          .products-filter-select,
+          .products-sort-select {
             min-height: 36px;
             height: 36px;
             font-size: 13px;
@@ -2449,6 +3033,16 @@ export default function ProductosPage() {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 7px;
+          }
+
+          .products-mobile-actions-with-order {
+            grid-template-columns: 72px 1fr 1fr;
+          }
+
+          .products-mobile-order-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
           }
 
           .products-mobile-actions button {
@@ -2831,6 +3425,10 @@ export default function ProductosPage() {
 
           .products-mobile-actions {
             grid-template-columns: 1fr 1fr;
+          }
+
+          .products-mobile-actions-with-order {
+            grid-template-columns: 64px 1fr 1fr;
           }
 
           .products-mobile-sheet-grid,

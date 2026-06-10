@@ -9,8 +9,9 @@ import {
   useMemo,
   useState,
 } from "react";
+import axios from "axios";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 type ShopUser = {
   id: string;
@@ -39,90 +40,45 @@ type LoginInput = {
 
 type ShopAuthContextValue = {
   user: ShopUser | null;
-  loading: boolean;
+  client: ShopUser["client"] | null;
   isLoggedIn: boolean;
-  refreshUser: () => Promise<ShopUser | null>;
-  login: (data: LoginInput) => Promise<ShopUser | null>;
+  loading: boolean;
+  login: (data: LoginInput) => Promise<ShopUser>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<ShopUser | null>;
 };
 
 const ShopAuthContext = createContext<ShopAuthContextValue | null>(null);
 
-function normalizeUser(data: any): ShopUser | null {
-  if (!data) return null;
+const api = axios.create({
+  baseURL: API_URL,
+  withCredentials: true,
+});
 
-  if (data.id && data.email) return data;
+function getApiMessage(error: unknown, fallback: string) {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as
+      | {
+          message?: string;
+          error?: string;
+        }
+      | undefined;
 
-  if (data.user?.id && data.user?.email) return data.user;
-
-  if (data.data?.id && data.data?.email) return data.data;
-
-  return null;
-}
-
-function getErrorMessage(data: any, fallback: string) {
-  return data?.message || data?.error || fallback;
-}
-
-async function fetchCurrentUser(): Promise<ShopUser | null> {
-  try {
-    const res = await fetch(`${API_URL}/auth/me`, {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    });
-
-    if (!res.ok) return null;
-
-    const data = await res.json().catch(() => null);
-
-    const user = normalizeUser(data);
-
-    if (!user) return null;
-
-    // Seguridad: este contexto es solo para tienda
-    if (user.role && user.role !== "CLIENTE") {
-      return null;
-    }
-
-    return user;
-  } catch {
-    return null;
-  }
-}
-
-async function loginRequest(input: LoginInput) {
-  const res = await fetch(`${API_URL}/auth/login`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      email: input.email.trim().toLowerCase(),
-      password: input.password,
-    }),
-  });
-
-  const data = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    throw new Error(getErrorMessage(data, "No se pudo iniciar sesión"));
+    return data?.message || data?.error || fallback;
   }
 
-  return data;
+  if (error instanceof Error && error.message) return error.message;
+
+  return fallback;
 }
 
-async function logoutRequest() {
-  const res = await fetch(`${API_URL}/auth/logout`, {
-    method: "POST",
-    credentials: "include",
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new Error(getErrorMessage(data, "No se pudo cerrar sesión"));
-  }
+function extractUser(data: any): ShopUser | null {
+  return (
+    data?.content?.user ??
+    data?.content ??
+    data?.user ??
+    null
+  );
 }
 
 export function ShopAuthProvider({ children }: { children: ReactNode }) {
@@ -130,67 +86,94 @@ export function ShopAuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refreshUser = useCallback(async () => {
-    const currentUser = await fetchCurrentUser();
-    setUser(currentUser);
-    return currentUser;
-  }, []);
+    try {
+      const res = await api.get("/auth/me");
 
-  const login = useCallback(
-    async (data: LoginInput) => {
-      await loginRequest(data);
+      const currentUser = extractUser(res.data);
 
-      const currentUser = await refreshUser();
-
-      if (!currentUser) {
-        throw new Error("No se pudo obtener la sesión del cliente");
+      if (!currentUser?.id) {
+        setUser(null);
+        return null;
       }
 
+      setUser(currentUser);
       return currentUser;
-    },
-    [refreshUser]
-  );
+    } catch {
+      setUser(null);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      try {
+        const res = await api.get("/auth/me");
+
+        if (!mounted) return;
+
+        const currentUser = extractUser(res.data);
+
+        if (currentUser?.id) {
+          setUser(currentUser);
+        } else {
+          setUser(null);
+        }
+      } catch {
+        if (mounted) setUser(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const login = useCallback(async (input: LoginInput) => {
+    try {
+      const res = await api.post("/auth/login", {
+        email: input.email,
+        password: input.password,
+      });
+
+      const loggedUser = extractUser(res.data);
+
+      if (!loggedUser?.id) {
+        throw new Error("El login fue correcto, pero no se pudo leer el usuario");
+      }
+
+      setUser(loggedUser);
+
+      return loggedUser;
+    } catch (error) {
+      throw new Error(getApiMessage(error, "No se pudo iniciar sesión"));
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     try {
-      await logoutRequest();
-    } catch {
-      // Aunque falle el backend, limpiamos el estado local.
+      await api.post("/auth/logout");
     } finally {
       setUser(null);
     }
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-
-    async function init() {
-      setLoading(true);
-
-      const currentUser = await fetchCurrentUser();
-
-      if (!alive) return;
-
-      setUser(currentUser);
-      setLoading(false);
-    }
-
-    init();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const value = useMemo<ShopAuthContextValue>(
     () => ({
       user,
+      client: user?.client ?? null,
+      isLoggedIn: Boolean(user?.id),
       loading,
-      isLoggedIn: Boolean(user),
-      refreshUser,
       login,
       logout,
+      refreshUser,
     }),
-    [user, loading, refreshUser, login, logout]
+    [user, loading, login, logout, refreshUser]
   );
 
   return (

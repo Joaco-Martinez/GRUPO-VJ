@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -54,6 +56,7 @@ const methods: PaymentMethod[] = [
 
 type StockLocation = "LOCAL" | "DEPOSITO";
 type DeliveryMode = "PICKUP" | "LOCAL_DELIVERY";
+type ProductSortMode = "default" | "name-asc" | "name-desc" | "category-asc" | "category-desc";
 
 type DeliveryCalculation = {
   distanceKm: number;
@@ -94,6 +97,13 @@ function normalizeText(value?: string | null) {
     .toUpperCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function compareText(a?: string | null, b?: string | null) {
+  return String(a ?? "").localeCompare(String(b ?? ""), "es", {
+    numeric: true,
+    sensitivity: "base",
+  });
 }
 
 function isDeliveryProduct(product?: Product | null) {
@@ -289,12 +299,13 @@ export default function POSPage() {
 
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [sortMode, setSortMode] = useState<ProductSortMode>("default");
   const [clientId, setClientId] = useState("");
   const [stockLocation, setStockLocation] = useState<StockLocation>("LOCAL");
 
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("PICKUP");
   const [businessLocationId, setBusinessLocationId] = useState("");
-  const [deliveryPricePerKm, setDeliveryPricePerKm] = useState("8000");
+  const [deliveryPricePerKm, setDeliveryPricePerKm] = useState("618");
   const [deliveryCalculation, setDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
   const [calculatingDelivery, setCalculatingDelivery] = useState(false);
 
@@ -405,22 +416,43 @@ export default function POSPage() {
     selectedClient?.category === "Mayorista" ? "wholesalePrice" : "price";
 
   const filtered = useMemo(() => {
-    return products.filter((p) => {
+    const q = search.trim().toLowerCase();
+
+    const result = products.filter((p) => {
       if (p.isService) return false;
       if (isDeliveryProduct(p)) return false;
 
-      const q = search.toLowerCase();
-
       return (
-        (!q || p.name.toLowerCase().includes(q) || String(p.sku ?? "").toLowerCase().includes(q)) &&
+        (!q ||
+          p.name.toLowerCase().includes(q) ||
+          String(p.sku ?? "").toLowerCase().includes(q)) &&
         (!categoryId || p.categoryId === categoryId)
       );
     });
-  }, [products, search, categoryId]);
+
+    if (sortMode === "default") return result;
+
+    return [...result].sort((a, b) => {
+      if (sortMode === "name-asc") return compareText(a.name, b.name);
+      if (sortMode === "name-desc") return compareText(b.name, a.name);
+
+      if (sortMode === "category-asc") {
+        const byCategory = compareText(categoryName(a), categoryName(b));
+        return byCategory || compareText(a.name, b.name);
+      }
+
+      if (sortMode === "category-desc") {
+        const byCategory = compareText(categoryName(b), categoryName(a));
+        return byCategory || compareText(a.name, b.name);
+      }
+
+      return 0;
+    });
+  }, [products, search, categoryId, sortMode]);
 
   useEffect(() => {
     setVisibleCount(36);
-  }, [search, categoryId, stockLocation]);
+  }, [search, categoryId, sortMode, stockLocation]);
 
   const visibleProducts = useMemo(
     () => filtered.slice(0, visibleCount),
@@ -1175,6 +1207,19 @@ export default function POSPage() {
               </select>
 
               <select
+                className="pos-filter pos-sort-filter"
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
+                title="Ordenar productos"
+              >
+                <option value="default">Orden original</option>
+                <option value="name-asc">Nombre A-Z</option>
+                <option value="name-desc">Nombre Z-A</option>
+                <option value="category-asc">Categoría A-Z</option>
+                <option value="category-desc">Categoría Z-A</option>
+              </select>
+
+              <select
                 className="pos-filter"
                 value={stockLocation}
                 onChange={(e) => setStockLocation(e.target.value as StockLocation)}
@@ -1443,6 +1488,20 @@ export default function POSPage() {
                   ))}
                 </select>
               </label>
+
+              <label className="pos-sort-mobile-field">
+                <span>Orden</span>
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
+                >
+                  <option value="default">Original</option>
+                  <option value="name-asc">A-Z</option>
+                  <option value="name-desc">Z-A</option>
+                  <option value="category-asc">Categoría A-Z</option>
+                  <option value="category-desc">Categoría Z-A</option>
+                </select>
+              </label>
             </div>
 
             <div className="pos-category-strip">
@@ -1677,6 +1736,7 @@ export default function POSPage() {
         .pos-search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text3); }
         .pos-search input { padding-left: 34px; width: 100%; }
         .pos-filter { width: 220px; }
+        .pos-sort-filter { width: 185px; }
         .pos-scan-desktop-btn, .pos-refresh-btn { height: 42px; white-space: nowrap; }
         .pos-products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
         .pos-product-card { min-height: 335px; padding: 12px; text-align: left; cursor: pointer; overflow: hidden; display: grid; gap: 8px; color: var(--text); }
@@ -1736,6 +1796,7 @@ export default function POSPage() {
         .pos-searchbox button, .pos-search-scan-btn { border: 0; background: var(--surface2); color: var(--text2); border-radius: 999px; width: 30px; height: 30px; display: grid; place-items: center; }
         .pos-search-scan-btn { color: var(--accent) !important; }
         .pos-control-grid { display: grid; grid-template-columns: .82fr 1.18fr; gap: 8px; margin-top: 8px; }
+        .pos-sort-mobile-field { grid-column: 1 / -1; }
         .pos-control-grid label, .pos-option-body label { display: grid; gap: 5px; min-width: 0; }
         .pos-control-grid span, .pos-option-body label > span { color: var(--text3); font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
         .pos-control-grid select, .pos-option-body select, .pos-option-body input, .pos-payment-line input, .pos-payment-line select, .pos-kg-input input { min-width: 0; width: 100%; height: 42px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }

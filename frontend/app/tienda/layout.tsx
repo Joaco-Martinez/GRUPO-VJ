@@ -1,61 +1,79 @@
 import type { Metadata } from 'next';
-import { ShopAuthProvider } from "../../context/ShopAuthContext";
+import { ShopAuthProvider } from '../../context/ShopAuthContext';
+
 const siteUrl = 'https://www.grupovj.com.ar';
 
 export const metadata: Metadata = {
-  title: 'Grupo VJ | Tienda de bebidas en Córdoba',
+  metadataBase: new URL(siteUrl),
+
+  title: {
+    default: 'Grupo VJ | Bebidas mayoristas y minoristas en Córdoba',
+    template: '%s | Grupo VJ',
+  },
 
   description:
-    'Tienda online de Grupo VJ. Comprá bebidas, combos, gaseosas, cervezas, fernet, energizantes y más. Consultá precios, stock disponible y opciones de compra.',
+    'Grupo VJ es una tienda y distribuidora de bebidas en Córdoba. Venta mayorista y minorista de fernet, cervezas, vinos, gaseosas, energizantes, combos y más productos para comercios y clientes particulares.',
+
+  applicationName: 'Grupo VJ',
 
   keywords: [
     'Grupo VJ',
     'Grupo VJ Córdoba',
     'Grupo VJ bebidas',
     'tienda Grupo VJ',
-    'tienda de bebidas',
+    'tienda de bebidas en Córdoba',
     'bebidas Córdoba',
-    'comprar bebidas online',
+    'bebidas mayoristas',
+    'bebidas minoristas',
     'mayorista de bebidas',
     'minorista de bebidas',
     'distribuidora de bebidas',
+    'venta de bebidas',
+    'bebidas para comercios',
+    'bebidas para eventos',
     'fernet',
-    'cerveza',
     'cervezas',
+    'vinos',
     'gaseosas',
     'energizantes',
     'combos de bebidas',
-    'stock de bebidas',
+    'bebidas en Argentina',
   ],
 
+  authors: [{ name: 'Grupo VJ' }],
+  creator: 'Grupo VJ',
+  publisher: 'Grupo VJ',
+
+  category: 'Tienda de bebidas',
+
   alternates: {
-    canonical: `${siteUrl}/tienda`,
+    canonical: '/tienda',
   },
 
   openGraph: {
     type: 'website',
     locale: 'es_AR',
-    url: `${siteUrl}/tienda`,
+    url: '/tienda',
     siteName: 'Grupo VJ',
-    title: 'Grupo VJ | Tienda de bebidas en Córdoba',
+    title: 'Grupo VJ | Bebidas mayoristas y minoristas en Córdoba',
     description:
-      'Comprá bebidas, combos, gaseosas, cervezas, fernet, energizantes y más en Grupo VJ. Consultá precios y stock disponible.',
+      'Tienda y distribuidora de bebidas en Córdoba. Venta mayorista y minorista para comercios, eventos y clientes particulares.',
     images: [
       {
-        url: `${siteUrl}/favicon.ico`,
-        width: 64,
-        height: 64,
-        alt: 'Grupo VJ',
+        url: '/logo-vj-white-transparent.png',
+        width: 512,
+        height: 512,
+        alt: 'Logo de Grupo VJ',
       },
     ],
   },
 
   twitter: {
     card: 'summary',
-    title: 'Grupo VJ | Tienda de bebidas en Córdoba',
+    title: 'Grupo VJ | Bebidas mayoristas y minoristas en Córdoba',
     description:
-      'Tienda online de Grupo VJ. Comprá bebidas, combos y productos con stock actualizado.',
-    images: [`${siteUrl}/favicon.ico`],
+      'Venta mayorista y minorista de bebidas en Córdoba para comercios, eventos y clientes particulares.',
+    images: ['/logo-vj-white-transparent.png'],
   },
 
   robots: {
@@ -65,7 +83,17 @@ export const metadata: Metadata = {
       index: true,
       follow: true,
       'max-image-preview': 'large',
-      'max-snippet': -1,
+
+      /**
+       * IMPORTANTE:
+       * Esto limita cuánto texto puede usar Google como snippet.
+       * No garantiza al 100% que nunca muestre precios, pero ayuda.
+       *
+       * Si querés que Google pueda mostrar una descripción más larga,
+       * podés volverlo a -1.
+       */
+      'max-snippet': 160,
+
       'max-video-preview': -1,
     },
   },
@@ -79,11 +107,17 @@ export default function TiendaLayout({
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Store',
+    '@id': `${siteUrl}/tienda#store`,
     name: 'Grupo VJ',
+    alternateName: 'Grupo VJ Bebidas',
     url: `${siteUrl}/tienda`,
     description:
-      'Tienda online de Grupo VJ. Venta de bebidas, combos, gaseosas, cervezas, fernet, energizantes y más.',
-    image: `${siteUrl}/favicon.ico`,
+      'Tienda y distribuidora de bebidas en Córdoba con venta mayorista y minorista para comercios, eventos y clientes particulares.',
+    image: `${siteUrl}/logo-vj-white-transparent.png`,
+    logo: `${siteUrl}/logo-vj-white-transparent.png`,
+
+    slogan: 'Bebidas mayoristas y minoristas en Córdoba',
+
     address: {
       '@type': 'PostalAddress',
       streetAddress: 'Paso de los Andes 893',
@@ -91,10 +125,52 @@ export default function TiendaLayout({
       addressRegion: 'Córdoba',
       addressCountry: 'AR',
     },
-    areaServed: {
-      '@type': 'Country',
-      name: 'Argentina',
-    },
+
+    areaServed: [
+      {
+        '@type': 'AdministrativeArea',
+        name: 'Córdoba',
+      },
+      {
+        '@type': 'Country',
+        name: 'Argentina',
+      },
+    ],
+
+    knowsAbout: [
+      'Venta mayorista de bebidas',
+      'Venta minorista de bebidas',
+      'Distribución de bebidas',
+      'Bebidas para comercios',
+      'Bebidas para eventos',
+      'Fernet',
+      'Cervezas',
+      'Vinos',
+      'Gaseosas',
+      'Energizantes',
+      'Combos de bebidas',
+    ],
+
+    makesOffer: [
+      {
+        '@type': 'Offer',
+        name: 'Venta mayorista de bebidas',
+        itemOffered: {
+          '@type': 'Product',
+          name: 'Bebidas para comercios',
+          category: 'Bebidas',
+        },
+      },
+      {
+        '@type': 'Offer',
+        name: 'Venta minorista de bebidas',
+        itemOffered: {
+          '@type': 'Product',
+          name: 'Bebidas para clientes particulares',
+          category: 'Bebidas',
+        },
+      },
+    ],
   };
 
   return (
@@ -105,6 +181,7 @@ export default function TiendaLayout({
           __html: JSON.stringify(jsonLd),
         }}
       />
+
       <ShopAuthProvider>{children}</ShopAuthProvider>
     </>
   );

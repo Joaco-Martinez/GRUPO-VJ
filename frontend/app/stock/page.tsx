@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
@@ -10,7 +10,10 @@ import {
   ArrowDownCircle,
   ArrowLeftRight,
   ArrowUpCircle,
+  ArrowUpDown,
   BarChart2,
+  Camera,
+  ScanBarcode,
   Search,
   X,
 } from "lucide-react";
@@ -18,6 +21,8 @@ import toast from "react-hot-toast";
 
 type StockMode = "ADD" | "TRANSFER";
 type MobileTab = "stock" | "movements";
+type SortKey = "category" | "product" | "sku";
+type SortDirection = "asc" | "desc";
 
 type StockForm = {
   productId: string;
@@ -41,6 +46,7 @@ const emptyForm: StockForm = {
 
 const MOBILE_STOCK_PAGE_SIZE = 8;
 const MOBILE_MOVEMENTS_PAGE_SIZE = 12;
+const STOCK_SKU_SCANNER_ELEMENT_ID = "grupo-vj-stock-sku-scanner";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return (
@@ -226,6 +232,35 @@ function movementLocationLabel(location?: MovementLocation | null) {
   return "—";
 }
 
+function getProductCategoryLabel(product: Product) {
+  const p = product as Product & {
+    category?: { name?: string | null; nombre?: string | null } | string | null;
+    categoryName?: string | null;
+    categorySlug?: string | null;
+  };
+
+  if (typeof p.category === "string" && p.category.trim()) return p.category;
+
+  if (p.category && typeof p.category === "object") {
+    return p.category.name ?? p.category.nombre ?? "Sin categoría";
+  }
+
+  return p.categoryName ?? p.categorySlug ?? "Sin categoría";
+}
+
+function normalizeSearch(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+const alphaSorter = new Intl.Collator("es-AR", {
+  numeric: true,
+  sensitivity: "base",
+});
+
 export default function StockPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
@@ -237,6 +272,16 @@ export default function StockPage() {
   const [mobileTab, setMobileTab] = useState<MobileTab>("stock");
   const [mobileStockPage, setMobileStockPage] = useState(1);
   const [mobileMovementsPage, setMobileMovementsPage] = useState(1);
+  const [productSearch, setProductSearch] = useState("");
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("product");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  const scannerInstanceRef = useRef<any>(null);
+  const scannerHandledRef = useRef(false);
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -286,18 +331,42 @@ export default function StockPage() {
     };
   }, []);
 
-  const filtered = useMemo(
-    () =>
-      products.filter(
-        (p) =>
-          !search ||
-          p.name.toLowerCase().includes(search.toLowerCase()) ||
-          String(p.sku ?? "")
-            .toLowerCase()
-            .includes(search.toLowerCase()),
-      ),
-    [products, search],
-  );
+  const filtered = useMemo(() => {
+    const q = normalizeSearch(search);
+
+    const result = products.filter((p) => {
+      if (!q) return true;
+
+      return (
+        normalizeSearch(p.name).includes(q) ||
+        normalizeSearch(String(p.sku ?? "")).includes(q) ||
+        normalizeSearch(getProductCategoryLabel(p)).includes(q)
+      );
+    });
+
+    return [...result].sort((a, b) => {
+      let aValue = "";
+      let bValue = "";
+
+      if (sortKey === "product") {
+        aValue = a.name;
+        bValue = b.name;
+      }
+
+      if (sortKey === "sku") {
+        aValue = String(a.sku ?? "");
+        bValue = String(b.sku ?? "");
+      }
+
+      if (sortKey === "category") {
+        aValue = getProductCategoryLabel(a);
+        bValue = getProductCategoryLabel(b);
+      }
+
+      const order = alphaSorter.compare(aValue, bValue);
+      return sortDirection === "asc" ? order : -order;
+    });
+  }, [products, search, sortKey, sortDirection]);
 
   const mobileStockTotalPages = Math.max(
     1,
@@ -339,6 +408,201 @@ export default function StockPage() {
 
 
   const selected = products.find((p) => p.id === form.productId);
+
+  const stockProducts = useMemo(
+    () =>
+      products
+        .filter((p) => p.type === "SIMPLE" && !p.isService)
+        .sort((a, b) => alphaSorter.compare(a.name, b.name)),
+    [products],
+  );
+
+  const productSearchResults = useMemo(() => {
+    const q = normalizeSearch(productSearch);
+
+    // No mostramos nada si el usuario todavía no escribió.
+    // Así evitamos que aparezca el selector apenas entra a la página.
+    if (!q) return [];
+
+    return stockProducts
+      .filter((p) => {
+        return (
+          normalizeSearch(p.name).includes(q) ||
+          normalizeSearch(String(p.sku ?? "")).includes(q) ||
+          normalizeSearch(getProductCategoryLabel(p)).includes(q)
+        );
+      })
+      .slice(0, 12);
+  }, [productSearch, stockProducts]);
+
+  const selectProduct = (product: Product) => {
+    setForm((prev) => ({
+      ...prev,
+      productId: product.id,
+      quantity: "",
+      quantityKg: "",
+    }));
+
+    setProductSearch(`${product.sku ? `${product.sku} · ` : ""}${product.name}`);
+    setProductPickerOpen(false);
+  };
+
+  const toggleSort = (key: SortKey) => {
+    setSortKey((prevKey) => {
+      if (prevKey !== key) {
+        setSortDirection("asc");
+        return key;
+      }
+
+      setSortDirection((prevDirection) =>
+        prevDirection === "asc" ? "desc" : "asc",
+      );
+
+      return prevKey;
+    });
+  };
+
+  const sortLabel = (key: SortKey) => {
+    if (sortKey !== key) return "";
+    return sortDirection === "asc" ? " ↑" : " ↓";
+  };
+
+  const handleScannedSku = (value: string) => {
+    const scanned = value.trim();
+
+    if (!scanned) return;
+
+    const found = stockProducts.find(
+      (p) => normalizeSearch(String(p.sku ?? "")) === normalizeSearch(scanned),
+    );
+
+    if (!found) {
+      toast.error(`No encontré ningún producto con SKU ${scanned}`);
+      setProductSearch(scanned);
+      setProductPickerOpen(true);
+      return;
+    }
+
+    selectProduct(found);
+    toast.success(`Producto seleccionado: ${found.name}`);
+  };
+
+  const stopScanner = async () => {
+    const scanner = scannerInstanceRef.current;
+
+    scannerHandledRef.current = false;
+
+    if (!scanner) return;
+
+    try {
+      const state = scanner.getState?.();
+
+      if (state === 2) {
+        await scanner.stop();
+      }
+    } catch (e) {
+      console.warn("No se pudo detener el scanner", e);
+    }
+
+    try {
+      await scanner.clear?.();
+    } catch {
+      // html5-qrcode puede tirar error si el contenedor ya fue desmontado.
+    }
+
+    scannerInstanceRef.current = null;
+  };
+
+  const closeScanner = async () => {
+    await stopScanner();
+    setScannerError("");
+    setScannerLoading(false);
+    setScannerOpen(false);
+  };
+
+  const openScanner = () => {
+    setScannerError("");
+    setScannerLoading(true);
+    setProductPickerOpen(false);
+    scannerHandledRef.current = false;
+    setScannerOpen(true);
+  };
+
+  useEffect(() => {
+    if (!scannerOpen) return;
+
+    let cancelled = false;
+
+    const startScanner = async () => {
+      setScannerLoading(true);
+      setScannerError("");
+
+      try {
+        if (typeof window === "undefined") return;
+
+        const { Html5Qrcode } = await import("html5-qrcode");
+
+        if (cancelled) return;
+
+        const scanner = new Html5Qrcode(STOCK_SKU_SCANNER_ELEMENT_ID);
+        scannerInstanceRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+              const size = Math.floor(
+                Math.min(viewfinderWidth, viewfinderHeight) * 0.72,
+              );
+
+              return {
+                width: Math.max(220, Math.min(size, 340)),
+                height: Math.max(120, Math.min(Math.floor(size * 0.55), 220)),
+              };
+            },
+            aspectRatio: 1.777,
+          },
+          async (decodedText: string) => {
+            const sku = decodedText.trim();
+
+            if (!sku || scannerHandledRef.current) return;
+
+            scannerHandledRef.current = true;
+
+            handleScannedSku(sku);
+            await closeScanner();
+          },
+          () => {
+            // Ignoramos lecturas fallidas mientras la cámara sigue buscando.
+          },
+        );
+
+        if (!cancelled) {
+          setScannerLoading(false);
+        }
+      } catch (e: any) {
+        console.error(e);
+
+        if (!cancelled) {
+          setScannerLoading(false);
+          setScannerError(
+            e?.message?.includes("Permission")
+              ? "No se pudo acceder a la cámara. Revisá los permisos del navegador."
+              : "No se pudo iniciar la cámara. Probá con HTTPS, otro navegador o buscá el SKU manualmente.",
+          );
+        }
+      }
+    };
+
+    const timeoutId = window.setTimeout(startScanner, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      void stopScanner();
+    };
+  }, [scannerOpen, stockProducts]);
 
   const save = async () => {
     if (!selected) {
@@ -404,6 +668,8 @@ export default function StockPage() {
       }
 
       setForm(emptyForm);
+      setProductSearch("");
+      setProductPickerOpen(false);
       setMobileSheetOpen(false);
 
       toast.success(
@@ -431,34 +697,106 @@ export default function StockPage() {
         alignItems: "end",
       }}
     >
-      <div>
-        <label className="form-label">Producto</label>
+      <div className="stock-product-picker">
+        <label className="form-label">Producto / SKU</label>
 
-        <select
-          value={form.productId}
-          onChange={(e) =>
-            setForm((p) => ({ ...p, productId: e.target.value }))
-          }
-          disabled={saving}
-        >
-          <option value="">Seleccionar...</option>
+        <div className="stock-product-search-row">
+          <div className="stock-product-search-box">
+            <Search size={14} />
 
-          {products
-            .filter((p) => p.type === "SIMPLE" && !p.isService)
-            .map((p) => {
+            <input
+              value={productSearch}
+              onFocus={() => {
+                setProductPickerOpen(normalizeSearch(productSearch).length > 0);
+              }}
+              onChange={(e) => {
+                const value = e.target.value;
+
+                setProductSearch(value);
+                setProductPickerOpen(normalizeSearch(value).length > 0);
+                setForm((prev) => ({ ...prev, productId: "" }));
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setProductPickerOpen(false);
+              }}
+              placeholder="Buscar por nombre, SKU o categoría..."
+              disabled={saving}
+            />
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-secondary stock-scan-btn"
+            onClick={openScanner}
+            disabled={saving}
+            title="Escanear SKU"
+          >
+            <ScanBarcode size={15} />
+            Escanear
+          </button>
+        </div>
+
+        {productPickerOpen && !selected && productSearchResults.length > 0 && (
+          <div className="stock-product-results">
+            {productSearchResults.map((p) => {
               const local = getProductLocalStock(p);
               const deposito = getProductDepositoStock(p);
               const unit = getStockUnit(p);
 
               return (
-                <option key={p.id} value={p.id}>
-                  {p.name} · Mayorista: {local}
-                  {unit} · Minorista: {deposito}
-                  {unit}
-                </option>
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => selectProduct(p)}
+                  disabled={saving}
+                >
+                  <span>
+                    <b>{p.name}</b>
+                    <small>
+                      {p.sku || "Sin SKU"} · {getProductCategoryLabel(p)}
+                    </small>
+                  </span>
+
+                  <em>
+                    May. {local}
+                    {unit} · Min. {deposito}
+                    {unit}
+                  </em>
+                </button>
               );
             })}
-        </select>
+          </div>
+        )}
+
+        {productPickerOpen && productSearch && !selected && productSearchResults.length === 0 && (
+          <div className="stock-product-results stock-product-results-empty">
+            <p>No encontré productos con ese nombre, SKU o categoría.</p>
+          </div>
+        )}
+
+        {selected && (
+          <div className="stock-selected-product">
+            <div>
+              <b>{selected.name}</b>
+              <small>
+                {selected.sku || "Sin SKU"} · {getProductCategoryLabel(selected)}
+              </small>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setForm((prev) => ({ ...prev, productId: "" }));
+                setProductSearch("");
+                setProductPickerOpen(false);
+              }}
+              disabled={saving}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div>
@@ -660,7 +998,7 @@ export default function StockPage() {
             setSearch(e.target.value);
             setMobileStockPage(1);
           }}
-          placeholder="Buscar producto..."
+          placeholder="Buscar producto, SKU o categoría..."
           style={{ paddingLeft: 34 }}
         />
       </div>
@@ -678,8 +1016,39 @@ export default function StockPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Producto</th>
-                  <th>SKU</th>
+                  <th>
+                    <button
+                      type="button"
+                      className="stock-sort-th"
+                      onClick={() => toggleSort("product")}
+                    >
+                      Producto{sortLabel("product")}
+                      <ArrowUpDown size={13} />
+                    </button>
+                  </th>
+
+                  <th>
+                    <button
+                      type="button"
+                      className="stock-sort-th"
+                      onClick={() => toggleSort("sku")}
+                    >
+                      SKU{sortLabel("sku")}
+                      <ArrowUpDown size={13} />
+                    </button>
+                  </th>
+
+                  <th>
+                    <button
+                      type="button"
+                      className="stock-sort-th"
+                      onClick={() => toggleSort("category")}
+                    >
+                      Categoría{sortLabel("category")}
+                      <ArrowUpDown size={13} />
+                    </button>
+                  </th>
+
                   <th>Unidad</th>
                   <th>Mayorista</th>
                   <th>Minorista</th>
@@ -719,6 +1088,8 @@ export default function StockPage() {
                       <td style={{ fontFamily: "var(--mono)" }}>
                         {p.sku || "—"}
                       </td>
+
+                      <td>{getProductCategoryLabel(p)}</td>
 
                       <td>
                         <span className="badge badge-gray">
@@ -813,7 +1184,7 @@ export default function StockPage() {
                     <div>
                       <h3>{p.name}</h3>
                       <span>
-                        {p.sku || "Sin SKU"} ·{" "}
+                        {p.sku || "Sin SKU"} · {getProductCategoryLabel(p)} ·{" "}
                         {isCompositeProduct(p) ? "PROMO" : p.saleUnit} · Mín. May.{" "}
                         {localMin}
                         {unit} · Mín. Min. {depositoMin}
@@ -1052,6 +1423,54 @@ export default function StockPage() {
         )}
       </div>
 
+      {scannerOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="stock-scanner-backdrop" onClick={closeScanner}>
+            <div
+              className="stock-scanner-modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="stock-scanner-header">
+                <div>
+                  <b>Escanear SKU</b>
+                  <small>Apuntá al código de barras o QR del producto.</small>
+                </div>
+
+                <button className="btn btn-ghost btn-sm" onClick={closeScanner}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="stock-scanner-camera">
+                <div
+                  id={STOCK_SKU_SCANNER_ELEMENT_ID}
+                  className="stock-scanner-reader"
+                />
+
+                {scannerLoading && (
+                  <div className="stock-scanner-loading">
+                    <span className="spinner" />
+                    <p>Iniciando cámara...</p>
+                  </div>
+                )}
+              </div>
+
+              {scannerError ? (
+                <div className="stock-scanner-error-box">
+                  <Camera size={16} />
+                  <span>{scannerError}</span>
+                </div>
+              ) : (
+                <div className="stock-scanner-footer">
+                  <small>Tip: acercá el código, evitá reflejos y usá buena luz.</small>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+
       {mobileSheetOpen &&
         typeof document !== "undefined" &&
         createPortal(
@@ -1096,6 +1515,267 @@ export default function StockPage() {
 
         .stock-location-field {
           grid-column: auto;
+        }
+
+        .stock-product-picker {
+          position: relative;
+          min-width: 0;
+        }
+
+        .stock-product-search-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 8px;
+        }
+
+        .stock-product-search-box {
+          position: relative;
+          min-width: 0;
+        }
+
+        .stock-product-search-box svg {
+          position: absolute;
+          left: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: var(--text3);
+          pointer-events: none;
+        }
+
+        .stock-product-search-box input {
+          padding-left: 34px;
+        }
+
+        .stock-scan-btn {
+          white-space: nowrap;
+        }
+
+        .stock-product-results {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: calc(100% + 6px);
+          z-index: 60;
+          max-height: 320px;
+          overflow-y: auto;
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          background: var(--surface);
+          box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+          padding: 6px;
+        }
+
+        .stock-product-results button {
+          width: 100%;
+          border: 0;
+          border-radius: 10px;
+          background: transparent;
+          color: var(--text);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          text-align: left;
+          padding: 9px 10px;
+          cursor: pointer;
+        }
+
+        .stock-product-results button:hover {
+          background: var(--surface2);
+        }
+
+        .stock-product-results span {
+          display: grid;
+          gap: 3px;
+          min-width: 0;
+        }
+
+        .stock-product-results b {
+          font-size: 13px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .stock-product-results small {
+          color: var(--text3);
+          font-size: 11px;
+          font-family: var(--mono);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .stock-product-results em {
+          flex-shrink: 0;
+          color: var(--text2);
+          font-size: 11px;
+          font-style: normal;
+          font-family: var(--mono);
+        }
+
+        .stock-product-results-empty {
+          padding: 10px;
+        }
+
+        .stock-product-results-empty p {
+          margin: 0;
+          color: var(--text3);
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .stock-selected-product {
+          margin-top: 8px;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--surface2);
+          padding: 8px 10px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .stock-selected-product div {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+
+        .stock-selected-product b {
+          font-size: 13px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .stock-selected-product small {
+          color: var(--text3);
+          font-size: 11px;
+          font-family: var(--mono);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .stock-sort-th {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          font-weight: 900;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 0;
+        }
+
+        .stock-sort-th:hover {
+          color: var(--accent);
+        }
+
+        .stock-scanner-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483500;
+          background: rgba(0, 0, 0, 0.62);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+        }
+
+        .stock-scanner-modal {
+          width: min(520px, 100%);
+          border: 1px solid var(--border);
+          border-radius: 22px;
+          background: var(--surface);
+          overflow: hidden;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+        }
+
+        .stock-scanner-header {
+          padding: 14px;
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .stock-scanner-header b {
+          display: block;
+          color: var(--text);
+          font-size: 15px;
+        }
+
+        .stock-scanner-header small {
+          display: block;
+          margin-top: 3px;
+          color: var(--text3);
+          font-size: 11px;
+        }
+
+        .stock-scanner-camera {
+          position: relative;
+          min-height: 300px;
+          overflow: hidden;
+          border-bottom: 1px solid var(--border);
+          background: #000;
+          display: block;
+        }
+
+        .stock-scanner-reader {
+          width: 100%;
+          min-height: 300px;
+        }
+
+        .stock-scanner-reader video {
+          width: 100% !important;
+          height: 300px !important;
+          object-fit: cover !important;
+        }
+
+        .stock-scanner-loading {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          align-content: center;
+          gap: 10px;
+          background: rgba(0, 0, 0, 0.72);
+          color: white;
+          z-index: 2;
+        }
+
+        .stock-scanner-loading p {
+          margin: 0;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .stock-scanner-error-box {
+          display: flex;
+          gap: 8px;
+          align-items: flex-start;
+          border: 1px solid rgba(239, 68, 68, 0.28);
+          border-radius: 13px;
+          background: rgba(239, 68, 68, 0.1);
+          color: var(--danger);
+          padding: 10px 12px;
+          margin: 12px;
+          font-size: 12px;
+          line-height: 1.35;
+          font-weight: 800;
+        }
+
+        .stock-scanner-footer {
+          padding: 11px 14px;
+          color: var(--text3);
+          font-size: 11px;
+          font-weight: 800;
         }
 
         .stock-product-name {
@@ -1521,6 +2201,44 @@ export default function StockPage() {
             grid-column: auto !important;
             border-radius: 14px;
             margin-top: 2px;
+          }
+
+          .stock-mobile-sheet-body .stock-product-search-row {
+            grid-template-columns: 1fr !important;
+          }
+
+          .stock-mobile-sheet-body .stock-product-results {
+            position: static !important;
+            margin-top: 8px !important;
+            max-height: 260px !important;
+          }
+
+          .stock-mobile-sheet-body .stock-product-picker {
+            overflow: visible !important;
+          }
+
+          .stock-mobile-sheet-body .stock-scan-btn {
+            width: 100% !important;
+            justify-content: center !important;
+          }
+
+          .stock-mobile-sheet-body .stock-product-search-row {
+            grid-template-columns: 1fr !important;
+          }
+
+          .stock-mobile-sheet-body .stock-product-results {
+            position: static !important;
+            margin-top: 8px !important;
+            max-height: 260px !important;
+          }
+
+          .stock-mobile-sheet-body .stock-product-picker {
+            overflow: visible !important;
+          }
+
+          .stock-mobile-sheet-body .stock-scan-btn {
+            width: 100% !important;
+            justify-content: center !important;
           }
 
           .stock-mobile-sheet-body select,

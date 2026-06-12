@@ -3,6 +3,7 @@ import { productService } from "../services/product.service";
 import multer from "multer";
 import path from "path";
 import { getParamAsString } from "../utils/params";
+
 const upload = multer({
   dest: "uploads/",
   limits: {
@@ -57,7 +58,31 @@ function normalizeBoolean(value: any) {
 export const productController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const products = await productService.getAll();
+      const page =
+        req.query.page !== undefined ? Number(req.query.page) : undefined;
+
+      const limit =
+        req.query.limit !== undefined ? Number(req.query.limit) : undefined;
+
+      const search =
+        typeof req.query.search === "string" ? req.query.search : undefined;
+
+      const categoryId =
+        typeof req.query.categoryId === "string"
+          ? req.query.categoryId
+          : undefined;
+
+      const sort =
+        typeof req.query.sort === "string" ? req.query.sort : undefined;
+
+      const products = await productService.getAll({
+        page,
+        limit,
+        search,
+        categoryId,
+        sort,
+      });
+
       res.json(products);
     } catch (err) {
       next(err);
@@ -66,7 +91,9 @@ export const productController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const product = await productService.getById(getParamAsString(req.params.id, "id"));
+      const product = await productService.getById(
+        getParamAsString(req.params.id, "id")
+      );
 
       if (!product) {
         return res.status(404).json({ message: "Producto no encontrado" });
@@ -83,44 +110,44 @@ export const productController = {
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const newProduct = await productService.create({
-  name: req.body.name,
-  description: req.body.description,
+          name: req.body.name,
+          description: req.body.description,
 
-  type: req.body.type,
-  isService: normalizeBoolean(req.body.isService),
+          type: req.body.type,
+          isService: normalizeBoolean(req.body.isService),
 
-  categoryId: req.body.categoryId,
-  category: req.body.category,
+          categoryId: req.body.categoryId,
+          category: req.body.category,
 
-  price: req.body.price,
-  wholesalePrice: req.body.wholesalePrice,
-  clientPrice: req.body.clientPrice,
-  purchasePrice: req.body.purchasePrice,
+          price: req.body.price,
+          wholesalePrice: req.body.wholesalePrice,
+          clientPrice: req.body.clientPrice,
+          purchasePrice: req.body.purchasePrice,
 
-  saleUnit: req.body.saleUnit,
+          saleUnit: req.body.saleUnit,
 
-  pricePerKg: req.body.pricePerKg,
-  clientPricePerKg: req.body.clientPricePerKg,
-  wholesalePricePerKg: req.body.wholesalePricePerKg,
+          pricePerKg: req.body.pricePerKg,
+          clientPricePerKg: req.body.clientPricePerKg,
+          wholesalePricePerKg: req.body.wholesalePricePerKg,
 
-  sku: req.body.sku,
+          sku: req.body.sku,
 
-  stockLocal: req.body.stockLocal,
-  stockDeposito: req.body.stockDeposito,
+          stockLocal: req.body.stockLocal,
+          stockDeposito: req.body.stockDeposito,
 
-  stockLocalKg: req.body.stockLocalKg,
-  stockDepositoKg: req.body.stockDepositoKg,
+          stockLocalKg: req.body.stockLocalKg,
+          stockDepositoKg: req.body.stockDepositoKg,
 
-  minStock: req.body.minStock,
-  minStockDeposito: req.body.minStockDeposito,
-  minStockKg: req.body.minStockKg,
-  minStockDepositoKg: req.body.minStockDepositoKg,
+          minStock: req.body.minStock,
+          minStockDeposito: req.body.minStockDeposito,
+          minStockKg: req.body.minStockKg,
+          minStockDepositoKg: req.body.minStockDepositoKg,
 
-  file: req.file,
+          file: req.file,
 
-  components: parseJsonArray(req.body.components),
-  boxContents: parseJsonArray(req.body.boxContents),
-});
+          components: parseJsonArray(req.body.components),
+          boxContents: parseJsonArray(req.body.boxContents),
+        });
 
         if ((newProduct as any)?.statusCode) {
           return res
@@ -147,10 +174,7 @@ export const productController = {
       }
 
       if (body.type !== undefined) cleanBody.type = body.type;
-
-      // Nueva categoría dinámica
       if (body.categoryId !== undefined) cleanBody.categoryId = body.categoryId;
-
       if (body.sku !== undefined) cleanBody.sku = String(body.sku);
       if (body.saleUnit !== undefined) cleanBody.saleUnit = body.saleUnit;
 
@@ -225,7 +249,10 @@ export const productController = {
         cleanBody.minStockDepositoKg = toNumberOrUndefined(body.minStockDepositoKg);
       }
 
-      const updated = await productService.update(getParamAsString(req.params.id, "id"), cleanBody);
+      const updated = await productService.update(
+        getParamAsString(req.params.id, "id"),
+        cleanBody
+      );
 
       res.json(updated);
     } catch (err) {
@@ -348,7 +375,10 @@ export const productController = {
         });
       }
 
-      const result = await productService.updateComponents(getParamAsString(id, "id"), components);
+      const result = await productService.updateComponents(
+        getParamAsString(id, "id"),
+        components
+      );
 
       res.json(result);
     } catch (err) {
@@ -364,7 +394,9 @@ export const productController = {
         return res.status(400).json({ message: "SKU requerido" });
       }
 
-      const product = await productService.getBySku(getParamAsString(sku, "sku"));
+      const product = await productService.getBySku(
+        getParamAsString(sku, "sku")
+      );
 
       if (!product) {
         return res.status(404).json({ message: "Producto no encontrado" });

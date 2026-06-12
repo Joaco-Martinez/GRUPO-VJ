@@ -49,6 +49,14 @@ type ConfirmState = {
   onConfirm: () => Promise<void> | void;
 } | null;
 
+type PaginatedProductsResponse = {
+  data: Product[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 const emptyProductForm = {
   name: '',
   description: '',
@@ -141,12 +149,6 @@ function getInitialProfitCalculator() {
   }
 }
 
-function compareText(a: string, b: string): number {
-  return a.localeCompare(b, 'es', {
-    numeric: true,
-    sensitivity: 'base',
-  });
-}
 
 function getProductPublicPrice(product: Product) {
   return product.saleUnit === 'KG'
@@ -299,8 +301,10 @@ function stockLabel(product: Product, stock: number) {
 
 export default function ProductosPage() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingAllProducts, setLoadingAllProducts] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
   const [editing, setEditing] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
@@ -327,6 +331,8 @@ export default function ProductosPage() {
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [mobileProductSheet, setMobileProductSheet] = useState<Product | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalProducts, setTotalProducts] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message });
@@ -338,13 +344,38 @@ export default function ProductosPage() {
 
   const load = async () => {
     setLoading(true);
+
     try {
+      const params = new URLSearchParams();
+
+      params.set('page', String(currentPage));
+      params.set('limit', String(PRODUCTS_PAGE_SIZE));
+
+      if (search.trim()) params.set('search', search.trim());
+      if (categoryId) params.set('categoryId', categoryId);
+      if (sortMode) params.set('sort', sortMode);
+
       const [pRes, cRes] = await Promise.all([
-        api.get('/products'),
+        api.get(`/products?${params.toString()}`),
         api.get('/categories?includeInactive=true'),
       ]);
 
-      setProducts(normalizeArray<Product>(pRes.data));
+      const paginated = pRes.data as PaginatedProductsResponse | Product[];
+
+      if (Array.isArray(paginated)) {
+        const list = normalizeArray<Product>(paginated);
+
+        setProducts(list);
+        setTotalProducts(list.length);
+        setTotalPages(Math.max(1, Math.ceil(list.length / PRODUCTS_PAGE_SIZE)));
+      } else {
+        const list = normalizeArray<Product>(paginated.data);
+
+        setProducts(list);
+        setTotalProducts(Number(paginated.total ?? list.length));
+        setTotalPages(Math.max(1, Number(paginated.totalPages ?? 1)));
+      }
+
       setCategories(normalizeArray<ProductCategory>(cRes.data));
     } catch (e) {
       console.error(e);
@@ -354,9 +385,25 @@ export default function ProductosPage() {
     }
   };
 
+  const loadAllProductsForComponents = async () => {
+    if (allProducts.length > 0 || loadingAllProducts) return;
+
+    setLoadingAllProducts(true);
+
+    try {
+      const res = await api.get('/products');
+      setAllProducts(normalizeArray<Product>(res.data));
+    } catch (e) {
+      console.error(e);
+      showToast('error', 'Error al cargar productos para componentes');
+    } finally {
+      setLoadingAllProducts(false);
+    }
+  };
+
   useEffect(() => {
     load();
-  }, []);
+  }, [currentPage, search, categoryId, sortMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -369,55 +416,23 @@ export default function ProductosPage() {
     }
   }, [form.isService, form.type, productFormStep]);
 
+  const componentProductsSource = allProducts.length > 0 ? allProducts : products;
+
   const simpleProducts = useMemo(
-    () => products.filter((p) => p.type === 'SIMPLE' && p.isActive !== false && (p as any).isService !== true),
-    [products]
+    () =>
+      componentProductsSource.filter(
+        (p) =>
+          p.type === 'SIMPLE' &&
+          p.isActive !== false &&
+          (p as any).isService !== true
+      ),
+    [componentProductsSource]
   );
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const paginatedProducts = products;
 
-    const result = products.filter((p) => {
-      const matchesText =
-        !q ||
-        p.name.toLowerCase().includes(q) ||
-        String(p.sku ?? '').toLowerCase().includes(q) ||
-        String((p as any).description ?? '').toLowerCase().includes(q);
-
-      const matchesCat = !categoryId || p.categoryId === categoryId;
-
-      return matchesText && matchesCat;
-    });
-
-    if (sortMode === 'default') return result;
-
-    return [...result].sort((a, b) => {
-      if (sortMode === 'name-asc') return compareText(a.name, b.name);
-      if (sortMode === 'name-desc') return compareText(b.name, a.name);
-
-      if (sortMode === 'category-asc') {
-        const byCategory = compareText(categoryName(a), categoryName(b));
-        return byCategory || compareText(a.name, b.name);
-      }
-
-      if (sortMode === 'category-desc') {
-        const byCategory = compareText(categoryName(b), categoryName(a));
-        return byCategory || compareText(a.name, b.name);
-      }
-
-      return 0;
-    });
-  }, [products, search, categoryId, sortMode]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PRODUCTS_PAGE_SIZE));
-
-  const paginatedProducts = useMemo(() => {
-    const start = (currentPage - 1) * PRODUCTS_PAGE_SIZE;
-    return filtered.slice(start, start + PRODUCTS_PAGE_SIZE);
-  }, [filtered, currentPage]);
-
-  const pageStart = filtered.length ? (currentPage - 1) * PRODUCTS_PAGE_SIZE + 1 : 0;
-  const pageEnd = Math.min(currentPage * PRODUCTS_PAGE_SIZE, filtered.length);
+  const pageStart = totalProducts ? (currentPage - 1) * PRODUCTS_PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(currentPage * PRODUCTS_PAGE_SIZE, totalProducts);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -464,6 +479,7 @@ export default function ProductosPage() {
     resetImage();
     setProductFormStep('basico');
     setModal('product-create');
+    void loadAllProductsForComponents();
   };
 
   const openEdit = (product: Product) => {
@@ -509,6 +525,7 @@ export default function ProductosPage() {
     setImagePreview(product.imageUrl ?? '');
     setProductFormStep('basico');
     setModal('product-edit');
+    void loadAllProductsForComponents();
   };
 
   const handleImageChange = (file?: File | null) => {
@@ -941,7 +958,7 @@ export default function ProductosPage() {
         }}
       >
         <div className="stat-card">
-          <div className="stat-value">{products.length}</div>
+          <div className="stat-value">{totalProducts}</div>
           <div className="stat-label">Productos</div>
         </div>
 
@@ -949,7 +966,7 @@ export default function ProductosPage() {
           <div className="stat-value">
             {products.filter((p) => p.type === 'COMPUESTO').length}
           </div>
-          <div className="stat-label">Promos / compuestos</div>
+          <div className="stat-label">Promos visibles</div>
         </div>
 
         <div className="stat-card">
@@ -963,7 +980,7 @@ export default function ProductosPage() {
           <div className="stat-value">
             {products.filter(isProductLowStock).length}
           </div>
-          <div className="stat-label">Stock bajo</div>
+          <div className="stat-label">Stock bajo visible</div>
         </div>
       </div>
 
@@ -1324,7 +1341,7 @@ export default function ProductosPage() {
             </table>
           )}
 
-          {!loading && !filtered.length && (
+          {!loading && !products.length && (
             <div className="empty-state">
               <Package size={36} />
               <p>Sin productos</p>
@@ -1437,7 +1454,7 @@ export default function ProductosPage() {
             })
           )}
 
-          {!loading && !filtered.length && (
+          {!loading && !products.length && (
             <div className="empty-state">
               <Package size={36} />
               <p>Sin productos</p>
@@ -1445,10 +1462,10 @@ export default function ProductosPage() {
           )}
         </div>
 
-        {!loading && filtered.length > 0 && (
+        {!loading && totalProducts > 0 && (
           <div className="products-pagination">
             <div className="products-pagination-info">
-              Mostrando {pageStart} - {pageEnd} de {filtered.length} productos
+              Mostrando {pageStart} - {pageEnd} de {totalProducts} productos
             </div>
 
             <div className="products-pagination-actions">
@@ -2129,7 +2146,11 @@ export default function ProductosPage() {
                             setComponent(idx, 'componentId', e.target.value)
                           }
                         >
-                          <option value="">Seleccionar producto simple...</option>
+                          <option value="">
+                            {loadingAllProducts
+                              ? 'Cargando productos...'
+                              : 'Seleccionar producto simple...'}
+                          </option>
                           {simpleProducts.map((p) => (
                             <option key={p.id} value={p.id}>
                               {p.name} · stock {stockLabel(p, getProductStockMayorista(p))}
@@ -2522,8 +2543,8 @@ export default function ProductosPage() {
 
         .products-pagination-info {
           color: var(--text3);
-          font-size: 12px;
-          font-weight: 800;
+          font-size: 13px;
+          font-weight: 900;
         }
 
         .products-pagination-actions {
@@ -2535,9 +2556,9 @@ export default function ProductosPage() {
 
         .products-pagination-page {
           color: var(--text2);
-          font-size: 12px;
+          font-size: 14px;
           font-weight: 900;
-          padding: 0 4px;
+          padding: 0 6px;
         }
 
         .products-actions {
@@ -2690,7 +2711,7 @@ export default function ProductosPage() {
         .products-profit-cell strong {
           display: block;
           font-family: var(--mono);
-          font-size: 13px;
+          font-size: 15px;
           line-height: 1.15;
           font-weight: 900;
           overflow-wrap: anywhere;
@@ -2703,7 +2724,7 @@ export default function ProductosPage() {
           margin-top: 3px;
           color: var(--text3);
           font-family: var(--mono);
-          font-size: 11px;
+          font-size: 12px;
           line-height: 1.15;
         }
 
@@ -2878,7 +2899,7 @@ export default function ProductosPage() {
           .products-desktop-table td:nth-child(5) div,
           .products-desktop-table td:nth-child(6) span,
           .products-desktop-table td:nth-child(7) span {
-            font-size: 11px !important;
+            font-size: 13px !important;
           }
 
           .products-desktop-table td:nth-child(9) {
@@ -3249,7 +3270,7 @@ export default function ProductosPage() {
           .products-mobile-quick strong {
             display: block;
             font-family: var(--mono);
-            font-size: 11px;
+            font-size: 13px;
             line-height: 1.15;
             color: var(--text);
             white-space: nowrap;
@@ -3437,7 +3458,7 @@ export default function ProductosPage() {
           .products-mobile-sheet-grid strong {
             display: block;
             font-family: var(--mono);
-            font-size: 12px;
+            font-size: 14px;
             color: var(--text);
             overflow-wrap: anywhere;
           }
@@ -3685,7 +3706,7 @@ export default function ProductosPage() {
           }
 
           .products-mobile-quick strong {
-            font-size: 10px;
+            font-size: 11px;
           }
 
           .products-mobile-actions {

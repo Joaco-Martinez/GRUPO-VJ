@@ -805,7 +805,8 @@ export default function VentasPage() {
   const submitInvoice = async () => {
     if (!invoiceModal) return;
 
-    const { sale, tipoComprobante, receiverDoc, condicionIVAReceptor } = invoiceModal;
+    const { sale, receiverDoc, condicionIVAReceptor } = invoiceModal;
+    const tipoComprobante: InvoiceType = 11;
 
     const cleanDoc = onlyNumbers(receiverDoc);
     const detectedDoc = detectDocType(receiverDoc);
@@ -822,14 +823,7 @@ export default function VentasPage() {
       return;
     }
 
-    if (tipoComprobante === 1) {
-      if (!detectedDoc || detectedDoc.tipoDoc !== 80 || String(detectedDoc.nroDoc).length !== 11) {
-        toast.error('Para Factura A tenés que cargar CUIT del receptor');
-        return;
-      }
-    }
-
-    if ((tipoComprobante === 6 || tipoComprobante === 11) && !isConsumidorFinal && !detectedDoc) {
+    if (!isConsumidorFinal && !detectedDoc) {
       toast.error('El documento del receptor no es válido. Podés dejarlo vacío para Consumidor Final');
       return;
     }
@@ -838,15 +832,9 @@ export default function VentasPage() {
       saleId: sale.id,
       tipoComprobante,
 
-      tipoDoc:
-        tipoComprobante === 1 ? 80 : isConsumidorFinal ? 99 : detectedDoc?.tipoDoc ?? 99,
+      tipoDoc: isConsumidorFinal ? 99 : detectedDoc?.tipoDoc ?? 99,
 
-      nroDoc:
-        tipoComprobante === 1
-          ? detectedDoc?.nroDoc
-          : isConsumidorFinal
-            ? 0
-            : detectedDoc?.nroDoc ?? 0,
+      nroDoc: isConsumidorFinal ? 0 : detectedDoc?.nroDoc ?? 0,
 
       importe: num(sale.total),
 
@@ -2172,30 +2160,26 @@ export default function VentasPage() {
               <div className="form-group">
                 <label className="form-label">Tipo de comprobante</label>
 
-                <select
-                  value={invoiceModal.tipoComprobante}
-                  onChange={(e) =>
-                    setInvoiceModal((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            tipoComprobante: Number(e.target.value) as InvoiceType,
-                          }
-                        : prev
-                    )
-                  }
+                <div
+                  style={{
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    padding: '10px 12px',
+                    background: 'var(--surface2)',
+                    fontWeight: 900,
+                    color: 'var(--accent)',
+                  }}
                 >
-                  <option value={11}>Factura C</option>
-                  <option value={6}>Factura B</option>
-                  <option value={1}>Factura A</option>
-                </select>
+                  Factura C
+                </div>
+
+                <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
+                  El sistema está configurado para emitir únicamente Factura C.
+                </div>
               </div>
 
               <div className="form-group">
-                <label className="form-label">
-                  Documento receptor{' '}
-                  {invoiceModal.tipoComprobante === 1 ? '(CUIT obligatorio)' : '(opcional)'}
-                </label>
+                <label className="form-label">Documento receptor (opcional)</label>
 
                 <input
                   value={invoiceModal.receiverDoc}
@@ -2204,16 +2188,12 @@ export default function VentasPage() {
                       prev ? { ...prev, receiverDoc: e.target.value } : prev
                     )
                   }
-                  placeholder={
-                    invoiceModal.tipoComprobante === 1
-                      ? 'CUIT del receptor'
-                      : 'Vacío = Consumidor Final / o cargá DNI, CUIL o CUIT'
-                  }
+                  placeholder="Vacío = Consumidor Final / o cargá DNI, CUIL o CUIT"
                 />
 
                 <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
-                  Factura A requiere CUIT. Factura B y C pueden salir como Consumidor Final
-                  sin documento. Si cargás documento, debe ser DNI, CUIL o CUIT válido.
+                  Factura C puede salir como Consumidor Final sin documento. Si cargás documento,
+                  debe ser DNI, CUIL o CUIT válido.
                 </div>
               </div>
 

@@ -56,7 +56,7 @@ const methods: PaymentMethod[] = [
 
 type StockLocation = "LOCAL" | "DEPOSITO";
 type DeliveryMode = "PICKUP" | "LOCAL_DELIVERY";
-type ProductSortMode = "default" | "name-asc" | "name-desc" | "category-asc" | "category-desc";
+type ProductSortMode = "name-asc" | "name-desc" | "category-asc" | "category-desc";
 
 type DeliveryCalculation = {
   distanceKm: number;
@@ -274,6 +274,20 @@ function clientCategoryLabel(category?: string | null) {
   return "Minorista";
 }
 
+function cartItemCounterLabel(item?: CartItem | null) {
+  if (!item) return "";
+
+  if (item.product.saleUnit === "KG") {
+    const kg = num(item.quantityKg);
+    return `${kg.toLocaleString("es-AR", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 3,
+    })} kg`;
+  }
+
+  return String(item.quantity);
+}
+
 async function fetchPosData() {
   const [p, c, cl, bl] = await Promise.all([
     api.get("/products"),
@@ -299,7 +313,7 @@ export default function POSPage() {
 
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [sortMode, setSortMode] = useState<ProductSortMode>("default");
+  const [sortMode, setSortMode] = useState<ProductSortMode>("name-asc");
   const [clientId, setClientId] = useState("");
   const [stockLocation, setStockLocation] = useState<StockLocation>("LOCAL");
 
@@ -429,8 +443,6 @@ export default function POSPage() {
         (!categoryId || p.categoryId === categoryId)
       );
     });
-
-    if (sortMode === "default") return result;
 
     return [...result].sort((a, b) => {
       if (sortMode === "name-asc") return compareText(a.name, b.name);
@@ -1037,6 +1049,7 @@ export default function POSPage() {
     const imageUrl = getProductImageUrl(product);
     const cartItem = cart.find((item) => item.product.id === product.id);
     const cartQty = cartItem?.product.saleUnit === "KG" ? num(cartItem.quantityKg) : (cartItem?.quantity ?? 0);
+    const cartQtyLabel = cartItemCounterLabel(cartItem);
 
     return (
       <button
@@ -1059,7 +1072,7 @@ export default function POSPage() {
           ) : (
             <Package size={mobile ? 24 : 28} />
           )}
-          {mobile && cartQty > 0 && <span className="pos-added-pill">x{cartQty}</span>}
+          {cartQty > 0 && <span className="pos-added-pill">x{cartQtyLabel}</span>}
         </span>
 
         {mobile ? (
@@ -1095,6 +1108,11 @@ export default function POSPage() {
               {fmtMoney(productPrice(product, priceType))}
               {product.saleUnit === "KG" ? "/kg" : ""}
             </strong>
+            {cartQty > 0 && (
+              <span className="badge badge-blue pos-card-counter">
+                En carrito: {cartQtyLabel}
+              </span>
+            )}
             <span className={withoutStock ? "danger small" : "muted small"}>
               Stock {stockLocationLabelLower(stockLocation)}: {stockLabel(product, stockLocation)}
             </span>
@@ -1212,7 +1230,6 @@ export default function POSPage() {
                 onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
                 title="Ordenar productos"
               >
-                <option value="default">Orden original</option>
                 <option value="name-asc">Nombre A-Z</option>
                 <option value="name-desc">Nombre Z-A</option>
                 <option value="category-asc">Categoría A-Z</option>
@@ -1495,7 +1512,6 @@ export default function POSPage() {
                   value={sortMode}
                   onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
                 >
-                  <option value="default">Original</option>
                   <option value="name-asc">A-Z</option>
                   <option value="name-desc">Z-A</option>
                   <option value="category-asc">Categoría A-Z</option>
@@ -1741,11 +1757,12 @@ export default function POSPage() {
         .pos-products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
         .pos-product-card { min-height: 335px; padding: 12px; text-align: left; cursor: pointer; overflow: hidden; display: grid; gap: 8px; color: var(--text); }
         .pos-product-card:disabled { opacity: .55; cursor: not-allowed; }
-        .pos-product-image { width: 100%; aspect-ratio: 1/1; border-radius: 14px; background: #fff; border: 1px solid var(--border); display: grid; place-items: center; overflow: hidden; padding: 8px; color: var(--text3); }
+        .pos-product-image { width: 100%; aspect-ratio: 1/1; border-radius: 14px; background: #fff; border: 1px solid var(--border); display: grid; place-items: center; overflow: hidden; padding: 8px; color: var(--text3); position: relative; }
         .pos-product-image img { width: 100%; height: 100%; object-fit: contain; display: block; }
         .pos-product-meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; font-weight: 800; }
         .pos-product-title { min-height: 38px; font-size: 14px; line-height: 1.25; }
         .price { font-family: var(--mono); color: var(--accent); font-weight: 900; font-size: 15px; }
+        .pos-card-counter { width: fit-content; font-size: 11px; }
 
         .pos-cart { padding: 0; align-self: start; position: sticky; top: 76px; max-height: calc(100vh - 96px); display: flex; flex-direction: column; overflow: hidden; }
         .pos-cart-body { padding: 16px; overflow: auto; flex: 1; }

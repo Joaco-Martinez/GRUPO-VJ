@@ -109,24 +109,26 @@ export default function TiendaPage() {
 
   const storeSuffix = useMemo(() => {
     if (customerCategory === "Mayorista") return "Mayorista";
-    if (customerCategory === "Cliente") return "Clientes";
+    if (customerCategory === "Cliente") return "Cliente";
     return "Minorista";
   }, [customerCategory]);
 
   const priceLabel = useMemo(() => {
     if (customerCategory === "Mayorista") return "Precio mayorista";
     if (customerCategory === "Cliente") return "Precio cliente";
-    return "Precio público";
+    return "Precio minorista";
   }, [customerCategory]);
 
   const isLoggedIn = authChecked && Boolean(authUser);
 
   const accountLabel = useMemo(() => {
     if (!authUser) return "Ingresar";
+
     const clientName = [authUser.client?.nombre, authUser.client?.apellido]
       .filter(Boolean)
       .join(" ")
       .trim();
+
     return clientName || authUser.name || "Mi cuenta";
   }, [authUser]);
 
@@ -227,7 +229,7 @@ export default function TiendaPage() {
     }
 
     if (!product.canSell) {
-      toast.error("Este producto no tiene stock disponible");
+      toast.error("Este producto no tiene disponibilidad");
       return;
     }
 
@@ -501,6 +503,66 @@ export default function TiendaPage() {
           max-width: 1320px;
           margin: 0 auto;
           padding: 28px 28px 70px;
+        }
+
+        .seo-intro {
+          background:
+            radial-gradient(circle at top left, rgba(20,184,106,0.12), transparent 34%),
+            linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+          border: 1px solid var(--line);
+          border-radius: 26px;
+          padding: 28px 30px;
+          margin-bottom: 22px;
+          box-shadow: var(--shadow-sm);
+        }
+
+        .seo-kicker {
+          margin: 0 0 8px;
+          color: var(--green);
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+
+        .seo-intro h1 {
+          margin: 0;
+          max-width: 820px;
+          color: var(--text);
+          font-size: clamp(28px, 4vw, 46px);
+          line-height: 1.02;
+          letter-spacing: -0.06em;
+          font-weight: 950;
+        }
+
+        .seo-intro p {
+          margin: 14px 0 0;
+          max-width: 780px;
+          color: var(--muted);
+          font-size: 15px;
+          line-height: 1.7;
+          font-weight: 600;
+        }
+
+        .seo-benefits {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 18px;
+        }
+
+        .seo-pill {
+          height: 34px;
+          padding: 0 13px;
+          border-radius: 999px;
+          background: var(--white);
+          border: 1px solid var(--line);
+          color: var(--text);
+          display: inline-flex;
+          align-items: center;
+          font-size: 12px;
+          font-weight: 850;
         }
 
         .login-banner {
@@ -1129,6 +1191,11 @@ export default function TiendaPage() {
             padding: 20px 18px 56px;
           }
 
+          .seo-intro {
+            padding: 24px 20px;
+            border-radius: 22px;
+          }
+
           .content-layout {
             grid-template-columns: 1fr;
           }
@@ -1245,23 +1312,10 @@ export default function TiendaPage() {
             font-size: 10px;
             padding: 6px 8px;
           }
-            .seo-title {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
         }
       `}</style>
 
       <div className="shop">
-        
         <header className="topbar">
           <div className="topbar-inner">
             <Link href="/tienda" className="brand">
@@ -1284,7 +1338,7 @@ export default function TiendaPage() {
               </div>
             </Link>
 
-            <div className="search-box">
+            <div className="search-box" data-nosnippet="true">
               <Search className="search-icon" />
               <input
                 value={search}
@@ -1325,12 +1379,31 @@ export default function TiendaPage() {
 
             <div className="location-right">
               <Store size={14} />
-              Stock actualizado
+              Catálogo actualizado
             </div>
           </div>
         </div>
 
         <main className="main">
+          <section className="seo-intro">
+            <p className="seo-kicker">Tienda y distribuidora de bebidas</p>
+
+            <h1>Grupo VJ - Bebidas mayoristas y minoristas en Córdoba</h1>
+
+            <p>
+              En Grupo VJ encontrá bebidas para comercios, eventos y clientes
+              particulares. Trabajamos venta mayorista y minorista de fernet,
+              cervezas, vinos, gaseosas, energizantes, combos y más productos.
+            </p>
+
+            <div className="seo-benefits">
+              <span className="seo-pill">Venta mayorista</span>
+              <span className="seo-pill">Venta minorista</span>
+              <span className="seo-pill">Bebidas para comercios</span>
+              <span className="seo-pill">Bebidas para eventos</span>
+            </div>
+          </section>
+
           {authChecked && !isLoggedIn && (
             <div className="login-banner">
               <div className="login-banner-text">
@@ -1348,13 +1421,17 @@ export default function TiendaPage() {
                 <Link href="/tienda/login" className="login-primary">
                   Iniciar sesión
                 </Link>
+
+                <Link href="/tienda/register" className="login-secondary">
+                  Registrarme
+                </Link>
               </div>
             </div>
           )}
 
           {error && <div className="err-box">⚠ {error}</div>}
 
-          <div className="mobile-categories">
+          <div className="mobile-categories" data-nosnippet="true">
             <select
               value={category}
               onChange={(e) => handleCategoryChange(e.target.value)}
@@ -1370,7 +1447,7 @@ export default function TiendaPage() {
           </div>
 
           <div className="content-layout">
-            <aside className="sidebar">
+            <aside className="sidebar" data-nosnippet="true">
               <div className="sidebar-title">
                 <span>Categorías</span>
                 <ChevronDown size={15} />
@@ -1388,7 +1465,9 @@ export default function TiendaPage() {
                 {categories.map((cat) => (
                   <button
                     key={cat.id}
-                    className={`cat-btn ${category === cat.slug ? "active" : ""}`}
+                    className={`cat-btn ${
+                      category === cat.slug ? "active" : ""
+                    }`}
                     onClick={() => handleCategoryChange(cat.slug)}
                   >
                     <span>{cat.name}</span>
@@ -1398,7 +1477,7 @@ export default function TiendaPage() {
               </div>
             </aside>
 
-            <section className="catalog-area">
+            <section className="catalog-area" aria-label="Catálogo de bebidas">
               {loading ? (
                 <div className="loading-wrap">
                   <div className="spinner" />
@@ -1409,7 +1488,7 @@ export default function TiendaPage() {
                   <div className="toolbar">
                     <div className="toolbar-title">
                       <h2>{selectedCategoryName}</h2>
-                      <span>
+                      <span data-nosnippet="true">
                         {products.length}{" "}
                         {products.length === 1
                           ? "producto encontrado"
@@ -1417,13 +1496,13 @@ export default function TiendaPage() {
                       </span>
                     </div>
 
-                    <div className="toolbar-chips">
+                    <div className="toolbar-chips" data-nosnippet="true">
                       <div className="chip">
                         Lista: <strong>{storeSuffix}</strong>
                       </div>
 
                       <div className="chip">
-                        Precio: <strong>{priceLabel}</strong>
+                        Condición: <strong>{priceLabel}</strong>
                       </div>
                     </div>
                   </div>
@@ -1441,7 +1520,11 @@ export default function TiendaPage() {
                     )}
 
                     {products.map((product) => (
-                      <article className="card" key={product.id}>
+                      <article
+                        className="card"
+                        key={product.id}
+                        data-nosnippet="true"
+                      >
                         <div className="card-img">
                           {product.imageUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -1487,7 +1570,7 @@ export default function TiendaPage() {
                                   {formatMoney(product.price)}
                                 </p>
                               ) : (
-                                <p className="out-price">Agotado</p>
+                                <p className="out-price">Consultar</p>
                               )}
                             </div>
 
@@ -1535,18 +1618,20 @@ export default function TiendaPage() {
               GRUPO VJ
             </div>
 
-           <h1 className="seo-title">
-    Grupo VJ - Tienda de bebidas en Córdoba
-  </h1>
             <div className="footer-links">
+              <Link href="/tienda">Tienda</Link>
+
               <Link href={isLoggedIn ? "/tienda/cuenta" : "/tienda/login"}>
                 {isLoggedIn ? "Mi cuenta" : "Login"}
               </Link>
-              <Link href="/tienda/carrito">Carrito</Link>
+
+              {!isLoggedIn && <Link href="/tienda/register">Registro</Link>}
+
+              {isLoggedIn && <Link href="/tienda/carrito">Carrito</Link>}
             </div>
           </div>
         </footer>
       </div>
     </>
   );
-}
+} 

@@ -7,6 +7,7 @@ import {
   Role,
   SaleStatus,
   SaleUnit,
+  Location,
 } from "@prisma/client";
 import { saleService } from "./sale.service";
 
@@ -436,63 +437,72 @@ export const catalogService = {
     };
   },
 
-  async checkoutWhatsapp(data: CheckoutInput) {
-    if (!data.userId) {
-      throw new Error("Para finalizar el pedido tenés que iniciar sesión");
+async checkoutWhatsapp(data: CheckoutInput) {
+  if (!data.userId) {
+    throw new Error("Para finalizar el pedido tenés que iniciar sesión");
+  }
+
+  const customer = await this.getCustomerContext(data.userId);
+
+  if (!customer.clientId) {
+    throw new Error(
+      "Solo los usuarios cliente pueden finalizar pedidos desde la tienda"
+    );
+  }
+
+  if (!Array.isArray(data.items) || data.items.length === 0) {
+    throw new Error("El carrito está vacío");
+  }
+
+  const normalizedItems = data.items.map((item) => ({
+    productId: String(item.productId || ""),
+    quantity:
+      item.quantity !== undefined ? Number(item.quantity) : undefined,
+    quantityKg:
+      item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
+  }));
+
+  for (const item of normalizedItems) {
+    if (!item.productId) {
+      throw new Error("Hay un producto inválido en el carrito");
     }
+  }
 
-    const customer = await this.getCustomerContext(data.userId);
+  // Price = Minorista => descuenta de DEPÓSITO
+  // Mayorista => descuenta de LOCAL
+  const stockLocation =
+    customer.category === CategoryClient.Mayorista
+      ? Location.LOCAL
+      : Location.DEPOSITO;
 
-    if (!customer.clientId) {
-      throw new Error(
-        "Solo los usuarios cliente pueden finalizar pedidos desde la tienda"
-      );
-    }
+  const saleResult = await saleService.create({
+    userId: data.userId,
+    clientId: customer.clientId,
+    paymentMethod: data.paymentMethod || PaymentMethod.TRANSFERENCIA,
+    receiptType: ReceiptType.TICKET,
+    status: SaleStatus.PENDING,
+    stockLocation,
+    items: normalizedItems,
+  });
 
-    if (!Array.isArray(data.items) || data.items.length === 0) {
-      throw new Error("El carrito está vacío");
-    }
+  const sale = (saleResult as any).sale;
 
-    const normalizedItems = data.items.map((item) => ({
-      productId: String(item.productId || ""),
-      quantity:
-        item.quantity !== undefined ? Number(item.quantity) : undefined,
-      quantityKg:
-        item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
-    }));
+  const whatsappMessage = buildWhatsappMessage({
+    sale,
+    customer,
+    customerNotes: data.customerNotes,
+  });
 
-    for (const item of normalizedItems) {
-      if (!item.productId) {
-        throw new Error("Hay un producto inválido en el carrito");
-      }
-    }
+  const whatsappUrl = buildWhatsappUrl(whatsappMessage);
 
-    const saleResult = await saleService.create({
-      userId: data.userId,
-      clientId: customer.clientId,
-      paymentMethod: data.paymentMethod || PaymentMethod.TRANSFERENCIA,
-      receiptType: ReceiptType.TICKET,
-      status: SaleStatus.PENDING,
-      items: normalizedItems,
-    });
-
-    const sale = (saleResult as any).sale;
-    const whatsappMessage = buildWhatsappMessage({
-      sale,
-      customer,
-      customerNotes: data.customerNotes,
-    });
-
-    const whatsappUrl = buildWhatsappUrl(whatsappMessage);
-
-    return {
-      saleId: sale.id,
-      status: sale.status,
-      total: sale.total,
-      whatsappMessage,
-      whatsappUrl,
-      missingWhatsappConfig: !whatsappUrl,
-      sale,
-    };
-  },
+  return {
+    saleId: sale.id,
+    status: sale.status,
+    total: sale.total,
+    whatsappMessage,
+    whatsappUrl,
+    missingWhatsappConfig: !whatsappUrl,
+    sale,
+  };
+}
 };

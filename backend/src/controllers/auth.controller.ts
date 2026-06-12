@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { authService } from "../services/auth.service";
 import { getParamAsString } from "../utils/params";
+
 export const authController = {
   async register(req: Request, res: Response, next: NextFunction) {
     try {
@@ -27,6 +28,26 @@ export const authController = {
     try {
       const { email, password } = req.body;
       const result = await authService.login(email, password, res);
+
+      res.json({
+        ok: true,
+        content: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async changePassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.id;
+
+      const result = await authService.changePassword(
+        userId,
+        req.body.currentPassword,
+        req.body.newPassword,
+        res
+      );
 
       res.json({
         ok: true,

@@ -8,6 +8,8 @@ import { ArrowLeft, Lock, Mail, UserPlus } from "lucide-react";
 import toast from "react-hot-toast";
 import { useShopAuth } from "@/context/ShopAuthContext";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
 
@@ -33,16 +35,23 @@ export default function TiendaLoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const [resetEmail, setResetEmail] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resetSaving, setResetSaving] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     if (loading) return;
+    if (showForgotPassword) return;
 
     if (isLoggedIn) {
       router.replace("/tienda/cuenta");
     }
-  }, [loading, isLoggedIn, router]);
+  }, [loading, isLoggedIn, showForgotPassword, router]);
 
   function validateForm() {
     if (!email.trim()) {
@@ -76,7 +85,7 @@ export default function TiendaLoginPage() {
 
       toast.success("Sesión iniciada correctamente", { id: toastId });
 
-      router.push("/tienda/cuenta");
+      router.replace("/tienda/cuenta");
       router.refresh();
     } catch (err: unknown) {
       const message = getErrorMessage(err, "No se pudo iniciar sesión");
@@ -86,6 +95,76 @@ export default function TiendaLoginPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function onForgotPasswordSubmit(e: FormEvent) {
+    e.preventDefault();
+
+    const emailToSend = resetEmail.trim() || email.trim();
+
+    if (!emailToSend) {
+      toast.error("Ingresá tu correo electrónico");
+      return;
+    }
+
+    setResetSaving(true);
+    setError("");
+    setResetSent(false);
+
+    const toastId = toast.loading("Enviando enlace...");
+
+    try {
+      const response = await fetch(`${API_URL}/clients/tienda/forgot-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          email: emailToSend,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message || data?.error || "No se pudo enviar el enlace"
+        );
+      }
+
+      setResetEmail(emailToSend);
+      setResetSent(true);
+
+      toast.success(
+        data?.message ||
+          "Si el email está registrado, te enviamos un enlace para restablecer la contraseña",
+        { id: toastId }
+      );
+    } catch (err: unknown) {
+      const message = getErrorMessage(
+        err,
+        "No se pudo enviar el enlace de recuperación"
+      );
+
+      setError(message);
+      toast.error(message, { id: toastId });
+    } finally {
+      setResetSaving(false);
+    }
+  }
+
+  function openForgotPassword() {
+    setError("");
+    setResetSent(false);
+    setResetEmail(email.trim());
+    setShowForgotPassword(true);
+  }
+
+  function backToLogin() {
+    setError("");
+    setResetSent(false);
+    setShowForgotPassword(false);
   }
 
   return (
@@ -107,6 +186,8 @@ export default function TiendaLoginPage() {
           --blue-hover: #1d4ed8;
           --red: #dc2626;
           --red-soft: #fef2f2;
+          --green: #16a34a;
+          --green-soft: #f0fdf4;
           --shadow: 0 24px 70px rgba(15, 23, 42, 0.10);
         }
 
@@ -276,6 +357,18 @@ export default function TiendaLoginPage() {
           margin-bottom: 18px;
         }
 
+        .success-box {
+          background: var(--green-soft);
+          color: #166534;
+          border: 1px solid rgba(22, 163, 74, 0.16);
+          border-radius: 16px;
+          padding: 13px 14px;
+          font-size: 13px;
+          line-height: 1.45;
+          font-weight: 750;
+          margin-bottom: 18px;
+        }
+
         .btn-submit {
           width: 100%;
           height: 52px;
@@ -305,6 +398,68 @@ export default function TiendaLoginPage() {
           cursor: not-allowed;
           box-shadow: none;
           transform: none;
+        }
+
+        .forgot-row {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: -4px;
+          margin-bottom: 14px;
+        }
+
+        .forgot-button {
+          border: none;
+          background: transparent;
+          color: var(--blue);
+          font-size: 12px;
+          font-weight: 850;
+          cursor: pointer;
+          padding: 0;
+          transition: 0.18s ease;
+        }
+
+        .forgot-button:hover {
+          color: var(--blue-hover);
+          text-decoration: underline;
+        }
+
+        .forgot-help {
+          margin: -10px 0 20px;
+          background: var(--green-soft);
+          color: #166534;
+          border: 1px solid rgba(22, 163, 74, 0.16);
+          border-radius: 16px;
+          padding: 13px 14px;
+          font-size: 13px;
+          line-height: 1.45;
+          font-weight: 750;
+        }
+
+        .secondary-button {
+          width: 100%;
+          height: 46px;
+          border-radius: 15px;
+          border: 1px solid var(--line);
+          background: var(--white);
+          color: var(--text);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 13px;
+          font-weight: 900;
+          cursor: pointer;
+          margin-top: 12px;
+          transition: 0.18s ease;
+        }
+
+        .secondary-button:hover {
+          background: #f9fafb;
+          border-color: var(--line-strong);
+        }
+
+        .secondary-button:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
         }
 
         .divider {
@@ -425,80 +580,158 @@ export default function TiendaLoginPage() {
             <p className="logo-subtitle">Portal de clientes</p>
           </div>
 
-          <h2 className="form-title">Iniciar sesión</h2>
+          {!showForgotPassword ? (
+            <>
+              <h2 className="form-title">Iniciar sesión</h2>
 
-          <p className="form-sub">
-            Ingresá con tu cuenta para ver tus precios y continuar tu pedido.
-          </p>
+              <p className="form-sub">
+                Ingresá con tu cuenta para ver tus precios y continuar tu pedido.
+              </p>
 
-          {error && <div className="error-box">⚠ {error}</div>}
+              {error && <div className="error-box">⚠ {error}</div>}
 
-          <form onSubmit={onSubmit}>
-            <div className="field-group">
-              <label className="field-label" htmlFor="email">
-                Correo electrónico
-              </label>
+              <form onSubmit={onSubmit}>
+                <div className="field-group">
+                  <label className="field-label" htmlFor="email">
+                    Correo electrónico
+                  </label>
 
-              <div className="input-wrap">
-                <Mail className="input-icon" />
-                <input
-                  id="email"
-                  className="field-input"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="cliente@empresa.com"
-                  value={email}
+                  <div className="input-wrap">
+                    <Mail className="input-icon" />
+                    <input
+                      id="email"
+                      className="field-input"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="cliente@empresa.com"
+                      value={email}
+                      disabled={saving || loading}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="field-group">
+                  <label className="field-label" htmlFor="password">
+                    Contraseña
+                  </label>
+
+                  <div className="input-wrap">
+                    <Lock className="input-icon" />
+                    <input
+                      id="password"
+                      className="field-input"
+                      type="password"
+                      autoComplete="current-password"
+                      placeholder="Ingresá tu contraseña"
+                      value={password}
+                      disabled={saving || loading}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="forgot-row">
+                  <button
+                    type="button"
+                    className="forgot-button"
+                    onClick={openForgotPassword}
+                    disabled={saving || loading}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
                   disabled={saving || loading}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-            </div>
+                  className="btn-submit"
+                >
+                  {saving ? "Ingresando..." : "Ingresar"}
+                </button>
+              </form>
 
-            <div className="field-group">
-              <label className="field-label" htmlFor="password">
-                Contraseña
-              </label>
+              <div className="divider" />
 
-              <div className="input-wrap">
-                <Lock className="input-icon" />
-                <input
-                  id="password"
-                  className="field-input"
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="Ingresá tu contraseña"
-                  value={password}
-                  disabled={saving || loading}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-            </div>
+              <p className="auth-footer">
+                ¿No tenés cuenta? Creala ahora sin ayuda de nadie y empezá a
+                comprar.
+              </p>
 
-            <button
-              type="submit"
-              disabled={saving || loading}
-              className="btn-submit"
-            >
-              {saving ? "Ingresando..." : "Ingresar"}
-            </button>
-          </form>
+              <Link className="create-account" href="/tienda/register">
+                <UserPlus size={18} />
+                Crear mi cuenta
+              </Link>
 
-          <div className="divider" />
+              <p className="register-help">
+                Tu cuenta se crea como cliente minorista. Si necesitás cuenta
+                mayorista, Grupo VJ puede activarla después.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="form-title">Recuperar contraseña</h2>
 
-          <p className="auth-footer">
-            ¿No tenés cuenta? Creala ahora sin ayuda de nadie y empezá a
-            comprar.
-          </p>
+              <p className="form-sub">
+                Ingresá tu correo y te vamos a enviar un enlace para crear una
+                nueva contraseña.
+              </p>
 
-          <Link className="create-account" href="/tienda/register">
-            <UserPlus size={18} />
-            Crear mi cuenta
-          </Link>
+              {error && <div className="error-box">⚠ {error}</div>}
 
-          <p className="register-help">
-            Tu cuenta se crea como cliente minorista. Si necesitás cuenta
-            mayorista, Grupo VJ puede activarla después.
-          </p>
+              {resetSent && (
+                <div className="success-box">
+                  Listo. Si el correo existe, te enviamos un enlace de
+                  recuperación. Revisá también spam o correo no deseado.
+                </div>
+              )}
+
+              {!resetSent && (
+                <div className="forgot-help">
+                  Revisá también la carpeta de spam o correo no deseado.
+                </div>
+              )}
+
+              <form onSubmit={onForgotPasswordSubmit}>
+                <div className="field-group">
+                  <label className="field-label" htmlFor="resetEmail">
+                    Correo electrónico
+                  </label>
+
+                  <div className="input-wrap">
+                    <Mail className="input-icon" />
+                    <input
+                      id="resetEmail"
+                      className="field-input"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="cliente@empresa.com"
+                      value={resetEmail}
+                      disabled={resetSaving}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={resetSaving}
+                  className="btn-submit"
+                >
+                  {resetSaving ? "Enviando..." : "Enviar enlace"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={resetSaving}
+                  className="secondary-button"
+                  onClick={backToLogin}
+                >
+                  Volver al inicio de sesión
+                </button>
+              </form>
+            </>
+          )}
 
           <Link className="back-to-shop" href="/tienda">
             <ArrowLeft size={15} />

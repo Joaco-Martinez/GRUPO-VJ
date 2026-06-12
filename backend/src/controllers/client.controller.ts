@@ -58,23 +58,54 @@ export const clientController = {
     }
   },
 
-  async registerFromStore(req: Request, res: Response, next: NextFunction) {
-  try {
-    const client = await clientService.registerStoreClient({
-      ...req.body,
-      latitude: toNumberOrNull(req.body.latitude) ?? null,
-      longitude: toNumberOrNull(req.body.longitude) ?? null,
-    });
+  async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email } = req.body;
 
-    res.status(201).json({
-      ok: true,
-      message: "Cuenta creada correctamente",
-      client,
-    });
-  } catch (error) {
-    next(error);
-  }
-},
+      await clientService.requestPasswordReset(email);
+
+      res.json({
+        ok: true,
+        message:
+          "Si el email está registrado, te enviamos un enlace para restablecer la contraseña",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { token, password } = req.body;
+
+      await clientService.resetPassword(token, password);
+
+      res.json({
+        ok: true,
+        message: "Contraseña actualizada correctamente",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async registerFromStore(req: Request, res: Response, next: NextFunction) {
+    try {
+      const client = await clientService.registerStoreClient({
+        ...req.body,
+        latitude: toNumberOrNull(req.body.latitude) ?? null,
+        longitude: toNumberOrNull(req.body.longitude) ?? null,
+      });
+
+      res.status(201).json({
+        ok: true,
+        message: "Cuenta creada correctamente",
+        client,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 
   async getOne(req: Request, res: Response, next: NextFunction) {
     try {

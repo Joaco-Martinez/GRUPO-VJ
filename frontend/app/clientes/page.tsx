@@ -1,30 +1,54 @@
-'use client';
+/* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
-import AppLayout from '@/components/AppLayout';
-import api from '@/lib/api';
-import type { AccountMovement, Client, ClientCategory, PaymentMethod } from '@/types';
-import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
-import toast from 'react-hot-toast';
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import AppLayout from "@/components/AppLayout";
+import api from "@/lib/api";
+import type {
+  AccountMovement,
+  Client,
+  ClientCategory,
+  PaymentMethod,
+} from "@/types";
+import {
+  clientName,
+  fmtDate,
+  fmtMoney,
+  normalizeArray,
+  num,
+} from "@/lib/helpers";
+import toast from "react-hot-toast";
 import {
   AlertTriangle,
   CreditCard,
   Edit2,
   MapPin,
+  KeyRound,
+  Mail,
   Plus,
   Search,
   Trash2,
   Users,
   Wallet,
   X,
-} from 'lucide-react';
+} from "lucide-react";
 
-type ClientFormStep = 'datos' | 'direccion' | 'cuenta';
+type ClientFormStep = "datos" | "direccion" | "cuenta";
 
 const MOBILE_CLIENTS_PAGE_SIZE = 6;
+const CLIENT_DEFAULT_PASSWORD_LABEL = "GrupoVJ123";
 
 type ClientWithAddress = Client & {
+  user?: {
+    id: string;
+    email: string;
+    name?: string | null;
+    role?: string | null;
+    isActive?: boolean | null;
+    mustChangePassword?: boolean | null;
+  } | null;
   addressStreet?: string | null;
   addressNumber?: string | null;
   addressFloor?: string | null;
@@ -38,36 +62,36 @@ type ClientWithAddress = Client & {
 };
 
 const paymentMethods: PaymentMethod[] = [
-  'EFECTIVO',
-  'TRANSFERENCIA',
-  'TARJETA',
-  'DEBITO',
-  'CREDITO',
-  'QR',
-  'QR_MERCADOPAGO',
-  'QR_NACION',
+  "EFECTIVO",
+  "TRANSFERENCIA",
+  "TARJETA",
+  "DEBITO",
+  "CREDITO",
+  "QR",
+  "QR_MERCADOPAGO",
+  "QR_NACION",
 ];
 
 const emptyForm = {
-  nombre: '',
-  apellido: '',
-  dni: '',
-  telefono: '',
-  gmail: '',
-  category: 'Price',
-  creditLimit: '',
-  isAccountEnabled: 'true',
+  nombre: "",
+  apellido: "",
+  dni: "",
+  telefono: "",
+  gmail: "",
+  category: "Price",
+  creditLimit: "",
+  isAccountEnabled: "true",
 
-  addressStreet: '',
-  addressNumber: '',
-  addressFloor: '',
-  addressApartment: '',
-  addressCity: '',
-  addressProvince: '',
-  addressPostalCode: '',
-  addressNotes: '',
-  latitude: '',
-  longitude: '',
+  addressStreet: "",
+  addressNumber: "",
+  addressFloor: "",
+  addressApartment: "",
+  addressCity: "",
+  addressProvince: "",
+  addressPostalCode: "",
+  addressNotes: "",
+  latitude: "",
+  longitude: "",
 };
 
 type ConfirmState = {
@@ -85,86 +109,99 @@ function useIsMobile(maxWidth = 768) {
     const check = () => setIsMobile(window.innerWidth <= maxWidth);
 
     check();
-    window.addEventListener('resize', check);
+    window.addEventListener("resize", check);
 
-    return () => window.removeEventListener('resize', check);
+    return () => window.removeEventListener("resize", check);
   }, [maxWidth]);
 
   return isMobile;
 }
 
 function cleanString(value: string) {
-  const text = String(value || '').trim();
+  const text = String(value || "").trim();
   return text || undefined;
 }
 
 function toNumberOrUndefined(value: string) {
-  if (value === undefined || value === null || value === '') return undefined;
+  if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
 }
 
 function clientAddress(c: ClientWithAddress) {
-  const streetLine = [c.addressStreet, c.addressNumber].filter(Boolean).join(' ');
+  const streetLine = [c.addressStreet, c.addressNumber]
+    .filter(Boolean)
+    .join(" ");
   const floorLine = [
-    c.addressFloor ? `Piso ${c.addressFloor}` : '',
-    c.addressApartment ? `Dto ${c.addressApartment}` : '',
+    c.addressFloor ? `Piso ${c.addressFloor}` : "",
+    c.addressApartment ? `Dto ${c.addressApartment}` : "",
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(" · ");
 
   const cityLine = [c.addressCity, c.addressProvince, c.addressPostalCode]
     .filter(Boolean)
-    .join(' · ');
+    .join(" · ");
 
   const parts = [streetLine, floorLine, cityLine].filter(Boolean);
 
-  return parts.length ? parts.join(' — ') : '';
+  return parts.length ? parts.join(" — ") : "";
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
   return (
-    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
-      ?.message ??
-    (error as { response?: { data?: { message?: string; error?: string } } })?.response?.data
-      ?.error ??
+    (error as { response?: { data?: { message?: string; error?: string } } })
+      ?.response?.data?.message ??
+    (error as { response?: { data?: { message?: string; error?: string } } })
+      ?.response?.data?.error ??
     fallback
   );
 }
 
 function normalizeClientCategory(value?: string | null): ClientCategory {
-  if (value === 'Mayorista') return 'Mayorista' as ClientCategory;
+  if (value === "Mayorista") return "Mayorista" as ClientCategory;
 
   // Compatibilidad: si quedó algo viejo como "Cliente" o no llega categoría,
   // ahora lo tratamos como Minorista / Price.
-  return 'Price' as ClientCategory;
+  return "Price" as ClientCategory;
 }
 
 function clientCategoryLabel(value?: string | null) {
-  return value === 'Mayorista' ? 'Mayorista' : 'Minorista';
+  return value === "Mayorista" ? "Mayorista" : "Minorista";
+}
+
+function hasStoreAccess(c?: ClientWithAddress | null) {
+  return Boolean(c && ((c as any).userId || c.user));
+}
+
+function mustChangePassword(c?: ClientWithAddress | null) {
+  return Boolean(c?.user?.mustChangePassword);
 }
 
 export default function ClientesPage() {
   const [clients, setClients] = useState<ClientWithAddress[]>([]);
   const [movements, setMovements] = useState<AccountMovement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [modal, setModal] = useState<'create' | 'edit' | 'payment' | 'history' | null>(null);
+  const [search, setSearch] = useState("");
+  const [modal, setModal] = useState<
+    "create" | "edit" | "payment" | "history" | null
+  >(null);
   const [editing, setEditing] = useState<ClientWithAddress | null>(null);
   const [form, setForm] = useState<Record<string, string>>(emptyForm);
   const [payment, setPayment] = useState({
-    amount: '',
-    method: 'EFECTIVO' as PaymentMethod,
-    reference: '',
-    description: '',
+    amount: "",
+    method: "EFECTIVO" as PaymentMethod,
+    reference: "",
+    description: "",
   });
   const [saving, setSaving] = useState(false);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
-  const [mobileClientSheet, setMobileClientSheet] = useState<ClientWithAddress | null>(null);
+  const [mobileClientSheet, setMobileClientSheet] =
+    useState<ClientWithAddress | null>(null);
   const [mobileCurrentPage, setMobileCurrentPage] = useState(1);
-  const [clientFormStep, setClientFormStep] = useState<ClientFormStep>('datos');
+  const [clientFormStep, setClientFormStep] = useState<ClientFormStep>("datos");
 
   const isMobile = useIsMobile();
 
@@ -172,15 +209,15 @@ export default function ClientesPage() {
     setLoading(true);
 
     try {
-      const r = await api.get('/clients');
+      const r = await api.get("/clients");
       setClients(normalizeArray<ClientWithAddress>(r.data));
 
       if (showSuccess) {
-        toast.success('Clientes actualizados');
+        toast.success("Clientes actualizados");
       }
     } catch (e) {
       console.error(e);
-      toast.error('Error al cargar clientes');
+      toast.error("Error al cargar clientes");
     } finally {
       setLoading(false);
     }
@@ -190,7 +227,7 @@ export default function ClientesPage() {
     let alive = true;
 
     api
-      .get('/clients')
+      .get("/clients")
       .then((r) => {
         if (!alive) return;
         setClients(normalizeArray<ClientWithAddress>(r.data));
@@ -198,7 +235,7 @@ export default function ClientesPage() {
       .catch((e) => {
         console.error(e);
         if (!alive) return;
-        toast.error('Error al cargar clientes');
+        toast.error("Error al cargar clientes");
       })
       .finally(() => {
         if (!alive) return;
@@ -210,7 +247,10 @@ export default function ClientesPage() {
     };
   }, []);
 
-  const totalDebt = clients.reduce((a, c) => a + Math.max(0, num(c.currentBalance)), 0);
+  const totalDebt = clients.reduce(
+    (a, c) => a + Math.max(0, num(c.currentBalance)),
+    0,
+  );
   const debtors = clients.filter((c) => num(c.currentBalance) > 0).length;
   const clientsWithAddress = clients.filter((c) => clientAddress(c)).length;
 
@@ -223,16 +263,21 @@ export default function ClientesPage() {
         return (
           !q ||
           clientName(c).toLowerCase().includes(q) ||
-          String(c.dni ?? '').includes(q) ||
-          String(c.telefono ?? '').includes(q) ||
-          String(c.gmail ?? '').toLowerCase().includes(q) ||
+          String(c.dni ?? "").includes(q) ||
+          String(c.telefono ?? "").includes(q) ||
+          String(c.gmail ?? "")
+            .toLowerCase()
+            .includes(q) ||
           address.includes(q)
         );
       }),
-    [clients, search]
+    [clients, search],
   );
 
-  const mobileTotalPages = Math.max(1, Math.ceil(filtered.length / MOBILE_CLIENTS_PAGE_SIZE));
+  const mobileTotalPages = Math.max(
+    1,
+    Math.ceil(filtered.length / MOBILE_CLIENTS_PAGE_SIZE),
+  );
 
   const mobilePaginatedClients = useMemo(() => {
     const start = (mobileCurrentPage - 1) * MOBILE_CLIENTS_PAGE_SIZE;
@@ -242,7 +287,10 @@ export default function ClientesPage() {
   const mobilePageStart = filtered.length
     ? (mobileCurrentPage - 1) * MOBILE_CLIENTS_PAGE_SIZE + 1
     : 0;
-  const mobilePageEnd = Math.min(mobileCurrentPage * MOBILE_CLIENTS_PAGE_SIZE, filtered.length);
+  const mobilePageEnd = Math.min(
+    mobileCurrentPage * MOBILE_CLIENTS_PAGE_SIZE,
+    filtered.length,
+  );
 
   useEffect(() => {
     setMobileCurrentPage(1);
@@ -257,63 +305,73 @@ export default function ClientesPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
-    setClientFormStep('datos');
-    setModal('create');
+    setClientFormStep("datos");
+    setModal("create");
   };
 
   const openEdit = (c: ClientWithAddress) => {
     setEditing(c);
     setForm({
-      nombre: c.nombre ?? '',
-      apellido: c.apellido ?? '',
-      dni: c.dni ?? '',
-      telefono: c.telefono ?? '',
-      gmail: c.gmail ?? '',
-      category: normalizeClientCategory(c.category as string | null | undefined),
-      creditLimit: String(c.creditLimit ?? ''),
+      nombre: c.nombre ?? "",
+      apellido: c.apellido ?? "",
+      dni: c.dni ?? "",
+      telefono: c.telefono ?? "",
+      gmail: c.gmail ?? "",
+      category: normalizeClientCategory(
+        c.category as string | null | undefined,
+      ),
+      creditLimit: String(c.creditLimit ?? ""),
       isAccountEnabled: String(c.isAccountEnabled !== false),
 
-      addressStreet: c.addressStreet ?? '',
-      addressNumber: c.addressNumber ?? '',
-      addressFloor: c.addressFloor ?? '',
-      addressApartment: c.addressApartment ?? '',
-      addressCity: c.addressCity ?? '',
-      addressProvince: c.addressProvince ?? '',
-      addressPostalCode: c.addressPostalCode ?? '',
-      addressNotes: c.addressNotes ?? '',
-      latitude: c.latitude === null || c.latitude === undefined ? '' : String(c.latitude),
-      longitude: c.longitude === null || c.longitude === undefined ? '' : String(c.longitude),
+      addressStreet: c.addressStreet ?? "",
+      addressNumber: c.addressNumber ?? "",
+      addressFloor: c.addressFloor ?? "",
+      addressApartment: c.addressApartment ?? "",
+      addressCity: c.addressCity ?? "",
+      addressProvince: c.addressProvince ?? "",
+      addressPostalCode: c.addressPostalCode ?? "",
+      addressNotes: c.addressNotes ?? "",
+      latitude:
+        c.latitude === null || c.latitude === undefined
+          ? ""
+          : String(c.latitude),
+      longitude:
+        c.longitude === null || c.longitude === undefined
+          ? ""
+          : String(c.longitude),
     });
-    setClientFormStep('datos');
-    setModal('edit');
+    setClientFormStep("datos");
+    setModal("edit");
   };
 
   const openPayment = (c: ClientWithAddress) => {
     setEditing(c);
     setPayment({
-      amount: '',
-      method: 'EFECTIVO',
-      reference: '',
-      description: '',
+      amount: "",
+      method: "EFECTIVO",
+      reference: "",
+      description: "",
     });
-    setModal('payment');
+    setModal("payment");
   };
 
   const openHistory = async (c: ClientWithAddress) => {
     setEditing(c);
     setMovements([]);
-    setModal('history');
+    setModal("history");
 
-    const toastId = toast.loading('Cargando cuenta corriente...');
+    const toastId = toast.loading("Cargando cuenta corriente...");
 
     try {
       const r = await api.get(`/accounts/clients/${c.id}`);
-      setMovements(normalizeArray<AccountMovement>(r.data?.movements ?? r.data));
-      toast.success('Cuenta corriente cargada', { id: toastId });
+      setMovements(
+        normalizeArray<AccountMovement>(r.data?.movements ?? r.data),
+      );
+      toast.success("Cuenta corriente cargada", { id: toastId });
     } catch (e) {
       console.error(e);
       setMovements([]);
-      toast.error('Error al cargar la cuenta corriente', { id: toastId });
+      toast.error("Error al cargar la cuenta corriente", { id: toastId });
     }
   };
 
@@ -333,17 +391,24 @@ export default function ClientesPage() {
 
   const saveClient = async () => {
     if (!form.nombre.trim()) {
-      toast.error('Ingresá el nombre del cliente');
+      toast.error("Ingresá el nombre del cliente");
       return;
     }
 
     if (!form.apellido.trim()) {
-      toast.error('Ingresá el apellido del cliente');
+      toast.error("Ingresá el apellido del cliente");
       return;
     }
 
     if (!form.dni.trim()) {
-      toast.error('Ingresá el DNI/CUIT del cliente');
+      toast.error("Ingresá el DNI/CUIT del cliente");
+      return;
+    }
+
+    if (modal === "create" && !form.gmail.trim()) {
+      toast.error(
+        "Ingresá el email del cliente para crear la cuenta de acceso",
+      );
       return;
     }
 
@@ -351,18 +416,20 @@ export default function ClientesPage() {
     const longitude = toNumberOrUndefined(form.longitude);
 
     if (form.latitude && latitude === undefined) {
-      toast.error('La latitud no es válida');
+      toast.error("La latitud no es válida");
       return;
     }
 
     if (form.longitude && longitude === undefined) {
-      toast.error('La longitud no es válida');
+      toast.error("La longitud no es válida");
       return;
     }
 
     setSaving(true);
 
-    const toastId = toast.loading(modal === 'create' ? 'Creando cliente...' : 'Guardando cliente...');
+    const toastId = toast.loading(
+      modal === "create" ? "Creando cliente..." : "Guardando cliente...",
+    );
 
     try {
       const payload = {
@@ -373,7 +440,7 @@ export default function ClientesPage() {
         gmail: cleanString(form.gmail),
         category: normalizeClientCategory(form.category),
         creditLimit: form.creditLimit ? num(form.creditLimit) : null,
-        isAccountEnabled: form.isAccountEnabled === 'true',
+        isAccountEnabled: form.isAccountEnabled === "true",
 
         addressStreet: cleanString(form.addressStreet),
         addressNumber: cleanString(form.addressNumber),
@@ -385,20 +452,26 @@ export default function ClientesPage() {
         addressNotes: cleanString(form.addressNotes),
         latitude: latitude ?? null,
         longitude: longitude ?? null,
+        createUser: modal === "create",
       };
 
-      if (modal === 'create') {
-        await api.post('/clients', payload);
-        toast.success('Cliente creado correctamente', { id: toastId });
+      if (modal === "create") {
+        await api.post("/clients", payload);
+        toast.success(
+          `Cliente creado. Cuenta de tienda generada con contraseña inicial: ${CLIENT_DEFAULT_PASSWORD_LABEL}`,
+          { id: toastId },
+        );
       } else if (editing) {
         await api.put(`/clients/${editing.id}`, payload);
-        toast.success('Cliente actualizado correctamente', { id: toastId });
+        toast.success("Cliente actualizado correctamente", { id: toastId });
       }
 
       forceCloseModal();
       await load();
     } catch (e: unknown) {
-      toast.error(getErrorMessage(e, 'Error al guardar cliente'), { id: toastId });
+      toast.error(getErrorMessage(e, "Error al guardar cliente"), {
+        id: toastId,
+      });
     } finally {
       setSaving(false);
     }
@@ -410,13 +483,13 @@ export default function ClientesPage() {
     const amount = num(payment.amount);
 
     if (!payment.amount || amount <= 0) {
-      toast.error('Ingresá un importe válido');
+      toast.error("Ingresá un importe válido");
       return;
     }
 
     setSaving(true);
 
-    const toastId = toast.loading('Registrando abono...');
+    const toastId = toast.loading("Registrando abono...");
 
     try {
       await api.post(`/accounts/clients/${editing.id}/payment`, {
@@ -424,11 +497,13 @@ export default function ClientesPage() {
         amount,
       });
 
-      toast.success('Abono registrado correctamente', { id: toastId });
+      toast.success("Abono registrado correctamente", { id: toastId });
       forceCloseModal();
       await load();
     } catch (e: unknown) {
-      toast.error(getErrorMessage(e, 'Error al registrar abono'), { id: toastId });
+      toast.error(getErrorMessage(e, "Error al registrar abono"), {
+        id: toastId,
+      });
     } finally {
       setSaving(false);
     }
@@ -436,19 +511,21 @@ export default function ClientesPage() {
 
   const deleteClient = async (c: ClientWithAddress) => {
     setConfirmModal({
-      title: 'Eliminar cliente',
+      title: "Eliminar cliente",
       message: `¿Eliminar ${clientName(c)}? Esta acción no se puede deshacer.`,
-      confirmText: 'Eliminar',
+      confirmText: "Eliminar",
       danger: true,
       onConfirm: async () => {
-        const toastId = toast.loading('Eliminando cliente...');
+        const toastId = toast.loading("Eliminando cliente...");
 
         try {
           await api.delete(`/clients/${c.id}`);
           await load();
-          toast.success('Cliente eliminado correctamente', { id: toastId });
+          toast.success("Cliente eliminado correctamente", { id: toastId });
         } catch (e: unknown) {
-          toast.error(getErrorMessage(e, 'No se pudo eliminar'), { id: toastId });
+          toast.error(getErrorMessage(e, "No se pudo eliminar"), {
+            id: toastId,
+          });
         }
       },
     });
@@ -476,8 +553,8 @@ export default function ClientesPage() {
           className="btn btn-primary btn-sm"
           onClick={openCreate}
           style={{
-            width: isMobile ? '100%' : undefined,
-            justifyContent: isMobile ? 'center' : undefined,
+            width: isMobile ? "100%" : undefined,
+            justifyContent: isMobile ? "center" : undefined,
           }}
         >
           <Plus size={14} /> Nuevo cliente
@@ -486,8 +563,10 @@ export default function ClientesPage() {
     >
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(5, 1fr)',
+          display: "grid",
+          gridTemplateColumns: isMobile
+            ? "repeat(2, minmax(0, 1fr))"
+            : "repeat(5, 1fr)",
           gap: isMobile ? 10 : 12,
           marginBottom: 18,
         }}
@@ -511,9 +590,9 @@ export default function ClientesPage() {
           <div
             className="stat-value"
             style={{
-              color: totalDebt > 0 ? 'var(--warn)' : 'var(--accent)',
+              color: totalDebt > 0 ? "var(--warn)" : "var(--accent)",
               fontSize: isMobile ? 18 : undefined,
-              overflowWrap: 'anywhere',
+              overflowWrap: "anywhere",
             }}
           >
             {fmtMoney(totalDebt)}
@@ -524,11 +603,11 @@ export default function ClientesPage() {
         <div
           className="stat-card"
           style={{
-            gridColumn: isMobile ? '1 / -1' : undefined,
+            gridColumn: isMobile ? "1 / -1" : undefined,
           }}
         >
           <div className="stat-value">
-            {clients.filter((c) => c.category === 'Mayorista').length}
+            {clients.filter((c) => c.category === "Mayorista").length}
           </div>
           <div className="stat-label">Mayoristas</div>
         </div>
@@ -536,28 +615,32 @@ export default function ClientesPage() {
 
       <div
         style={{
-          position: 'relative',
+          position: "relative",
           marginBottom: 18,
-          maxWidth: isMobile ? '100%' : 520,
-          width: '100%',
+          maxWidth: isMobile ? "100%" : 520,
+          width: "100%",
         }}
       >
         <Search
           size={14}
           style={{
-            position: 'absolute',
+            position: "absolute",
             left: 12,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: 'var(--text3)',
+            top: "50%",
+            transform: "translateY(-50%)",
+            color: "var(--text3)",
           }}
         />
 
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder={isMobile ? 'Buscar cliente...' : 'Buscar por nombre, DNI, teléfono, email o dirección...'}
-          style={{ paddingLeft: 34, width: '100%' }}
+          placeholder={
+            isMobile
+              ? "Buscar cliente..."
+              : "Buscar por nombre, DNI, teléfono, email o dirección..."
+          }
+          style={{ paddingLeft: 34, width: "100%" }}
         />
       </div>
 
@@ -577,7 +660,7 @@ export default function ClientesPage() {
             <div
               className="clients-mobile-list"
               style={{
-                display: 'grid',
+                display: "grid",
                 gap: 8,
                 padding: 10,
               }}
@@ -592,21 +675,21 @@ export default function ClientesPage() {
                     key={c.id}
                     className="clients-mobile-card"
                     style={{
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
                       borderRadius: 14,
                       padding: 10,
-                      display: 'grid',
+                      display: "grid",
                       gap: 8,
                       minWidth: 0,
                     }}
                   >
                     <div
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
+                        display: "flex",
+                        justifyContent: "space-between",
                         gap: 8,
-                        alignItems: 'flex-start',
+                        alignItems: "flex-start",
                         minWidth: 0,
                       }}
                     >
@@ -616,9 +699,9 @@ export default function ClientesPage() {
                             fontWeight: 900,
                             fontSize: 13,
                             lineHeight: 1.2,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
                           }}
                         >
                           {clientName(c)}
@@ -626,23 +709,29 @@ export default function ClientesPage() {
 
                         <div
                           style={{
-                            color: 'var(--text3)',
+                            color: "var(--text3)",
                             fontSize: 10.5,
                             marginTop: 2,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
                           }}
                         >
-                          {c.dni || 'Sin DNI'} · {c.telefono || 'Sin teléfono'}
+                          {c.dni || "Sin DNI"} · {c.telefono || "Sin teléfono"}
                         </div>
                       </div>
 
                       <span
                         className={`badge ${
-                          c.category === 'Mayorista' ? 'badge-blue' : 'badge-green'
+                          c.category === "Mayorista"
+                            ? "badge-blue"
+                            : "badge-green"
                         }`}
-                        style={{ flexShrink: 0, fontSize: 9, padding: '3px 6px' }}
+                        style={{
+                          flexShrink: 0,
+                          fontSize: 9,
+                          padding: "3px 6px",
+                        }}
                       >
                         {clientCategoryLabel(c.category)}
                       </span>
@@ -650,23 +739,23 @@ export default function ClientesPage() {
 
                     <div
                       style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                        display: "grid",
+                        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
                         gap: 6,
                       }}
                     >
                       <div
                         style={{
-                          background: 'var(--surface2)',
+                          background: "var(--surface2)",
                           borderRadius: 10,
-                          padding: '7px 8px',
+                          padding: "7px 8px",
                           minWidth: 0,
                         }}
                       >
                         <small
                           style={{
-                            display: 'block',
-                            color: 'var(--text3)',
+                            display: "block",
+                            color: "var(--text3)",
                             fontSize: 9,
                             fontWeight: 800,
                             marginBottom: 3,
@@ -676,13 +765,14 @@ export default function ClientesPage() {
                         </small>
                         <strong
                           style={{
-                            display: 'block',
-                            color: balance > 0 ? 'var(--warn)' : 'var(--accent)',
-                            fontFamily: 'var(--mono)',
+                            display: "block",
+                            color:
+                              balance > 0 ? "var(--warn)" : "var(--accent)",
+                            fontFamily: "var(--mono)",
                             fontSize: 10.5,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
                           }}
                         >
                           {fmtMoney(balance)}
@@ -691,16 +781,16 @@ export default function ClientesPage() {
 
                       <div
                         style={{
-                          background: 'var(--surface2)',
+                          background: "var(--surface2)",
                           borderRadius: 10,
-                          padding: '7px 8px',
+                          padding: "7px 8px",
                           minWidth: 0,
                         }}
                       >
                         <small
                           style={{
-                            display: 'block',
-                            color: 'var(--text3)',
+                            display: "block",
+                            color: "var(--text3)",
                             fontSize: 9,
                             fontWeight: 800,
                             marginBottom: 3,
@@ -710,30 +800,32 @@ export default function ClientesPage() {
                         </small>
                         <strong
                           style={{
-                            display: 'block',
-                            fontFamily: 'var(--mono)',
+                            display: "block",
+                            fontFamily: "var(--mono)",
                             fontSize: 10.5,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
                           }}
                         >
-                          {c.creditLimit ? fmtMoney(c.creditLimit) : 'Sin límite'}
+                          {c.creditLimit
+                            ? fmtMoney(c.creditLimit)
+                            : "Sin límite"}
                         </strong>
                       </div>
 
                       <div
                         style={{
-                          background: 'var(--surface2)',
+                          background: "var(--surface2)",
                           borderRadius: 10,
-                          padding: '7px 8px',
+                          padding: "7px 8px",
                           minWidth: 0,
                         }}
                       >
                         <small
                           style={{
-                            display: 'block',
-                            color: 'var(--text3)',
+                            display: "block",
+                            color: "var(--text3)",
                             fontSize: 9,
                             fontWeight: 800,
                             marginBottom: 3,
@@ -743,25 +835,62 @@ export default function ClientesPage() {
                         </small>
                         <strong
                           style={{
-                            display: 'block',
-                            color: accountDisabled ? 'var(--danger)' : 'var(--text)',
+                            display: "block",
+                            color: accountDisabled
+                              ? "var(--danger)"
+                              : "var(--text)",
                             fontSize: 10.5,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
                           }}
                         >
-                          {accountDisabled ? 'No' : 'Sí'}
+                          {accountDisabled ? "No" : "Sí"}
+                        </strong>
+                      </div>
+
+                      <div
+                        style={{
+                          background: "var(--surface2)",
+                          borderRadius: 10,
+                          padding: "7px 8px",
+                          minWidth: 0,
+                        }}
+                      >
+                        <small
+                          style={{
+                            display: "block",
+                            color: "var(--text3)",
+                            fontSize: 9,
+                            fontWeight: 800,
+                            marginBottom: 3,
+                          }}
+                        >
+                          Acceso
+                        </small>
+                        <strong
+                          style={{
+                            display: "block",
+                            color: hasStoreAccess(c)
+                              ? "var(--accent)"
+                              : "var(--danger)",
+                            fontSize: 10.5,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {hasStoreAccess(c) ? "Sí" : "No"}
                         </strong>
                       </div>
                     </div>
 
                     <div
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
+                        display: "flex",
+                        alignItems: "center",
                         gap: 6,
-                        color: address ? 'var(--text2)' : 'var(--text3)',
+                        color: address ? "var(--text2)" : "var(--text3)",
                         fontSize: 11,
                         lineHeight: 1.25,
                         minWidth: 0,
@@ -770,26 +899,27 @@ export default function ClientesPage() {
                       <MapPin
                         size={12}
                         style={{
-                          color: address ? 'var(--accent)' : 'var(--text3)',
+                          color: address ? "var(--accent)" : "var(--text3)",
                           flexShrink: 0,
                         }}
                       />
                       <span
                         style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
                           minWidth: 0,
                         }}
                       >
-                        {address || 'Sin dirección'}
+                        {address || "Sin dirección"}
                       </span>
                     </div>
 
                     <div
                       style={{
-                        display: 'grid',
-                        gridTemplateColumns: balance > 0 ? '1fr 1fr 1fr' : '1fr 1fr',
+                        display: "grid",
+                        gridTemplateColumns:
+                          balance > 0 ? "1fr 1fr 1fr" : "1fr 1fr",
                         gap: 7,
                       }}
                     >
@@ -797,7 +927,11 @@ export default function ClientesPage() {
                         <button
                           className="btn btn-secondary btn-sm"
                           onClick={() => openPayment(c)}
-                          style={{ width: '100%', justifyContent: 'center', minHeight: 31 }}
+                          style={{
+                            width: "100%",
+                            justifyContent: "center",
+                            minHeight: 31,
+                          }}
                         >
                           <Wallet size={12} /> Abono
                         </button>
@@ -806,7 +940,11 @@ export default function ClientesPage() {
                       <button
                         className="btn btn-secondary btn-sm"
                         onClick={() => setMobileClientSheet(c)}
-                        style={{ width: '100%', justifyContent: 'center', minHeight: 31 }}
+                        style={{
+                          width: "100%",
+                          justifyContent: "center",
+                          minHeight: 31,
+                        }}
                       >
                         Ver más
                       </button>
@@ -814,7 +952,11 @@ export default function ClientesPage() {
                       <button
                         className="btn btn-primary btn-sm"
                         onClick={() => openEdit(c)}
-                        style={{ width: '100%', justifyContent: 'center', minHeight: 31 }}
+                        style={{
+                          width: "100%",
+                          justifyContent: "center",
+                          minHeight: 31,
+                        }}
                       >
                         <Edit2 size={12} /> Editar
                       </button>
@@ -822,7 +964,8 @@ export default function ClientesPage() {
                   </article>
                 );
               })}
-            </div>          ) : (
+            </div>
+          ) : (
             <table>
               <thead>
                 <tr>
@@ -831,6 +974,7 @@ export default function ClientesPage() {
                   <th>Contacto</th>
                   <th>Dirección</th>
                   <th>Categoría</th>
+                  <th>Acceso tienda</th>
                   <th>Cuenta corriente</th>
                   <th>Límite</th>
                   <th></th>
@@ -845,35 +989,57 @@ export default function ClientesPage() {
                     <tr key={c.id}>
                       <td>
                         <b>{clientName(c)}</b>
-                        <div style={{ color: 'var(--text3)', fontSize: 11 }}>
-                          {c.gmail ?? 'Sin email'}
+                        <div style={{ color: "var(--text3)", fontSize: 11 }}>
+                          {c.gmail ?? "Sin email"}
                         </div>
                       </td>
 
-                      <td style={{ fontFamily: 'var(--mono)' }}>{c.dni}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{c.dni}</td>
 
-                      <td>{c.telefono ?? '—'}</td>
+                      <td>{c.telefono ?? "—"}</td>
 
                       <td style={{ minWidth: 230 }}>
                         {address ? (
-                          <div style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 7,
+                              alignItems: "flex-start",
+                            }}
+                          >
                             <MapPin
                               size={13}
-                              style={{ color: 'var(--accent)', marginTop: 2, flexShrink: 0 }}
+                              style={{
+                                color: "var(--accent)",
+                                marginTop: 2,
+                                flexShrink: 0,
+                              }}
                             />
                             <div>
-                              <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.35 }}>
+                              <div
+                                style={{
+                                  fontSize: 12,
+                                  color: "var(--text2)",
+                                  lineHeight: 1.35,
+                                }}
+                              >
                                 {address}
                               </div>
                               {c.addressNotes && (
-                                <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 2 }}>
+                                <div
+                                  style={{
+                                    color: "var(--text3)",
+                                    fontSize: 11,
+                                    marginTop: 2,
+                                  }}
+                                >
                                   {c.addressNotes}
                                 </div>
                               )}
                             </div>
                           </div>
                         ) : (
-                          <span style={{ color: 'var(--text3)', fontSize: 12 }}>
+                          <span style={{ color: "var(--text3)", fontSize: 12 }}>
                             Sin dirección
                           </span>
                         )}
@@ -882,7 +1048,9 @@ export default function ClientesPage() {
                       <td>
                         <span
                           className={`badge ${
-                            c.category === 'Mayorista' ? 'badge-blue' : 'badge-green'
+                            c.category === "Mayorista"
+                              ? "badge-blue"
+                              : "badge-green"
                           }`}
                         >
                           {clientCategoryLabel(c.category)}
@@ -891,8 +1059,33 @@ export default function ClientesPage() {
 
                       <td>
                         <span
+                          className={`badge ${hasStoreAccess(c) ? "badge-green" : "badge-yellow"}`}
+                        >
+                          {hasStoreAccess(c) ? "Con acceso" : "Sin acceso"}
+                        </span>
+                        <div
+                          style={{
+                            color: mustChangePassword(c)
+                              ? "var(--warn)"
+                              : "var(--text3)",
+                            fontSize: 11,
+                            marginTop: 2,
+                          }}
+                        >
+                          {hasStoreAccess(c)
+                            ? mustChangePassword(c)
+                              ? "Debe cambiar clave"
+                              : "Clave configurada"
+                            : "No tiene usuario"}
+                        </div>
+                      </td>
+
+                      <td>
+                        <span
                           className={`badge ${
-                            num(c.currentBalance) > 0 ? 'badge-yellow' : 'badge-green'
+                            num(c.currentBalance) > 0
+                              ? "badge-yellow"
+                              : "badge-green"
                           }`}
                         >
                           {fmtMoney(num(c.currentBalance))}
@@ -900,18 +1093,26 @@ export default function ClientesPage() {
                         <div
                           style={{
                             color:
-                              c.isAccountEnabled === false ? 'var(--danger)' : 'var(--text3)',
+                              c.isAccountEnabled === false
+                                ? "var(--danger)"
+                                : "var(--text3)",
                             fontSize: 11,
                           }}
                         >
-                          {c.isAccountEnabled === false ? 'Deshabilitada' : 'Habilitada'}
+                          {c.isAccountEnabled === false
+                            ? "Deshabilitada"
+                            : "Habilitada"}
                         </div>
                       </td>
 
-                      <td>{c.creditLimit ? fmtMoney(c.creditLimit) : 'Sin límite'}</td>
+                      <td>
+                        {c.creditLimit ? fmtMoney(c.creditLimit) : "Sin límite"}
+                      </td>
 
                       <td>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <div
+                          style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
+                        >
                           <button
                             className="btn btn-secondary btn-sm"
                             onClick={() => openPayment(c)}
@@ -920,15 +1121,24 @@ export default function ClientesPage() {
                             <Wallet size={13} /> Abono
                           </button>
 
-                          <button className="btn btn-ghost btn-sm" onClick={() => openHistory(c)}>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => openHistory(c)}
+                          >
                             <CreditCard size={13} />
                           </button>
 
-                          <button className="btn btn-ghost btn-sm" onClick={() => openEdit(c)}>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => openEdit(c)}
+                          >
                             <Edit2 size={13} />
                           </button>
 
-                          <button className="btn btn-danger btn-sm" onClick={() => deleteClient(c)}>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => deleteClient(c)}
+                          >
                             <Trash2 size={13} />
                           </button>
                         </div>
@@ -944,7 +1154,7 @@ export default function ClientesPage() {
             <div
               className="empty-state"
               style={{
-                padding: isMobile ? '48px 16px' : undefined,
+                padding: isMobile ? "48px 16px" : undefined,
               }}
             >
               <Users size={36} />
@@ -956,30 +1166,39 @@ export default function ClientesPage() {
         {isMobile && !loading && filtered.length > 0 && (
           <div
             style={{
-              borderTop: '1px solid var(--border)',
+              borderTop: "1px solid var(--border)",
               padding: 10,
-              display: 'grid',
+              display: "grid",
               gap: 8,
-              background: 'var(--surface)',
+              background: "var(--surface)",
             }}
           >
             <div
               style={{
-                color: 'var(--text3)',
+                color: "var(--text3)",
                 fontSize: 11,
                 fontWeight: 800,
-                textAlign: 'center',
+                textAlign: "center",
               }}
             >
-              Mostrando {mobilePageStart} - {mobilePageEnd} de {filtered.length} clientes
+              Mostrando {mobilePageStart} - {mobilePageEnd} de {filtered.length}{" "}
+              clientes
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 8,
+              }}
+            >
               <button
                 className="btn btn-secondary btn-sm"
                 disabled={mobileCurrentPage === 1}
-                onClick={() => setMobileCurrentPage((prev) => Math.max(1, prev - 1))}
-                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() =>
+                  setMobileCurrentPage((prev) => Math.max(1, prev - 1))
+                }
+                style={{ width: "100%", justifyContent: "center" }}
               >
                 Anterior
               </button>
@@ -987,8 +1206,12 @@ export default function ClientesPage() {
               <button
                 className="btn btn-secondary btn-sm"
                 disabled={mobileCurrentPage === mobileTotalPages}
-                onClick={() => setMobileCurrentPage((prev) => Math.min(mobileTotalPages, prev + 1))}
-                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() =>
+                  setMobileCurrentPage((prev) =>
+                    Math.min(mobileTotalPages, prev + 1),
+                  )
+                }
+                style={{ width: "100%", justifyContent: "center" }}
               >
                 Siguiente
               </button>
@@ -996,10 +1219,10 @@ export default function ClientesPage() {
 
             <div
               style={{
-                color: 'var(--text2)',
+                color: "var(--text2)",
                 fontSize: 11,
                 fontWeight: 900,
-                textAlign: 'center',
+                textAlign: "center",
               }}
             >
               Página {mobileCurrentPage} de {mobileTotalPages}
@@ -1008,34 +1231,36 @@ export default function ClientesPage() {
         )}
       </div>
 
-      {mobileClientSheet && isMobile && typeof document !== 'undefined' &&
+      {mobileClientSheet &&
+        isMobile &&
+        typeof document !== "undefined" &&
         createPortal(
           <div
             className="clients-mobile-sheet-backdrop"
             onClick={() => setMobileClientSheet(null)}
             style={{
-              position: 'fixed',
+              position: "fixed",
               inset: 0,
               zIndex: 10000,
-              display: 'flex',
-              alignItems: 'flex-end',
-              justifyContent: 'center',
-              background: 'rgba(0,0,0,0.48)',
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+              background: "rgba(0,0,0,0.48)",
             }}
           >
             <div
               className="clients-mobile-sheet"
               onClick={(e) => e.stopPropagation()}
               style={{
-                width: '100%',
-                maxHeight: '82dvh',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column',
-                borderRadius: '22px 22px 0 0',
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                boxShadow: '0 -18px 60px rgba(0,0,0,0.35)',
+                width: "100%",
+                maxHeight: "82dvh",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                borderRadius: "22px 22px 0 0",
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                boxShadow: "0 -18px 60px rgba(0,0,0,0.35)",
               }}
             >
               <div
@@ -1043,111 +1268,328 @@ export default function ClientesPage() {
                   width: 44,
                   height: 4,
                   borderRadius: 999,
-                  background: 'var(--border)',
-                  margin: '10px auto 8px',
+                  background: "var(--border)",
+                  margin: "10px auto 8px",
                   flexShrink: 0,
                 }}
               />
 
               <div
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
                   gap: 12,
-                  padding: '0 14px 12px',
-                  borderBottom: '1px solid var(--border)',
+                  padding: "0 14px 12px",
+                  borderBottom: "1px solid var(--border)",
                 }}
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <b
                     style={{
-                      display: 'block',
+                      display: "block",
                       fontSize: 15,
                       lineHeight: 1.2,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {clientName(mobileClientSheet)}
                   </b>
                   <small
                     style={{
-                      display: 'block',
-                      color: 'var(--text3)',
+                      display: "block",
+                      color: "var(--text3)",
                       marginTop: 3,
                       fontSize: 11,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    {mobileClientSheet.dni || 'Sin DNI'} · {mobileClientSheet.telefono || 'Sin teléfono'}
+                    {mobileClientSheet.dni || "Sin DNI"} ·{" "}
+                    {mobileClientSheet.telefono || "Sin teléfono"}
                   </small>
                 </div>
 
-                <button className="btn btn-ghost btn-sm" onClick={() => setMobileClientSheet(null)}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setMobileClientSheet(null)}
+                >
                   <X size={16} />
                 </button>
               </div>
 
               <div
                 style={{
-                  overflowY: 'auto',
+                  overflowY: "auto",
                   padding: 14,
-                  display: 'grid',
+                  display: "grid",
                   gap: 10,
                 }}
               >
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
-                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Categoría</small>
-                    <b style={{ display: 'block', marginTop: 5, fontSize: 12 }}>{clientCategoryLabel(mobileClientSheet.category)}</b>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      padding: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <small
+                      style={{
+                        color: "var(--text3)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Categoría
+                    </small>
+                    <b style={{ display: "block", marginTop: 5, fontSize: 12 }}>
+                      {clientCategoryLabel(mobileClientSheet.category)}
+                    </b>
                   </div>
-                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
-                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Saldo</small>
-                    <b style={{ display: 'block', marginTop: 5, fontSize: 12, color: num(mobileClientSheet.currentBalance) > 0 ? 'var(--warn)' : 'var(--accent)' }}>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      padding: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <small
+                      style={{
+                        color: "var(--text3)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Saldo
+                    </small>
+                    <b
+                      style={{
+                        display: "block",
+                        marginTop: 5,
+                        fontSize: 12,
+                        color:
+                          num(mobileClientSheet.currentBalance) > 0
+                            ? "var(--warn)"
+                            : "var(--accent)",
+                      }}
+                    >
                       {fmtMoney(num(mobileClientSheet.currentBalance))}
                     </b>
                   </div>
-                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
-                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Límite</small>
-                    <b style={{ display: 'block', marginTop: 5, fontSize: 12 }}>{mobileClientSheet.creditLimit ? fmtMoney(mobileClientSheet.creditLimit) : 'Sin límite'}</b>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      padding: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <small
+                      style={{
+                        color: "var(--text3)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Límite
+                    </small>
+                    <b style={{ display: "block", marginTop: 5, fontSize: 12 }}>
+                      {mobileClientSheet.creditLimit
+                        ? fmtMoney(mobileClientSheet.creditLimit)
+                        : "Sin límite"}
+                    </b>
                   </div>
-                  <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
-                    <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Cuenta corriente</small>
-                    <b style={{ display: 'block', marginTop: 5, fontSize: 12, color: mobileClientSheet.isAccountEnabled === false ? 'var(--danger)' : 'var(--text)' }}>
-                      {mobileClientSheet.isAccountEnabled === false ? 'Deshabilitada' : 'Habilitada'}
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      padding: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <small
+                      style={{
+                        color: "var(--text3)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Cuenta corriente
+                    </small>
+                    <b
+                      style={{
+                        display: "block",
+                        marginTop: 5,
+                        fontSize: 12,
+                        color:
+                          mobileClientSheet.isAccountEnabled === false
+                            ? "var(--danger)"
+                            : "var(--text)",
+                      }}
+                    >
+                      {mobileClientSheet.isAccountEnabled === false
+                        ? "Deshabilitada"
+                        : "Habilitada"}
+                    </b>
+                  </div>
+
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      padding: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <small
+                      style={{
+                        color: "var(--text3)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Acceso tienda
+                    </small>
+                    <b
+                      style={{
+                        display: "block",
+                        marginTop: 5,
+                        fontSize: 12,
+                        color: hasStoreAccess(mobileClientSheet)
+                          ? "var(--accent)"
+                          : "var(--danger)",
+                      }}
+                    >
+                      {hasStoreAccess(mobileClientSheet)
+                        ? "Con acceso"
+                        : "Sin acceso"}
+                    </b>
+                  </div>
+                  <div
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      padding: 10,
+                      background: "var(--surface2)",
+                    }}
+                  >
+                    <small
+                      style={{
+                        color: "var(--text3)",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    >
+                      Contraseña
+                    </small>
+                    <b
+                      style={{
+                        display: "block",
+                        marginTop: 5,
+                        fontSize: 12,
+                        color: mustChangePassword(mobileClientSheet)
+                          ? "var(--warn)"
+                          : "var(--text)",
+                      }}
+                    >
+                      {hasStoreAccess(mobileClientSheet)
+                        ? mustChangePassword(mobileClientSheet)
+                          ? "Debe cambiarla"
+                          : "Configurada"
+                        : "—"}
                     </b>
                   </div>
                 </div>
 
-                <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
-                  <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Contacto</small>
-                  <p style={{ margin: '6px 0 0', color: 'var(--text2)', fontSize: 12, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-                    Teléfono: {mobileClientSheet.telefono || '—'}<br />
-                    Email: {mobileClientSheet.gmail || '—'}
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 14,
+                    padding: 10,
+                    background: "var(--surface2)",
+                  }}
+                >
+                  <small
+                    style={{
+                      color: "var(--text3)",
+                      fontSize: 10,
+                      fontWeight: 800,
+                    }}
+                  >
+                    Contacto
+                  </small>
+                  <p
+                    style={{
+                      margin: "6px 0 0",
+                      color: "var(--text2)",
+                      fontSize: 12,
+                      lineHeight: 1.45,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    Teléfono: {mobileClientSheet.telefono || "—"}
+                    <br />
+                    Email: {mobileClientSheet.gmail || "—"}
                   </p>
                 </div>
 
-                <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 10, background: 'var(--surface2)' }}>
-                  <small style={{ color: 'var(--text3)', fontSize: 10, fontWeight: 800 }}>Dirección</small>
-                  <p style={{ margin: '6px 0 0', color: 'var(--text2)', fontSize: 12, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-                    {clientAddress(mobileClientSheet) || 'Sin dirección'}
-                    {mobileClientSheet.addressNotes ? ` — ${mobileClientSheet.addressNotes}` : ''}
+                <div
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 14,
+                    padding: 10,
+                    background: "var(--surface2)",
+                  }}
+                >
+                  <small
+                    style={{
+                      color: "var(--text3)",
+                      fontSize: 10,
+                      fontWeight: 800,
+                    }}
+                  >
+                    Dirección
+                  </small>
+                  <p
+                    style={{
+                      margin: "6px 0 0",
+                      color: "var(--text2)",
+                      fontSize: 12,
+                      lineHeight: 1.45,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {clientAddress(mobileClientSheet) || "Sin dirección"}
+                    {mobileClientSheet.addressNotes
+                      ? ` — ${mobileClientSheet.addressNotes}`
+                      : ""}
                   </p>
                 </div>
               </div>
 
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: num(mobileClientSheet.currentBalance) > 0 ? '1fr 1fr' : '1fr',
+                  display: "grid",
+                  gridTemplateColumns:
+                    num(mobileClientSheet.currentBalance) > 0
+                      ? "1fr 1fr"
+                      : "1fr",
                   gap: 8,
-                  padding: '12px 14px calc(12px + env(safe-area-inset-bottom))',
-                  borderTop: '1px solid var(--border)',
-                  background: 'var(--surface)',
+                  padding: "12px 14px calc(12px + env(safe-area-inset-bottom))",
+                  borderTop: "1px solid var(--border)",
+                  background: "var(--surface)",
                 }}
               >
                 {num(mobileClientSheet.currentBalance) > 0 && (
@@ -1158,7 +1600,7 @@ export default function ClientesPage() {
                       setMobileClientSheet(null);
                       openPayment(client);
                     }}
-                    style={{ width: '100%', justifyContent: 'center' }}
+                    style={{ width: "100%", justifyContent: "center" }}
                   >
                     <Wallet size={15} /> Abono
                   </button>
@@ -1170,7 +1612,7 @@ export default function ClientesPage() {
                     setMobileClientSheet(null);
                     openEdit(client);
                   }}
-                  style={{ width: '100%', justifyContent: 'center' }}
+                  style={{ width: "100%", justifyContent: "center" }}
                 >
                   <Edit2 size={15} /> Editar
                 </button>
@@ -1181,7 +1623,11 @@ export default function ClientesPage() {
                     setMobileClientSheet(null);
                     openHistory(client);
                   }}
-                  style={{ width: '100%', justifyContent: 'center', gridColumn: '1 / -1' }}
+                  style={{
+                    width: "100%",
+                    justifyContent: "center",
+                    gridColumn: "1 / -1",
+                  }}
                 >
                   <CreditCard size={15} /> Cuenta corriente
                 </button>
@@ -1192,36 +1638,49 @@ export default function ClientesPage() {
                     setMobileClientSheet(null);
                     deleteClient(client);
                   }}
-                  style={{ width: '100%', justifyContent: 'center', gridColumn: '1 / -1' }}
+                  style={{
+                    width: "100%",
+                    justifyContent: "center",
+                    gridColumn: "1 / -1",
+                  }}
                 >
                   <Trash2 size={15} /> Eliminar
                 </button>
               </div>
             </div>
           </div>,
-          document.body
+          document.body,
         )}
 
-      {(modal === 'create' || modal === 'edit') && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
+      {(modal === "create" || modal === "edit") && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+        >
           <div
             className="modal"
             style={{
-              maxWidth: isMobile ? '100vw' : 860,
-              width: isMobile ? '100vw' : undefined,
-              height: isMobile ? 'min(94dvh, calc(100dvh - 8px))' : undefined,
-              maxHeight: isMobile ? 'min(94dvh, calc(100dvh - 8px))' : undefined,
-              margin: isMobile ? 'auto 0 0' : undefined,
-              borderRadius: isMobile ? '22px 22px 0 0' : undefined,
-              overflow: isMobile ? 'hidden' : undefined,
-              display: isMobile ? 'flex' : undefined,
-              flexDirection: isMobile ? 'column' : undefined,
+              maxWidth: isMobile ? "100vw" : 860,
+              width: isMobile ? "100vw" : undefined,
+              height: isMobile ? "min(94dvh, calc(100dvh - 8px))" : undefined,
+              maxHeight: isMobile
+                ? "min(94dvh, calc(100dvh - 8px))"
+                : undefined,
+              margin: isMobile ? "auto 0 0" : undefined,
+              borderRadius: isMobile ? "22px 22px 0 0" : undefined,
+              overflow: isMobile ? "hidden" : undefined,
+              display: isMobile ? "flex" : undefined,
+              flexDirection: isMobile ? "column" : undefined,
             }}
           >
             <div className="modal-header">
-              <b>{modal === 'create' ? 'Nuevo cliente' : 'Editar cliente'}</b>
+              <b>{modal === "create" ? "Nuevo cliente" : "Editar cliente"}</b>
 
-              <button className="btn btn-ghost btn-sm" onClick={closeModal} disabled={saving}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={closeModal}
+                disabled={saving}
+              >
                 <X size={16} />
               </button>
             </div>
@@ -1229,30 +1688,30 @@ export default function ClientesPage() {
             <div
               className="modal-body"
               style={{
-                flex: isMobile ? '1 1 auto' : undefined,
+                flex: isMobile ? "1 1 auto" : undefined,
                 minHeight: isMobile ? 0 : undefined,
-                overflowY: isMobile ? 'auto' : undefined,
+                overflowY: isMobile ? "auto" : undefined,
                 padding: isMobile ? 12 : undefined,
               }}
             >
               {isMobile && (
                 <div
                   style={{
-                    position: 'sticky',
+                    position: "sticky",
                     top: -12,
                     zIndex: 4,
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                     gap: 6,
-                    padding: '0 0 10px',
+                    padding: "0 0 10px",
                     marginBottom: 10,
-                    background: 'var(--surface)',
+                    background: "var(--surface)",
                   }}
                 >
                   {[
-                    ['datos', 'Datos'],
-                    ['cuenta', 'Cuenta'],
-                    ['direccion', 'Dirección'],
+                    ["datos", "Datos"],
+                    ["cuenta", "Cuenta"],
+                    ["direccion", "Dirección"],
                   ].map(([key, label]) => (
                     <button
                       key={key}
@@ -1260,13 +1719,18 @@ export default function ClientesPage() {
                       onClick={() => setClientFormStep(key as ClientFormStep)}
                       style={{
                         border: `1px solid ${
-                          clientFormStep === key ? 'var(--accent)' : 'var(--border)'
+                          clientFormStep === key
+                            ? "var(--accent)"
+                            : "var(--border)"
                         }`,
                         background:
                           clientFormStep === key
-                            ? 'color-mix(in srgb, var(--accent) 12%, var(--surface))'
-                            : 'var(--surface2)',
-                        color: clientFormStep === key ? 'var(--accent)' : 'var(--text2)',
+                            ? "color-mix(in srgb, var(--accent) 12%, var(--surface))"
+                            : "var(--surface2)",
+                        color:
+                          clientFormStep === key
+                            ? "var(--accent)"
+                            : "var(--text2)",
                         borderRadius: 999,
                         minHeight: 32,
                         fontSize: 11,
@@ -1281,282 +1745,459 @@ export default function ClientesPage() {
 
               <div
                 style={{
-                  display: isMobile && clientFormStep !== 'datos' ? 'none' : undefined,
+                  display:
+                    isMobile && clientFormStep !== "datos" ? "none" : undefined,
                 }}
               >
-              <div
-                style={{
-                  marginBottom: 16,
-                  padding: 14,
-                  borderRadius: 14,
-                  border: '1px solid var(--border)',
-                  background: 'var(--surface2)',
-                }}
-              >
-                <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 4 }}>
-                  Datos del cliente
-                </div>
-                <div style={{ color: 'var(--text3)', fontSize: 12 }}>
-                  Información comercial, categoría y cuenta corriente.
-                </div>
-              </div>
-
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Nombre *</label>
-                  <input
-                    value={form.nombre}
-                    onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Apellido *</label>
-                  <input
-                    value={form.apellido}
-                    onChange={(e) => setForm((p) => ({ ...p, apellido: e.target.value }))}
-                  />
-                </div>
-              </div>
-
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">DNI/CUIT *</label>
-                  <input
-                    value={form.dni}
-                    onChange={(e) => setForm((p) => ({ ...p, dni: e.target.value }))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Categoría</label>
-                  <select
-                    value={form.category}
-                    onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))}
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: 14,
+                    borderRadius: 14,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface2)",
+                  }}
+                >
+                  <div
+                    style={{ fontWeight: 900, fontSize: 13, marginBottom: 4 }}
                   >
-                    <option value="Price">Minorista</option>
-                    <option value="Mayorista">Mayorista</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Teléfono</label>
-                  <input
-                    value={form.telefono}
-                    onChange={(e) => setForm((p) => ({ ...p, telefono: e.target.value }))}
-                  />
+                    Datos del cliente
+                  </div>
+                  <div style={{ color: "var(--text3)", fontSize: 12 }}>
+                    Información comercial, categoría y cuenta de acceso a la
+                    tienda.
+                  </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Email</label>
-                  <input
-                    value={form.gmail}
-                    onChange={(e) => setForm((p) => ({ ...p, gmail: e.target.value }))}
-                  />
-                </div>
-              </div>
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Nombre *</label>
+                    <input
+                      value={form.nombre}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, nombre: e.target.value }))
+                      }
+                    />
+                  </div>
 
-              
-              </div>
-
-              <div
-                style={{
-                  display: isMobile && clientFormStep !== 'cuenta' ? 'none' : undefined,
-                }}
-              >
-<div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Límite de crédito</label>
-                  <input
-                    type="number"
-                    value={form.creditLimit}
-                    onChange={(e) => setForm((p) => ({ ...p, creditLimit: e.target.value }))}
-                  />
+                  <div className="form-group">
+                    <label className="form-label">Apellido *</label>
+                    <input
+                      value={form.apellido}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, apellido: e.target.value }))
+                      }
+                    />
+                  </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Cuenta corriente</label>
-                  <select
-                    value={form.isAccountEnabled}
-                    onChange={(e) => setForm((p) => ({ ...p, isAccountEnabled: e.target.value }))}
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">DNI/CUIT *</label>
+                    <input
+                      value={form.dni}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, dni: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Categoría</label>
+                    <select
+                      value={form.category}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, category: e.target.value }))
+                      }
+                    >
+                      <option value="Price">Minorista</option>
+                      <option value="Mayorista">Mayorista</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Teléfono</label>
+                    <input
+                      value={form.telefono}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, telefono: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">
+                      Email {modal === "create" ? "*" : ""}
+                    </label>
+                    <input
+                      type="email"
+                      value={form.gmail}
+                      placeholder="cliente@empresa.com"
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, gmail: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                {modal === "create" && (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      padding: 14,
+                      borderRadius: 14,
+                      border: "1px solid rgba(79,142,255,0.25)",
+                      background: "rgba(79,142,255,0.08)",
+                      color: "var(--text2)",
+                      fontSize: 12,
+                      lineHeight: 1.45,
+                    }}
                   >
-                    <option value="true">Habilitada</option>
-                    <option value="false">Deshabilitada</option>
-                  </select>
-                </div>
-              </div>
-
-              
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        fontWeight: 900,
+                        color: "var(--text)",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <KeyRound size={15} style={{ color: "var(--accent)" }} />
+                      Cuenta de acceso automática
+                    </div>
+                    Al guardar, se crea una cuenta para la tienda con este
+                    email. La contraseña inicial es{" "}
+                    <b>{CLIENT_DEFAULT_PASSWORD_LABEL}</b> y el cliente deberá
+                    cambiarla al ingresar por primera vez.
+                  </div>
+                )}
               </div>
 
               <div
                 style={{
-                  display: isMobile && clientFormStep !== 'direccion' ? 'none' : undefined,
+                  display:
+                    isMobile && clientFormStep !== "cuenta"
+                      ? "none"
+                      : undefined,
                 }}
               >
-<div
-                style={{
-                  margin: '20px 0 16px',
-                  padding: 14,
-                  borderRadius: 14,
-                  border: '1px solid var(--border)',
-                  background: 'var(--surface2)',
-                }}
-              >
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <MapPin size={16} style={{ color: 'var(--accent)' }} />
-                  <div style={{ fontWeight: 900, fontSize: 13 }}>Dirección de entrega</div>
-                </div>
-                <div style={{ color: 'var(--text3)', fontSize: 12, marginTop: 4 }}>
-                  Esta dirección se va a usar después para calcular envío, remitos y entregas.
-                </div>
-              </div>
-
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Calle</label>
-                  <input
-                    value={form.addressStreet}
-                    placeholder="Ej: San Martín"
-                    onChange={(e) => setForm((p) => ({ ...p, addressStreet: e.target.value }))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Número</label>
-                  <input
-                    value={form.addressNumber}
-                    placeholder="Ej: 810"
-                    onChange={(e) => setForm((p) => ({ ...p, addressNumber: e.target.value }))}
-                  />
-                </div>
-              </div>
-
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Piso</label>
-                  <input
-                    value={form.addressFloor}
-                    placeholder="Opcional"
-                    onChange={(e) => setForm((p) => ({ ...p, addressFloor: e.target.value }))}
-                  />
+                <div
+                  style={{
+                    marginBottom: 14,
+                    padding: 14,
+                    borderRadius: 14,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface2)",
+                    color: "var(--text2)",
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      fontWeight: 900,
+                      color: "var(--text)",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <Mail size={15} style={{ color: "var(--accent)" }} />
+                    Acceso a tienda
+                  </div>
+                  {modal === "create"
+                    ? "La cuenta de acceso se genera automáticamente usando el email cargado en Datos."
+                    : (editing as any)?.userId || editing?.user
+                      ? mustChangePassword(editing)
+                        ? "Este cliente ya tiene acceso y todavía debe cambiar su contraseña inicial."
+                        : "Este cliente ya tiene acceso a la tienda."
+                      : "Este cliente todavía no tiene usuario de acceso."}
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Departamento</label>
-                  <input
-                    value={form.addressApartment}
-                    placeholder="Opcional"
-                    onChange={(e) => setForm((p) => ({ ...p, addressApartment: e.target.value }))}
-                  />
-                </div>
-              </div>
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Límite de crédito</label>
+                    <input
+                      type="number"
+                      value={form.creditLimit}
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, creditLimit: e.target.value }))
+                      }
+                    />
+                  </div>
 
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Localidad</label>
-                  <input
-                    value={form.addressCity}
-                    placeholder="Ej: Villa General Belgrano"
-                    onChange={(e) => setForm((p) => ({ ...p, addressCity: e.target.value }))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Provincia</label>
-                  <input
-                    value={form.addressProvince}
-                    placeholder="Ej: Córdoba"
-                    onChange={(e) => setForm((p) => ({ ...p, addressProvince: e.target.value }))}
-                  />
-                </div>
-              </div>
-
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
-                <div className="form-group">
-                  <label className="form-label">Código postal</label>
-                  <input
-                    value={form.addressPostalCode}
-                    placeholder="Ej: 5194"
-                    onChange={(e) => setForm((p) => ({ ...p, addressPostalCode: e.target.value }))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Notas de dirección</label>
-                  <input
-                    value={form.addressNotes}
-                    placeholder="Ej: casa roja, portón negro, tocar timbre..."
-                    onChange={(e) => setForm((p) => ({ ...p, addressNotes: e.target.value }))}
-                  />
+                  <div className="form-group">
+                    <label className="form-label">Cuenta corriente</label>
+                    <select
+                      value={form.isAccountEnabled}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          isAccountEnabled: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="true">Habilitada</option>
+                      <option value="false">Deshabilitada</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
               <div
                 style={{
-                  marginTop: 14,
-                  padding: 14,
-                  borderRadius: 14,
-                  border: '1px solid var(--border)',
-                  background: 'rgba(79,142,255,0.07)',
+                  display:
+                    isMobile && clientFormStep !== "direccion"
+                      ? "none"
+                      : undefined,
                 }}
               >
-                <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 4 }}>
-                  Coordenadas para cálculo automático
+                <div
+                  style={{
+                    margin: "20px 0 16px",
+                    padding: 14,
+                    borderRadius: 14,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface2)",
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", gap: 8, alignItems: "center" }}
+                  >
+                    <MapPin size={16} style={{ color: "var(--accent)" }} />
+                    <div style={{ fontWeight: 900, fontSize: 13 }}>
+                      Dirección de entrega
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      color: "var(--text3)",
+                      fontSize: 12,
+                      marginTop: 4,
+                    }}
+                  >
+                    Esta dirección se va a usar después para calcular envío,
+                    remitos y entregas.
+                  </div>
                 </div>
-                <div style={{ color: 'var(--text3)', fontSize: 12, lineHeight: 1.45 }}>
-                  Por ahora se pueden cargar manualmente. Después conectamos Google para obtenerlas
-                  automáticamente desde la dirección.
-                </div>
-              </div>
 
-              <div
-                className="form-row"
-                style={{
-                  marginTop: 14,
-                  flexDirection: isMobile ? 'column' : undefined,
-                }}
-              >
-                <div className="form-group">
-                  <label className="form-label">Latitud</label>
-                  <input
-                    value={form.latitude}
-                    placeholder="-31.978"
-                    onChange={(e) => setForm((p) => ({ ...p, latitude: e.target.value }))}
-                  />
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Calle</label>
+                    <input
+                      value={form.addressStreet}
+                      placeholder="Ej: San Martín"
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          addressStreet: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Número</label>
+                    <input
+                      value={form.addressNumber}
+                      placeholder="Ej: 810"
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          addressNumber: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Longitud</label>
-                  <input
-                    value={form.longitude}
-                    placeholder="-64.556"
-                    onChange={(e) => setForm((p) => ({ ...p, longitude: e.target.value }))}
-                  />
-                </div>
-              </div>
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Piso</label>
+                    <input
+                      value={form.addressFloor}
+                      placeholder="Opcional"
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, addressFloor: e.target.value }))
+                      }
+                    />
+                  </div>
 
+                  <div className="form-group">
+                    <label className="form-label">Departamento</label>
+                    <input
+                      value={form.addressApartment}
+                      placeholder="Opcional"
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          addressApartment: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Localidad</label>
+                    <input
+                      value={form.addressCity}
+                      placeholder="Ej: Villa General Belgrano"
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, addressCity: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Provincia</label>
+                    <input
+                      value={form.addressProvince}
+                      placeholder="Ej: Córdoba"
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          addressProvince: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div
+                  className="form-row"
+                  style={{ flexDirection: isMobile ? "column" : undefined }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Código postal</label>
+                    <input
+                      value={form.addressPostalCode}
+                      placeholder="Ej: 5194"
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          addressPostalCode: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Notas de dirección</label>
+                    <input
+                      value={form.addressNotes}
+                      placeholder="Ej: casa roja, portón negro, tocar timbre..."
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, addressNotes: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: 14,
+                    borderRadius: 14,
+                    border: "1px solid var(--border)",
+                    background: "rgba(79,142,255,0.07)",
+                  }}
+                >
+                  <div
+                    style={{ fontWeight: 900, fontSize: 13, marginBottom: 4 }}
+                  >
+                    Coordenadas para cálculo automático
+                  </div>
+                  <div
+                    style={{
+                      color: "var(--text3)",
+                      fontSize: 12,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Por ahora se pueden cargar manualmente. Después conectamos
+                    Google para obtenerlas automáticamente desde la dirección.
+                  </div>
+                </div>
+
+                <div
+                  className="form-row"
+                  style={{
+                    marginTop: 14,
+                    flexDirection: isMobile ? "column" : undefined,
+                  }}
+                >
+                  <div className="form-group">
+                    <label className="form-label">Latitud</label>
+                    <input
+                      value={form.latitude}
+                      placeholder="-31.978"
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, latitude: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Longitud</label>
+                    <input
+                      value={form.longitude}
+                      placeholder="-64.556"
+                      onChange={(e) =>
+                        setForm((p) => ({ ...p, longitude: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
             <div
               className="modal-footer"
               style={{
-                flexDirection: isMobile ? 'column-reverse' : undefined,
+                flexDirection: isMobile ? "column-reverse" : undefined,
                 flexShrink: isMobile ? 0 : undefined,
-                padding: isMobile ? '10px 12px calc(10px + env(safe-area-inset-bottom))' : undefined,
-                borderTop: isMobile ? '1px solid var(--border)' : undefined,
-                background: isMobile ? 'var(--surface)' : undefined,
-                boxShadow: isMobile ? '0 -12px 28px rgba(0,0,0,0.22)' : undefined,
+                padding: isMobile
+                  ? "10px 12px calc(10px + env(safe-area-inset-bottom))"
+                  : undefined,
+                borderTop: isMobile ? "1px solid var(--border)" : undefined,
+                background: isMobile ? "var(--surface)" : undefined,
+                boxShadow: isMobile
+                  ? "0 -12px 28px rgba(0,0,0,0.22)"
+                  : undefined,
               }}
             >
               <button
                 className="btn btn-secondary"
                 onClick={closeModal}
                 disabled={saving}
-                style={{ width: isMobile ? '100%' : undefined }}
+                style={{ width: isMobile ? "100%" : undefined }}
               >
                 Cancelar
               </button>
@@ -1564,29 +2205,48 @@ export default function ClientesPage() {
               <button
                 className="btn btn-primary"
                 onClick={saveClient}
-                disabled={saving || !form.nombre || !form.apellido || !form.dni}
-                style={{ width: isMobile ? '100%' : undefined }}
+                disabled={
+                  saving ||
+                  !form.nombre ||
+                  !form.apellido ||
+                  !form.dni ||
+                  (modal === "create" && !form.gmail)
+                }
+                style={{ width: isMobile ? "100%" : undefined }}
               >
-                {saving ? <span className="spinner" /> : 'Guardar'}
+                {saving ? (
+                  <span className="spinner" />
+                ) : modal === "create" ? (
+                  "Crear cliente y cuenta"
+                ) : (
+                  "Guardar"
+                )}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {modal === 'payment' && editing && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
+      {modal === "payment" && editing && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+        >
           <div
             className="modal"
             style={{
-              width: isMobile ? 'calc(100vw - 24px)' : undefined,
-              maxWidth: isMobile ? 'calc(100vw - 24px)' : undefined,
+              width: isMobile ? "calc(100vw - 24px)" : undefined,
+              maxWidth: isMobile ? "calc(100vw - 24px)" : undefined,
             }}
           >
             <div className="modal-header">
               <b>Registrar abono</b>
 
-              <button className="btn btn-ghost btn-sm" onClick={closeModal} disabled={saving}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={closeModal}
+                disabled={saving}
+              >
                 <X size={16} />
               </button>
             </div>
@@ -1594,21 +2254,26 @@ export default function ClientesPage() {
             <div className="modal-body">
               <p
                 style={{
-                  color: 'var(--text2)',
+                  color: "var(--text2)",
                   marginBottom: 14,
-                  overflowWrap: 'anywhere',
+                  overflowWrap: "anywhere",
                 }}
               >
                 {clientName(editing)} · saldo {fmtMoney(editing.currentBalance)}
               </p>
 
-              <div className="form-row" style={{ flexDirection: isMobile ? 'column' : undefined }}>
+              <div
+                className="form-row"
+                style={{ flexDirection: isMobile ? "column" : undefined }}
+              >
                 <div className="form-group">
                   <label className="form-label">Importe</label>
                   <input
                     type="number"
                     value={payment.amount}
-                    onChange={(e) => setPayment((p) => ({ ...p, amount: e.target.value }))}
+                    onChange={(e) =>
+                      setPayment((p) => ({ ...p, amount: e.target.value }))
+                    }
                   />
                 </div>
 
@@ -1636,7 +2301,9 @@ export default function ClientesPage() {
                 <label className="form-label">Referencia</label>
                 <input
                   value={payment.reference}
-                  onChange={(e) => setPayment((p) => ({ ...p, reference: e.target.value }))}
+                  onChange={(e) =>
+                    setPayment((p) => ({ ...p, reference: e.target.value }))
+                  }
                 />
               </div>
 
@@ -1654,14 +2321,14 @@ export default function ClientesPage() {
             <div
               className="modal-footer"
               style={{
-                flexDirection: isMobile ? 'column-reverse' : undefined,
+                flexDirection: isMobile ? "column-reverse" : undefined,
               }}
             >
               <button
                 className="btn btn-secondary"
                 onClick={closeModal}
                 disabled={saving}
-                style={{ width: isMobile ? '100%' : undefined }}
+                style={{ width: isMobile ? "100%" : undefined }}
               >
                 Cancelar
               </button>
@@ -1670,28 +2337,33 @@ export default function ClientesPage() {
                 className="btn btn-primary"
                 onClick={savePayment}
                 disabled={saving || !payment.amount}
-                style={{ width: isMobile ? '100%' : undefined }}
+                style={{ width: isMobile ? "100%" : undefined }}
               >
-                {saving ? <span className="spinner" /> : 'Registrar'}
+                {saving ? <span className="spinner" /> : "Registrar"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {modal === 'history' && editing && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeModal()}>
+      {modal === "history" && editing && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+        >
           <div
             className="modal"
             style={{
-              maxWidth: isMobile ? 'calc(100vw - 24px)' : 760,
-              width: isMobile ? 'calc(100vw - 24px)' : undefined,
-              maxHeight: isMobile ? 'calc(100vh - 24px)' : undefined,
-              overflowY: isMobile ? 'auto' : undefined,
+              maxWidth: isMobile ? "calc(100vw - 24px)" : 760,
+              width: isMobile ? "calc(100vw - 24px)" : undefined,
+              maxHeight: isMobile ? "calc(100vh - 24px)" : undefined,
+              overflowY: isMobile ? "auto" : undefined,
             }}
           >
             <div className="modal-header">
-              <b style={{ overflowWrap: 'anywhere' }}>Cuenta corriente · {clientName(editing)}</b>
+              <b style={{ overflowWrap: "anywhere" }}>
+                Cuenta corriente · {clientName(editing)}
+              </b>
 
               <button className="btn btn-ghost btn-sm" onClick={closeModal}>
                 <X size={16} />
@@ -1704,8 +2376,8 @@ export default function ClientesPage() {
                   {isMobile ? (
                     <div
                       style={{
-                        display: 'flex',
-                        flexDirection: 'column',
+                        display: "flex",
+                        flexDirection: "column",
                         gap: 10,
                         padding: 12,
                       }}
@@ -1714,30 +2386,37 @@ export default function ClientesPage() {
                         <div
                           key={m.id}
                           style={{
-                            background: 'var(--surface)',
-                            border: '1px solid var(--border)',
+                            background: "var(--surface)",
+                            border: "1px solid var(--border)",
                             borderRadius: 12,
                             padding: 12,
-                            display: 'flex',
-                            flexDirection: 'column',
+                            display: "flex",
+                            flexDirection: "column",
                             gap: 10,
                           }}
                         >
                           <div
                             style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
+                              display: "flex",
+                              justifyContent: "space-between",
                               gap: 10,
-                              alignItems: 'center',
+                              alignItems: "center",
                             }}
                           >
-                            <div style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+                            <div
+                              style={{
+                                fontFamily: "var(--mono)",
+                                fontSize: 12,
+                              }}
+                            >
                               {fmtDate(m.date)}
                             </div>
 
                             <span
                               className={`badge ${
-                                m.type === 'PAYMENT' ? 'badge-green' : 'badge-yellow'
+                                m.type === "PAYMENT"
+                                  ? "badge-green"
+                                  : "badge-yellow"
                               }`}
                             >
                               {m.type}
@@ -1746,38 +2425,60 @@ export default function ClientesPage() {
 
                           <div
                             style={{
-                              display: 'grid',
-                              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                              display: "grid",
+                              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                               gap: 8,
                             }}
                           >
                             <div>
-                              <div style={{ color: 'var(--text3)', fontSize: 11 }}>Importe</div>
-                              <div style={{ fontFamily: 'var(--mono)', fontWeight: 800, fontSize: 12 }}>
+                              <div
+                                style={{ color: "var(--text3)", fontSize: 11 }}
+                              >
+                                Importe
+                              </div>
+                              <div
+                                style={{
+                                  fontFamily: "var(--mono)",
+                                  fontWeight: 800,
+                                  fontSize: 12,
+                                }}
+                              >
                                 {fmtMoney(m.amount)}
                               </div>
                             </div>
 
                             <div>
-                              <div style={{ color: 'var(--text3)', fontSize: 11 }}>Anterior</div>
-                              <div style={{ fontSize: 12 }}>{fmtMoney(m.previousBalance)}</div>
+                              <div
+                                style={{ color: "var(--text3)", fontSize: 11 }}
+                              >
+                                Anterior
+                              </div>
+                              <div style={{ fontSize: 12 }}>
+                                {fmtMoney(m.previousBalance)}
+                              </div>
                             </div>
 
                             <div>
-                              <div style={{ color: 'var(--text3)', fontSize: 11 }}>Nuevo</div>
-                              <div style={{ fontSize: 12 }}>{fmtMoney(m.newBalance)}</div>
+                              <div
+                                style={{ color: "var(--text3)", fontSize: 11 }}
+                              >
+                                Nuevo
+                              </div>
+                              <div style={{ fontSize: 12 }}>
+                                {fmtMoney(m.newBalance)}
+                              </div>
                             </div>
                           </div>
 
                           <div
                             style={{
-                              color: 'var(--text2)',
+                              color: "var(--text2)",
                               fontSize: 12,
                               lineHeight: 1.4,
-                              overflowWrap: 'anywhere',
+                              overflowWrap: "anywhere",
                             }}
                           >
-                            {m.description ?? m.reference ?? '—'}
+                            {m.description ?? m.reference ?? "—"}
                           </div>
                         </div>
                       ))}
@@ -1802,18 +2503,25 @@ export default function ClientesPage() {
                             <td>
                               <span
                                 className={`badge ${
-                                  m.type === 'PAYMENT' ? 'badge-green' : 'badge-yellow'
+                                  m.type === "PAYMENT"
+                                    ? "badge-green"
+                                    : "badge-yellow"
                                 }`}
                               >
                                 {m.type}
                               </span>
                             </td>
-                            <td style={{ fontFamily: 'var(--mono)', fontWeight: 800 }}>
+                            <td
+                              style={{
+                                fontFamily: "var(--mono)",
+                                fontWeight: 800,
+                              }}
+                            >
                               {fmtMoney(m.amount)}
                             </td>
                             <td>{fmtMoney(m.previousBalance)}</td>
                             <td>{fmtMoney(m.newBalance)}</td>
-                            <td>{m.description ?? m.reference ?? '—'}</td>
+                            <td>{m.description ?? m.reference ?? "—"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1844,8 +2552,8 @@ export default function ClientesPage() {
           <div
             className="modal"
             style={{
-              maxWidth: isMobile ? 'calc(100vw - 24px)' : 440,
-              width: isMobile ? 'calc(100vw - 24px)' : undefined,
+              maxWidth: isMobile ? "calc(100vw - 24px)" : 440,
+              width: isMobile ? "calc(100vw - 24px)" : undefined,
             }}
           >
             <div className="modal-header">
@@ -1861,35 +2569,39 @@ export default function ClientesPage() {
             </div>
 
             <div className="modal-body">
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div
+                style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
+              >
                 <span
                   style={{
                     width: 38,
                     height: 38,
                     borderRadius: 10,
                     background: confirmModal.danger
-                      ? 'rgba(239,68,68,0.12)'
-                      : 'var(--surface2)',
-                    display: 'grid',
-                    placeItems: 'center',
+                      ? "rgba(239,68,68,0.12)"
+                      : "var(--surface2)",
+                    display: "grid",
+                    placeItems: "center",
                     flexShrink: 0,
                   }}
                 >
                   <AlertTriangle
                     size={18}
                     style={{
-                      color: confirmModal.danger ? 'var(--danger)' : 'var(--accent)',
+                      color: confirmModal.danger
+                        ? "var(--danger)"
+                        : "var(--accent)",
                     }}
                   />
                 </span>
 
                 <p
                   style={{
-                    color: 'var(--text2)',
+                    color: "var(--text2)",
                     fontSize: 13,
                     lineHeight: 1.55,
                     margin: 0,
-                    overflowWrap: 'anywhere',
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {confirmModal.message}
@@ -1900,28 +2612,30 @@ export default function ClientesPage() {
             <div
               className="modal-footer"
               style={{
-                flexDirection: isMobile ? 'column-reverse' : undefined,
+                flexDirection: isMobile ? "column-reverse" : undefined,
               }}
             >
               <button
                 className="btn btn-secondary"
                 onClick={() => setConfirmModal(null)}
                 disabled={confirmLoading}
-                style={{ width: isMobile ? '100%' : undefined }}
+                style={{ width: isMobile ? "100%" : undefined }}
               >
                 Cancelar
               </button>
 
               <button
-                className={confirmModal.danger ? 'btn btn-danger' : 'btn btn-primary'}
+                className={
+                  confirmModal.danger ? "btn btn-danger" : "btn btn-primary"
+                }
                 onClick={confirmAction}
                 disabled={confirmLoading}
-                style={{ width: isMobile ? '100%' : undefined }}
+                style={{ width: isMobile ? "100%" : undefined }}
               >
                 {confirmLoading ? (
                   <span className="spinner" />
                 ) : (
-                  confirmModal.confirmText ?? 'Confirmar'
+                  (confirmModal.confirmText ?? "Confirmar")
                 )}
               </button>
             </div>

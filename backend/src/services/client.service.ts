@@ -1,8 +1,13 @@
 import prisma from "../prisma";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { CategoryClient, Role } from "@prisma/client";
+import { sendPasswordResetEmail } from "../utils/mailer";
 
 type ClientCategory = "Price" | "Cliente" | "Mayorista";
+
+const DEFAULT_CLIENT_PASSWORD =
+  process.env.CLIENT_DEFAULT_PASSWORD || "GrupoVJ123";
 
 function normalizeCategory(value?: string | null): CategoryClient {
   if (value === "Mayorista") return CategoryClient.Mayorista;
@@ -80,6 +85,15 @@ function buildAddressData(data: ClientAddressData) {
   return cleanData;
 }
 
+const clientUserSelect = {
+  id: true,
+  email: true,
+  name: true,
+  role: true,
+  isActive: true,
+  mustChangePassword: true,
+};
+
 export const clientService = {
   async createClient(data: {
     nombre: string;
@@ -101,9 +115,6 @@ export const clientService = {
     addressNotes?: string | null;
     latitude?: number | null;
     longitude?: number | null;
-
-    createUser?: boolean;
-    password?: string;
   }) {
     const nombre = String(data.nombre || "").trim();
     const apellido = String(data.apellido || "").trim();
@@ -113,44 +124,52 @@ export const clientService = {
     if (!nombre) throw new Error("El nombre es obligatorio");
     if (!apellido) throw new Error("El apellido es obligatorio");
     if (!dni) throw new Error("El DNI/CUIT es obligatorio");
-
-    if (data.createUser && !gmail) {
-      throw new Error("Para crear login, el email es obligatorio");
-    }
-
-    if (data.createUser && (!data.password || data.password.length < 6)) {
-      throw new Error("La contraseña debe tener al menos 6 caracteres");
+    if (!gmail) {
+      throw new Error(
+        "El email es obligatorio para crear la cuenta de acceso del cliente"
+      );
     }
 
     const category = normalizeCategory(data.category);
     const addressData = buildAddressData(data);
 
     return prisma.$transaction(async (tx) => {
-      let userId: string | null = null;
+      const existingUser = await tx.user.findUnique({
+        where: { email: gmail },
+      });
 
-      if (data.createUser) {
-        const existingUser = await tx.user.findUnique({
-          where: { email: gmail! },
-        });
-
-        if (existingUser) {
-          throw new Error("Ya existe un usuario con ese email");
-        }
-
-        const hashedPassword = await bcrypt.hash(data.password!, 10);
-
-        const user = await tx.user.create({
-          data: {
-            email: gmail!,
-            password: hashedPassword,
-            name: `${nombre} ${apellido}`.trim(),
-            role: Role.CLIENTE,
-            isActive: true,
-          },
-        });
-
-        userId = user.id;
+      if (existingUser) {
+        throw new Error("Ya existe un usuario con ese email");
       }
+
+      const existingClientByDni = await tx.client.findUnique({
+        where: { dni },
+      });
+
+      if (existingClientByDni) {
+        throw new Error("Ya existe un cliente con ese DNI/CUIT");
+      }
+
+      const existingClientByEmail = await tx.client.findUnique({
+        where: { gmail },
+      });
+
+      if (existingClientByEmail) {
+        throw new Error("Ya existe un cliente con ese email");
+      }
+
+      const hashedPassword = await bcrypt.hash(DEFAULT_CLIENT_PASSWORD, 10);
+
+      const user = await tx.user.create({
+        data: {
+          email: gmail,
+          password: hashedPassword,
+          name: `${nombre} ${apellido}`.trim(),
+          role: Role.CLIENTE,
+          isActive: true,
+          mustChangePassword: true,
+        },
+      });
 
       return tx.client.create({
         data: {
@@ -162,18 +181,12 @@ export const clientService = {
           gmail,
           creditLimit: data.creditLimit ?? null,
           isAccountEnabled: data.isAccountEnabled ?? false,
-          userId,
+          userId: user.id,
           ...addressData,
         },
         include: {
           user: {
-            select: {
-              id: true,
-              email: true,
-              name: true,
-              role: true,
-              isActive: true,
-            },
+            select: clientUserSelect,
           },
           _count: {
             select: {
@@ -187,128 +200,201 @@ export const clientService = {
   },
 
   async registerStoreClient(data: {
-  nombre: string;
-  apellido: string;
-  dni: string;
-  telefono?: string | null;
-  gmail: string;
-  password: string;
+    nombre: string;
+    apellido: string;
+    dni: string;
+    telefono?: string | null;
+    gmail: string;
+    password: string;
 
-  addressStreet?: string | null;
-  addressNumber?: string | null;
-  addressFloor?: string | null;
-  addressApartment?: string | null;
-  addressCity?: string | null;
-  addressProvince?: string | null;
-  addressPostalCode?: string | null;
-  addressNotes?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-}) {
-  const nombre = String(data.nombre || "").trim();
-  const apellido = String(data.apellido || "").trim();
-  const dni = String(data.dni || "").trim();
-  const gmail = cleanEmail(data.gmail);
+    addressStreet?: string | null;
+    addressNumber?: string | null;
+    addressFloor?: string | null;
+    addressApartment?: string | null;
+    addressCity?: string | null;
+    addressProvince?: string | null;
+    addressPostalCode?: string | null;
+    addressNotes?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+  }) {
+    const nombre = String(data.nombre || "").trim();
+    const apellido = String(data.apellido || "").trim();
+    const dni = String(data.dni || "").trim();
+    const gmail = cleanEmail(data.gmail);
 
-  if (!nombre) throw new Error("El nombre es obligatorio");
-  if (!apellido) throw new Error("El apellido es obligatorio");
-  if (!dni) throw new Error("El DNI/CUIT es obligatorio");
-  if (!gmail) throw new Error("El email es obligatorio");
+    if (!nombre) throw new Error("El nombre es obligatorio");
+    if (!apellido) throw new Error("El apellido es obligatorio");
+    if (!dni) throw new Error("El DNI/CUIT es obligatorio");
+    if (!gmail) throw new Error("El email es obligatorio");
 
-  if (!data.password || data.password.length < 6) {
-    throw new Error("La contraseña debe tener al menos 6 caracteres");
-  }
-
-  const addressData = buildAddressData(data);
-
-  return prisma.$transaction(async (tx) => {
-    const existingUser = await tx.user.findUnique({
-      where: { email: gmail },
-    });
-
-    if (existingUser) {
-      throw new Error("Ya existe un usuario con ese email");
+    if (!data.password || data.password.length < 6) {
+      throw new Error("La contraseña debe tener al menos 6 caracteres");
     }
 
-    const existingClientByDni = await tx.client.findUnique({
-      where: { dni },
+    const addressData = buildAddressData(data);
+
+    return prisma.$transaction(async (tx) => {
+      const existingUser = await tx.user.findUnique({
+        where: { email: gmail },
+      });
+
+      if (existingUser) {
+        throw new Error("Ya existe un usuario con ese email");
+      }
+
+      const existingClientByDni = await tx.client.findUnique({
+        where: { dni },
+      });
+
+      if (existingClientByDni) {
+        throw new Error("Ya existe un cliente con ese DNI/CUIT");
+      }
+
+      const existingClientByEmail = await tx.client.findUnique({
+        where: { gmail },
+      });
+
+      if (existingClientByEmail) {
+        throw new Error("Ya existe un cliente con ese email");
+      }
+
+      const hashedPassword = await bcrypt.hash(data.password, 10);
+
+      const user = await tx.user.create({
+        data: {
+          email: gmail,
+          password: hashedPassword,
+          name: `${nombre} ${apellido}`.trim(),
+          role: Role.CLIENTE,
+          isActive: true,
+          mustChangePassword: false,
+        },
+      });
+
+      return tx.client.create({
+        data: {
+          nombre,
+          apellido,
+          dni,
+          telefono: data.telefono ?? null,
+          gmail,
+          category: CategoryClient.Price,
+          creditLimit: null,
+          isAccountEnabled: false,
+          userId: user.id,
+          ...addressData,
+        },
+        include: {
+          user: {
+            select: clientUserSelect,
+          },
+          _count: {
+            select: {
+              sales: true,
+              accountMovements: true,
+            },
+          },
+        },
+      });
+    });
+  },
+
+  async requestPasswordReset(emailValue?: string | null) {
+    const email = cleanEmail(emailValue);
+
+    if (!email) return { ok: true };
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        client: true,
+      },
     });
 
-    if (existingClientByDni) {
-      throw new Error("Ya existe un cliente con ese DNI/CUIT");
-    }
+    if (!user) return { ok: true };
+    if (user.role !== Role.CLIENTE) return { ok: true };
+    if (user.isActive === false) return { ok: true };
 
-    const existingClientByEmail = await tx.client.findUnique({
-      where: { gmail },
-    });
+    const rawToken = crypto.randomBytes(32).toString("hex");
 
-    if (existingClientByEmail) {
-      throw new Error("Ya existe un cliente con ese email");
-    }
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(rawToken)
+      .digest("hex");
 
-    const hashedPassword = await bcrypt.hash(data.password, 10);
+    const expires = new Date(Date.now() + 60 * 60 * 1000);
 
-    const user = await tx.user.create({
+    await prisma.user.update({
+      where: { id: user.id },
       data: {
-        email: gmail,
-        password: hashedPassword,
-        name: `${nombre} ${apellido}`.trim(),
+        passwordResetToken: hashedToken,
+        passwordResetExpires: expires,
+      },
+    });
+
+    await sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      token: rawToken,
+    });
+
+    return { ok: true };
+  },
+
+  async resetPassword(tokenValue?: string | null, passwordValue?: string | null) {
+    const token = String(tokenValue || "").trim();
+    const password = String(passwordValue || "");
+
+    if (!token) {
+      throw new Error("El token es obligatorio");
+    }
+
+    if (!password || password.length < 6) {
+      throw new Error("La contraseña debe tener al menos 6 caracteres");
+    }
+
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    const user = await prisma.user.findFirst({
+      where: {
+        passwordResetToken: hashedToken,
+        passwordResetExpires: {
+          gt: new Date(),
+        },
         role: Role.CLIENTE,
         isActive: true,
       },
     });
 
-    return tx.client.create({
+    if (!user) {
+      throw new Error("El enlace es inválido o ya venció");
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await prisma.user.update({
+      where: { id: user.id },
       data: {
-        nombre,
-        apellido,
-        dni,
-        telefono: data.telefono ?? null,
-        gmail,
-
-        // Cliente registrado desde /tienda = Minorista
-        category: CategoryClient.Price,
-
-        // Nunca habilitamos cuenta corriente desde la tienda
-        creditLimit: null,
-        isAccountEnabled: false,
-
-        userId: user.id,
-        ...addressData,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            isActive: true,
-          },
-        },
-        _count: {
-          select: {
-            sales: true,
-            accountMovements: true,
-          },
-        },
+        password: hashedPassword,
+        mustChangePassword: false,
+        passwordResetToken: null,
+        passwordResetExpires: null,
       },
     });
-  });
-},
+
+    return { ok: true };
+  },
 
   async getClients() {
     return prisma.client.findMany({
       orderBy: { createdAt: "desc" },
       include: {
         user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            isActive: true,
-          },
+          select: clientUserSelect,
         },
         _count: {
           select: {
@@ -325,13 +411,7 @@ export const clientService = {
       where: { id },
       include: {
         user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            isActive: true,
-          },
+          select: clientUserSelect,
         },
         sales: {
           orderBy: { createdAt: "desc" },
@@ -420,10 +500,6 @@ export const clientService = {
           throw new Error("Para crear login, el email es obligatorio");
         }
 
-        if (!data.password || data.password.length < 6) {
-          throw new Error("La contraseña debe tener al menos 6 caracteres");
-        }
-
         const existingUser = await tx.user.findUnique({
           where: { email },
         });
@@ -434,8 +510,7 @@ export const clientService = {
 
         const nombre = cleanData.nombre ?? existing.nombre;
         const apellido = cleanData.apellido ?? existing.apellido;
-
-        const hashedPassword = await bcrypt.hash(data.password, 10);
+        const hashedPassword = await bcrypt.hash(DEFAULT_CLIENT_PASSWORD, 10);
 
         const user = await tx.user.create({
           data: {
@@ -444,6 +519,7 @@ export const clientService = {
             name: `${nombre} ${apellido}`.trim(),
             role: Role.CLIENTE,
             isActive: true,
+            mustChangePassword: true,
           },
         });
 
@@ -451,18 +527,35 @@ export const clientService = {
         cleanData.gmail = email;
       }
 
+      if (existing.userId && cleanData.gmail) {
+        const emailAlreadyUsed = await tx.user.findFirst({
+          where: {
+            email: cleanData.gmail,
+            id: { not: existing.userId },
+          },
+        });
+
+        if (emailAlreadyUsed) {
+          throw new Error("Ya existe un usuario con ese email");
+        }
+
+        await tx.user.update({
+          where: { id: existing.userId },
+          data: {
+            email: cleanData.gmail,
+            name: `${cleanData.nombre ?? existing.nombre} ${
+              cleanData.apellido ?? existing.apellido
+            }`.trim(),
+          },
+        });
+      }
+
       return tx.client.update({
         where: { id },
         data: cleanData,
         include: {
           user: {
-            select: {
-              id: true,
-              email: true,
-              name: true,
-              role: true,
-              isActive: true,
-            },
+            select: clientUserSelect,
           },
           _count: {
             select: {

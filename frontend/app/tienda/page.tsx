@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -12,6 +14,7 @@ import {
   MapPin,
   ChevronDown,
   Store,
+  ArrowUpDown,
 } from "lucide-react";
 import {
   CatalogCategory,
@@ -39,6 +42,34 @@ type ShopAuthUser = {
   } | null;
 };
 
+type CatalogProductsResult = {
+  products?: CatalogProduct[];
+  data?: CatalogProduct[];
+  customer?: {
+    category?: string | null;
+  } | null;
+  total?: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+  pagination?: {
+    total?: number;
+    page?: number;
+    limit?: number;
+    totalPages?: number;
+  };
+};
+
+type CatalogSortMode =
+  | "name-asc"
+  | "name-desc"
+  | "price-asc"
+  | "price-desc"
+  | "category-asc"
+  | "category-desc";
+
+const SHOP_PRODUCTS_PAGE_SIZE = 28;
+
 async function getCurrentUser(): Promise<ShopAuthUser | null> {
   try {
     const res = await fetch(`${API_URL}/auth/me`, {
@@ -64,6 +95,61 @@ function isVisibleCatalogProduct(product: CatalogProduct) {
   );
 }
 
+function normalizeSortText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase("es-AR");
+}
+
+function sortCatalogProducts(
+  list: CatalogProduct[],
+  sortMode: CatalogSortMode,
+) {
+  return [...list].sort((a, b) => {
+    if (sortMode === "name-asc") {
+      return normalizeSortText(a.name).localeCompare(
+        normalizeSortText(b.name),
+        "es-AR",
+        { numeric: true, sensitivity: "base" },
+      );
+    }
+
+    if (sortMode === "name-desc") {
+      return normalizeSortText(b.name).localeCompare(
+        normalizeSortText(a.name),
+        "es-AR",
+        { numeric: true, sensitivity: "base" },
+      );
+    }
+
+    if (sortMode === "price-asc") {
+      return Number(a.price ?? 0) - Number(b.price ?? 0);
+    }
+
+    if (sortMode === "price-desc") {
+      return Number(b.price ?? 0) - Number(a.price ?? 0);
+    }
+
+    if (sortMode === "category-asc") {
+      return normalizeSortText(a.category?.name).localeCompare(
+        normalizeSortText(b.category?.name),
+        "es-AR",
+        { numeric: true, sensitivity: "base" },
+      );
+    }
+
+    if (sortMode === "category-desc") {
+      return normalizeSortText(b.category?.name).localeCompare(
+        normalizeSortText(a.category?.name),
+        "es-AR",
+        { numeric: true, sensitivity: "base" },
+      );
+    }
+
+    return 0;
+  });
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
 
@@ -87,8 +173,19 @@ async function fetchCategories() {
   return shopApi.getCategories();
 }
 
-async function fetchCatalogProducts(category: string, search: string) {
-  return shopApi.getProducts({ category, search, limit: 80 });
+async function fetchCatalogProducts(
+  category: string,
+  search: string,
+  page: number,
+  sort: CatalogSortMode,
+) {
+  return shopApi.getProducts({
+    category,
+    search,
+    page,
+    limit: SHOP_PRODUCTS_PAGE_SIZE,
+    sort,
+  } as any) as Promise<CatalogProductsResult>;
 }
 
 export default function TiendaPage() {
@@ -98,11 +195,15 @@ export default function TiendaPage() {
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [category, setCategory] = useState("");
   const [search, setSearch] = useState("");
+  const [sortMode, setSortMode] = useState<CatalogSortMode>("name-asc");
   const [customerCategory, setCustomerCategory] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<ShopAuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalProducts, setTotalProducts] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const cartCount = useCartStore((state) => state.count());
   const add = useCartStore((state) => state.add);
@@ -178,11 +279,30 @@ export default function TiendaPage() {
   useEffect(() => {
     let alive = true;
 
-    fetchCatalogProducts(category, search)
+    setLoading(true);
+
+    fetchCatalogProducts(category, search, currentPage, sortMode)
       .then((result) => {
         if (!alive) return;
 
-        setProducts(result.products.filter(isVisibleCatalogProduct));
+        const visibleProducts = sortCatalogProducts(
+          (result.products ?? result.data ?? []).filter(
+            isVisibleCatalogProduct,
+          ),
+          sortMode,
+        );
+
+        const responseTotal =
+          result.total ?? result.pagination?.total ?? visibleProducts.length;
+
+        const responseTotalPages =
+          result.totalPages ??
+          result.pagination?.totalPages ??
+          Math.ceil(Number(responseTotal || 0) / SHOP_PRODUCTS_PAGE_SIZE);
+
+        setProducts(visibleProducts);
+        setTotalProducts(Number(responseTotal ?? visibleProducts.length));
+        setTotalPages(Math.max(1, Number(responseTotalPages || 1)));
         setCustomerCategory(
           result.customer?.category ?? authUser?.client?.category ?? null,
         );
@@ -196,6 +316,8 @@ export default function TiendaPage() {
         const message = getErrorMessage(err, "No se pudo cargar la tienda");
 
         setProducts([]);
+        setTotalProducts(0);
+        setTotalPages(1);
         setError(message);
         toast.error(message);
       })
@@ -207,19 +329,42 @@ export default function TiendaPage() {
     return () => {
       alive = false;
     };
-  }, [category, search, authUser?.client?.category]);
+  }, [category, search, currentPage, sortMode, authUser?.client?.category]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleCategoryChange = (value: string) => {
     setLoading(true);
     setError("");
+    setCurrentPage(1);
     setCategory(value);
   };
 
   const handleSearchChange = (value: string) => {
     setLoading(true);
     setError("");
+    setCurrentPage(1);
     setSearch(value);
   };
+
+  const handleSortChange = (value: CatalogSortMode) => {
+    setLoading(true);
+    setError("");
+    setCurrentPage(1);
+    setSortMode(value);
+  };
+
+  const pageStart = totalProducts
+    ? (currentPage - 1) * SHOP_PRODUCTS_PAGE_SIZE + 1
+    : 0;
+  const pageEnd = Math.min(
+    currentPage * SHOP_PRODUCTS_PAGE_SIZE,
+    totalProducts,
+  );
 
   const handleAddToCart = (product: CatalogProduct) => {
     if (!isLoggedIn) {
@@ -281,7 +426,8 @@ export default function TiendaPage() {
         }
 
         button,
-        input {
+        input,
+        select {
           font-family: inherit;
         }
 
@@ -780,6 +926,36 @@ export default function TiendaPage() {
           font-weight: 900;
         }
 
+        .sort-control {
+          height: 34px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: #f9fafb;
+          color: var(--text);
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 0 10px 0 12px;
+        }
+
+        .sort-control svg {
+          width: 14px;
+          height: 14px;
+          color: var(--muted);
+          flex-shrink: 0;
+        }
+
+        .sort-control select {
+          border: 0;
+          background: transparent;
+          color: var(--text);
+          outline: none;
+          font-size: 12px;
+          font-weight: 900;
+          cursor: pointer;
+          max-width: 190px;
+        }
+
         .mobile-categories {
           display: none;
           position: relative;
@@ -1095,6 +1271,65 @@ export default function TiendaPage() {
           font-weight: 600;
         }
 
+        .shop-pagination {
+          margin-top: 22px;
+          padding: 16px;
+          border: 1px solid var(--line);
+          border-radius: 22px;
+          background: var(--white);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+          flex-wrap: wrap;
+          box-shadow: var(--shadow-sm);
+        }
+
+        .shop-pagination-info {
+          color: var(--muted);
+          font-size: 14px;
+          font-weight: 850;
+        }
+
+        .shop-pagination-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
+        .shop-pagination-btn {
+          min-height: 42px;
+          padding: 0 18px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: var(--white);
+          color: var(--text);
+          font-size: 14px;
+          font-weight: 900;
+          cursor: pointer;
+          transition: 0.18s ease;
+        }
+
+        .shop-pagination-btn:hover:not(:disabled) {
+          background: #f9fafb;
+          border-color: var(--line-strong);
+          transform: translateY(-1px);
+        }
+
+        .shop-pagination-btn:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        .shop-pagination-page {
+          color: var(--text);
+          font-size: 15px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+
         .footer {
           background: var(--white);
           border-top: 1px solid var(--line);
@@ -1216,6 +1451,16 @@ export default function TiendaPage() {
           .toolbar-chips {
             justify-content: flex-start;
           }
+
+          .sort-control {
+            width: 100%;
+            justify-content: flex-start;
+          }
+
+          .sort-control select {
+            width: 100%;
+            max-width: none;
+          }
         }
 
         @media (max-width: 640px) {
@@ -1311,6 +1556,24 @@ export default function TiendaPage() {
           .stock-badge {
             font-size: 10px;
             padding: 6px 8px;
+          }
+
+          .shop-pagination {
+            display: grid;
+            grid-template-columns: 1fr;
+            text-align: center;
+            padding: 12px;
+            border-radius: 18px;
+          }
+
+          .shop-pagination-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            width: 100%;
+          }
+
+          .shop-pagination-btn {
+            width: 100%;
           }
         }
       `}</style>
@@ -1489,8 +1752,8 @@ export default function TiendaPage() {
                     <div className="toolbar-title">
                       <h2>{selectedCategoryName}</h2>
                       <span data-nosnippet="true">
-                        {products.length}{" "}
-                        {products.length === 1
+                        {totalProducts}{" "}
+                        {totalProducts === 1
                           ? "producto encontrado"
                           : "productos encontrados"}
                       </span>
@@ -1504,6 +1767,28 @@ export default function TiendaPage() {
                       <div className="chip">
                         Condición: <strong>{priceLabel}</strong>
                       </div>
+
+                      <label className="sort-control">
+                        <ArrowUpDown />
+                        <select
+                          value={sortMode}
+                          onChange={(e) =>
+                            handleSortChange(e.target.value as CatalogSortMode)
+                          }
+                          aria-label="Ordenar productos"
+                        >
+                          <option value="name-asc">Nombre A-Z</option>
+                          <option value="name-desc">Nombre Z-A</option>
+                          <option value="price-asc">
+                            Precio menor a mayor
+                          </option>
+                          <option value="price-desc">
+                            Precio mayor a menor
+                          </option>
+                          <option value="category-asc">Categoría A-Z</option>
+                          <option value="category-desc">Categoría Z-A</option>
+                        </select>
+                      </label>
                     </div>
                   </div>
 
@@ -1597,6 +1882,45 @@ export default function TiendaPage() {
                       </article>
                     ))}
                   </div>
+
+                  {totalProducts > 0 && (
+                    <div className="shop-pagination" data-nosnippet="true">
+                      <div className="shop-pagination-info">
+                        Mostrando {pageStart} - {pageEnd} de {totalProducts}{" "}
+                        productos
+                      </div>
+
+                      <div className="shop-pagination-actions">
+                        <button
+                          type="button"
+                          className="shop-pagination-btn"
+                          disabled={currentPage === 1}
+                          onClick={() =>
+                            setCurrentPage((prev) => Math.max(1, prev - 1))
+                          }
+                        >
+                          Anterior
+                        </button>
+
+                        <span className="shop-pagination-page">
+                          Página {currentPage} de {totalPages}
+                        </span>
+
+                        <button
+                          type="button"
+                          className="shop-pagination-btn"
+                          disabled={currentPage === totalPages}
+                          onClick={() =>
+                            setCurrentPage((prev) =>
+                              Math.min(totalPages, prev + 1),
+                            )
+                          }
+                        >
+                          Siguiente
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </section>
@@ -1634,4 +1958,4 @@ export default function TiendaPage() {
       </div>
     </>
   );
-} 
+}

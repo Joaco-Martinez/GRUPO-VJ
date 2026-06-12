@@ -17,9 +17,14 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Reset de contraseña para clientes de la tienda
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+
   // Si el usuario es CLIENTE, puede estar vinculado a una ficha comercial Client.
   client Client?
 
+  mustChangePassword Boolean @default(false)
   Sale             Sale[]
   StockMovements   StockMovement[]
   accountMovements AccountMovement[]
@@ -27,6 +32,7 @@ model User {
 
   @@index([role])
   @@index([isActive])
+  @@index([passwordResetToken])
 }
 
 model Client {

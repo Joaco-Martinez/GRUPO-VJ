@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import {
@@ -73,19 +74,27 @@ function getApiMessage(error: unknown, fallback: string) {
 }
 
 function extractUser(data: any): ShopUser | null {
-  return (
-    data?.content?.user ??
-    data?.content ??
-    data?.user ??
-    null
-  );
+  return data?.content?.user ?? data?.content ?? data?.user ?? null;
+}
+
+function clearClientCookies() {
+  if (typeof document === "undefined") return;
+
+  document.cookie = "user=; Max-Age=0; path=/";
+  document.cookie = "user=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
 }
 
 export function ShopAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<ShopUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [logoutInProgress, setLogoutInProgress] = useState(false);
 
   const refreshUser = useCallback(async () => {
+    if (logoutInProgress) {
+      setUser(null);
+      return null;
+    }
+
     try {
       const res = await api.get("/auth/me");
 
@@ -102,7 +111,7 @@ export function ShopAuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       return null;
     }
-  }, []);
+  }, [logoutInProgress]);
 
   useEffect(() => {
     let mounted = true;
@@ -136,6 +145,8 @@ export function ShopAuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (input: LoginInput) => {
     try {
+      setLogoutInProgress(false);
+
       const res = await api.post("/auth/login", {
         email: input.email,
         password: input.password,
@@ -156,10 +167,21 @@ export function ShopAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    setLogoutInProgress(true);
+    setUser(null);
+    clearClientCookies();
+
     try {
       await api.post("/auth/logout");
+    } catch (error) {
+      console.error("Error cerrando sesión:", error);
     } finally {
       setUser(null);
+      clearClientCookies();
+
+      setTimeout(() => {
+        setLogoutInProgress(false);
+      }, 700);
     }
   }, []);
 
@@ -167,13 +189,13 @@ export function ShopAuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       client: user?.client ?? null,
-      isLoggedIn: Boolean(user?.id),
+      isLoggedIn: Boolean(user?.id) && !logoutInProgress,
       loading,
       login,
       logout,
       refreshUser,
     }),
-    [user, loading, login, logout, refreshUser]
+    [user, loading, login, logout, refreshUser, logoutInProgress]
   );
 
   return (

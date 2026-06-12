@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import Image from "next/image";
@@ -17,27 +18,9 @@ import {
 import toast from "react-hot-toast";
 import { formatMoney } from "@/lib/shop";
 import { useCartStore } from "@/store/cart";
+import { useShopAuth } from "@/context/ShopAuthContext";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-
-type ShopAuthUser = {
-  id: string;
-  email: string;
-  name?: string | null;
-  role?: string;
-  client?: {
-    id: string;
-    nombre?: string | null;
-    apellido?: string | null;
-    dni?: string | null;
-    telefono?: string | null;
-    gmail?: string | null;
-    category?: string | null;
-    currentBalance?: number | null;
-    creditLimit?: number | null;
-    isAccountEnabled?: boolean | null;
-  } | null;
-};
 
 type SaleItem = {
   id?: string;
@@ -107,24 +90,6 @@ async function apiGet<T>(path: string): Promise<T> {
   return res.json();
 }
 
-async function apiPost<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    throw new Error("No se pudo completar la acción");
-  }
-
-  return res.json();
-}
-
-function normalizeUser(data: any): ShopAuthUser | null {
-  return data?.content ?? data?.user ?? data ?? null;
-}
-
 function normalizeSales(data: any): Sale[] {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.sales)) return data.sales;
@@ -159,98 +124,107 @@ export default function TiendaCuentaPage() {
   const router = useRouter();
   const clearCart = useCartStore((state) => state.clear);
 
-  const [user, setUser] = useState<ShopAuthUser | null>(null);
+  const { user, client, loading, logout } = useShopAuth();
+
   const [sales, setSales] = useState<Sale[]>([]);
-  const [loading, setLoading] = useState(true);
   const [salesLoading, setSalesLoading] = useState(false);
   const [error, setError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
 
   const clientName = useMemo(() => {
-    const fullName = [user?.client?.nombre, user?.client?.apellido]
+    const fullName = [client?.nombre, client?.apellido]
       .filter(Boolean)
       .join(" ")
       .trim();
+
     return fullName || user?.name || "Mi cuenta";
-  }, [user]);
+  }, [client, user]);
 
   const priceList = useMemo(() => {
-    const category = user?.client?.category;
+    const category = client?.category;
+
     if (category === "Mayorista") return "Lista mayorista";
     if (category === "Cliente") return "Lista cliente";
+
     return "Lista minorista";
-  }, [user]);
+  }, [client]);
+
+  useEffect(() => {
+    if (loading) return;
+
+    if (!user?.id) {
+      router.replace("/tienda/login");
+    }
+  }, [loading, user, router]);
 
   useEffect(() => {
     let alive = true;
 
-    async function loadAccount() {
-      setLoading(true);
+    async function loadSales() {
+      if (loading) return;
+      if (!user?.id) return;
+
+      const clientId = client?.id;
+
+      setSalesLoading(true);
       setError("");
 
       try {
-        const meData = await apiGet<any>("/auth/me");
-        const currentUser = normalizeUser(meData);
+        const salesData = await apiGet<any>("/sales");
+        const allSales = normalizeSales(salesData);
 
-        if (!currentUser) {
-          router.replace("/tienda/login");
-          return;
-        }
+        const mySales = clientId
+          ? allSales.filter(
+              (sale) => sale.clientId === clientId || sale.client?.id === clientId
+            )
+          : [];
 
         if (!alive) return;
-        setUser(currentUser);
-        setSalesLoading(true);
 
-        try {
-          const salesData = await apiGet<any>("/sales");
-          const allSales = normalizeSales(salesData);
-          const clientId = currentUser.client?.id;
-          const mySales = clientId
-            ? allSales.filter(
-                (sale) =>
-                  sale.clientId === clientId || sale.client?.id === clientId,
-              )
-            : [];
-
-          if (!alive) return;
-          setSales(mySales.slice(0, 20));
-        } catch (salesErr) {
-          console.error(salesErr);
-          if (!alive) return;
-          setSales([]);
-        } finally {
-          if (alive) setSalesLoading(false);
-        }
+        setSales(mySales.slice(0, 20));
       } catch (err: unknown) {
-        const message = getErrorMessage(
-          err,
-          "Tu sesión venció. Iniciá sesión nuevamente.",
-        );
+        console.error(err);
+
         if (!alive) return;
-        setError(message);
-        toast.error(message);
-        router.replace("/tienda/login");
+
+        setSales([]);
+        setError(
+          getErrorMessage(
+            err,
+            "No se pudieron cargar las ventas de tu cuenta."
+          )
+        );
       } finally {
-        if (alive) setLoading(false);
+        if (alive) setSalesLoading(false);
       }
     }
 
-    loadAccount();
+    loadSales();
 
     return () => {
       alive = false;
     };
-  }, [router]);
+  }, [loading, user, client]);
 
-  async function logout() {
+  async function handleLogout() {
+    if (loggingOut) return;
+
     setLoggingOut(true);
+    setError("");
 
     try {
-      await apiPost("/auth/logout");
+      await logout();
+
       clearCart();
+      setSales([]);
+
       toast.success("Sesión cerrada");
+
       router.replace("/tienda/login");
-      router.refresh();
+
+      setTimeout(() => {
+        router.refresh();
+      }, 80);
     } catch (err: unknown) {
       const message = getErrorMessage(err, "No se pudo cerrar sesión");
       toast.error(message);
@@ -402,6 +376,11 @@ export default function TiendaCuentaPage() {
 
         .logout-btn {
           color: var(--red);
+        }
+
+        .logout-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
         }
 
         .main {
@@ -745,7 +724,7 @@ export default function TiendaCuentaPage() {
 
               <button
                 className="logout-btn"
-                onClick={logout}
+                onClick={handleLogout}
                 disabled={loggingOut}
               >
                 <LogOut size={16} />
@@ -763,7 +742,7 @@ export default function TiendaCuentaPage() {
 
           {error && <div className="err-box">⚠ {error}</div>}
 
-          {loading ? (
+          {loading || !user ? (
             <div className="loading">Cargando tu cuenta...</div>
           ) : (
             <>
@@ -792,7 +771,7 @@ export default function TiendaCuentaPage() {
                   </div>
                   <small>Email</small>
                   <strong>
-                    {user?.email || user?.client?.gmail || "Sin email"}
+                    {user?.email || client?.gmail || "Sin email"}
                   </strong>
                 </article>
 
@@ -802,7 +781,7 @@ export default function TiendaCuentaPage() {
                   </div>
                   <small>Teléfono</small>
                   <strong>
-                    {user?.client?.telefono || "Sin teléfono cargado"}
+                    {client?.telefono || "Sin teléfono cargado"}
                   </strong>
                 </article>
 
@@ -812,8 +791,8 @@ export default function TiendaCuentaPage() {
                   </div>
                   <small>Cuenta corriente</small>
                   <strong>
-                    {user?.client?.isAccountEnabled
-                      ? `Saldo: ${formatMoney(Number(user.client.currentBalance ?? 0))}`
+                    {client?.isAccountEnabled
+                      ? `Saldo: ${formatMoney(Number(client.currentBalance ?? 0))}`
                       : "No habilitada"}
                   </strong>
                 </article>
@@ -841,11 +820,13 @@ export default function TiendaCuentaPage() {
                   <div className="sale-list">
                     {sales.map((sale) => {
                       const firstItems = sale.items?.slice(0, 3) ?? [];
+
                       const itemText = firstItems
                         .map((item) => {
                           const qty = item.quantityKg ?? item.quantity ?? 1;
                           const unit =
                             item.product?.saleUnit === "KG" ? "kg" : "u";
+
                           return `${item.product?.name ?? "Producto"} x ${qty} ${unit}`;
                         })
                         .join(" · ");
@@ -856,6 +837,7 @@ export default function TiendaCuentaPage() {
                             <p className="sale-title">
                               Venta #{sale.id.slice(0, 8)}
                             </p>
+
                             <p className="sale-meta">
                               {saleDate(sale)}
                               {itemText ? ` · ${itemText}` : ""}

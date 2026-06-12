@@ -26,8 +26,18 @@ function sanitizeUser(user: any) {
     role: user.role,
     name: user.name,
     isActive: user.isActive,
+    mustChangePassword: user.mustChangePassword ?? false,
     client: user.client ?? null,
   };
+}
+
+function setAuthCookies(res: Response, cleanUser: any, token: string) {
+  res.cookie("token", token, getCookieOptions());
+
+  res.cookie("user", JSON.stringify(cleanUser), {
+    ...getCookieOptions(),
+    httpOnly: false,
+  });
 }
 
 export const authService = {
@@ -75,6 +85,7 @@ export const authService = {
         name: apellido ? `${nombre} ${apellido}` : nombre,
         role: Role.CLIENTE,
         isActive: true,
+        mustChangePassword: false,
         client: {
           create: {
             nombre,
@@ -124,14 +135,82 @@ export const authService = {
 
     const cleanUser = sanitizeUser(user);
 
-    res.cookie("token", token, getCookieOptions());
-
-    res.cookie("user", JSON.stringify(cleanUser), {
-      ...getCookieOptions(),
-      httpOnly: false,
-    });
+    setAuthCookies(res, cleanUser, token);
 
     return {
+      user: cleanUser,
+    };
+  },
+
+  async changePassword(
+    userId: string,
+    currentPasswordValue: string,
+    newPasswordValue: string,
+    res?: Response
+  ) {
+    const currentPassword = String(currentPasswordValue || "");
+    const newPassword = String(newPasswordValue || "");
+
+    if (!userId) {
+      throw new Error("No autenticado");
+    }
+
+    if (!currentPassword) {
+      throw new Error("La contraseña actual es obligatoria");
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error("La nueva contraseña debe tener al menos 6 caracteres");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        client: true,
+      },
+    });
+
+    if (!user) throw new Error("Usuario no encontrado");
+
+    if (user.isActive === false) {
+      throw new Error("Usuario deshabilitado");
+    }
+
+    const isValid = await bcrypt.compare(currentPassword, user.password);
+
+    if (!isValid) {
+      throw new Error("La contraseña actual es incorrecta");
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        mustChangePassword: false,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+      include: {
+        client: true,
+      },
+    });
+
+    const cleanUser = sanitizeUser(updatedUser);
+
+    if (res) {
+      const token = jwt.sign(
+        { userId: updatedUser.id, role: updatedUser.role },
+        JWT_SECRET,
+        { expiresIn: "1d" }
+      );
+
+      setAuthCookies(res, cleanUser, token);
+    }
+
+    return {
+      message: "Contraseña actualizada correctamente",
       user: cleanUser,
     };
   },

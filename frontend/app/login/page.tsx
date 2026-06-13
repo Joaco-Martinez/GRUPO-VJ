@@ -36,7 +36,7 @@ export default function LoginPage() {
       await login(email.trim(), password);
 
       toast.success('Sesión iniciada correctamente', { id: toastId });
-      router.replace('/dashboard');
+      router.replace('/pos');
     } catch (error) {
       console.error(error);
 

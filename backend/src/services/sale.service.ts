@@ -4,8 +4,10 @@ import {
   CategoryClient,
   DeliveryMethod,
   DeliveryStatus,
+  InvoiceStatus,
   Location,
   MovementType,
+  SaleItemPriceType,
   PaymentMethod,
   ProductType,
   ReceiptType,
@@ -63,7 +65,7 @@ type CreateSaleInput = {
     quantity?: number;
     quantityKg?: number;
     price?: number;
-
+    priceType?: string | SaleItemPriceType;
     boxContents?: {
       productId: string;
       quantity?: number;
@@ -83,6 +85,7 @@ type ResolvedSaleItem = {
   productType: ProductType;
   saleUnit: SaleUnit;
   isService: boolean;
+  priceType: SaleItemPriceType;
   quantity: number;
   quantityKg: number | null;
   price: number;
@@ -105,6 +108,13 @@ type StockLine = {
   quantity: number;
   quantityKg: number;
   reason: string;
+};
+
+type GetSalesParams = {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: SaleStatus | string;
 };
 
 const DELIVERY_SKU = "ENVIO-FLETE2";
@@ -180,8 +190,71 @@ function resolveQty(product: any, item: any) {
   };
 }
 
-function resolveUnitPrice(product: any, client: ClientMini) {
+function normalizeSaleItemPriceType(
+  value: any,
+  product: any,
+  client: ClientMini,
+  hasManualPrice: boolean
+): SaleItemPriceType {
+  const raw = normalizeText(value);
+
+  if (
+    raw === "PRICE" ||
+    raw === "RETAIL" ||
+    raw === "RETAILPRICE" ||
+    raw === "RETAIL_PRICE" ||
+    raw === "MINORISTA" ||
+    raw === "PUBLICO" ||
+    raw === "PÚBLICO"
+  ) {
+    return SaleItemPriceType.PRICE;
+  }
+
+  if (
+    raw === "WHOLESALE" ||
+    raw === "WHOLESALEPRICE" ||
+    raw === "WHOLESALE_PRICE" ||
+    raw === "MAYORISTA"
+  ) {
+    return SaleItemPriceType.WHOLESALE_PRICE;
+  }
+
+  if (raw === "MANUAL" || raw === "CUSTOM" || raw === "CUSTOM_PRICE") {
+    return SaleItemPriceType.MANUAL;
+  }
+
+  // El envío siempre usa precio manual porque viene calculado por distancia.
+  if (normalizeText(product.sku) === DELIVERY_SKU && hasManualPrice) {
+    return SaleItemPriceType.MANUAL;
+  }
+
+  // Compatibilidad con el comportamiento anterior:
+  // si el frontend viejo no manda priceType, se usa la categoría del cliente.
+  if (client?.category === CategoryClient.Mayorista) {
+    return SaleItemPriceType.WHOLESALE_PRICE;
+  }
+
+  return SaleItemPriceType.PRICE;
+}
+
+function resolveUnitPrice(
+  product: any,
+  client: ClientMini,
+  priceTypeInput: any,
+  manualPriceInput?: number
+) {
   const isKg = product.saleUnit === SaleUnit.KG;
+  const hasManualPrice =
+    manualPriceInput !== undefined &&
+    manualPriceInput !== null &&
+    Number.isFinite(Number(manualPriceInput));
+
+  const priceType = normalizeSaleItemPriceType(
+    priceTypeInput,
+    product,
+    client,
+    hasManualPrice
+  );
 
   const publicPrice = isKg ? product.pricePerKg : product.price;
   const wholesalePrice = isKg
@@ -195,14 +268,35 @@ function resolveUnitPrice(product: any, client: ClientMini) {
       );
     }
 
-    return p;
+    if (p < 0) {
+      throw new Error(`El precio ${label} no puede ser negativo en ${product.name}`);
+    }
+
+    return round2(p);
   };
 
-  if (client?.category === CategoryClient.Mayorista) {
-    return validate(Number(wholesalePrice ?? publicPrice), "mayorista");
+  if (priceType === SaleItemPriceType.MANUAL) {
+    if (!hasManualPrice) {
+      throw new Error(`Falta precio manual para ${product.name}`);
+    }
+
+    return {
+      unitPrice: validate(Number(manualPriceInput), "manual"),
+      priceType,
+    };
   }
 
-  return validate(Number(publicPrice), "público");
+  if (priceType === SaleItemPriceType.WHOLESALE_PRICE) {
+    return {
+      unitPrice: validate(Number(wholesalePrice ?? publicPrice), "mayorista"),
+      priceType,
+    };
+  }
+
+  return {
+    unitPrice: validate(Number(publicPrice), "minorista"),
+    priceType,
+  };
 }
 
 function resolvePurchasePriceSnapshot(product: any) {
@@ -222,6 +316,211 @@ function resolvePurchasePriceSnapshot(product: any) {
       return acc + componentCost * unitQty + componentCost * kgQty;
     }, 0)
   );
+}
+
+
+async function resolveSaleItems(
+  saleItems: CreateSaleInput["items"],
+  client: ClientMini
+): Promise<ResolvedSaleItem[]> {
+  const itemsWithPrices: ResolvedSaleItem[] = [];
+
+  for (const item of saleItems) {
+    const product = await prisma.product.findUnique({
+      where: {
+        id: item.productId,
+      },
+      select: {
+        id: true,
+        name: true,
+        sku: true,
+        type: true,
+        saleUnit: true,
+        isService: true,
+
+        price: true,
+        pricePerKg: true,
+        purchasePrice: true,
+
+        clientPrice: true,
+        wholesalePrice: true,
+        clientPricePerKg: true,
+        wholesalePricePerKg: true,
+
+        components: {
+          select: {
+            componentId: true,
+            quantity: true,
+            quantityKg: true,
+            component: {
+              select: {
+                id: true,
+                name: true,
+                purchasePrice: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new Error("Producto no encontrado");
+    }
+
+    const isDeliveryProduct = normalizeText(product.sku) === DELIVERY_SKU;
+
+    const { quantity, quantityKg, qtyUsedForTotal } = isDeliveryProduct
+      ? {
+          quantity: Number(item.quantity ?? 1),
+          quantityKg: null as number | null,
+          qtyUsedForTotal: Number(item.quantity ?? 1),
+        }
+      : resolveQty(product, item);
+
+    if (isDeliveryProduct && (!Number.isFinite(quantity) || quantity <= 0)) {
+      throw new Error(`Cantidad inválida para ${product.name}`);
+    }
+
+    const manualPrice = item.price !== undefined ? Number(item.price) : undefined;
+
+    if (
+      item.price !== undefined &&
+      (!Number.isFinite(Number(item.price)) || Number(item.price) < 0)
+    ) {
+      throw new Error(`Precio inválido para ${product.name}`);
+    }
+
+    const resolvedPrice = resolveUnitPrice(
+      product,
+      client,
+      item.priceType,
+      manualPrice
+    );
+
+    const unitPrice = resolvedPrice.unitPrice;
+    const itemPriceType = resolvedPrice.priceType;
+    const subtotal = round2(unitPrice * qtyUsedForTotal);
+    const purchasePriceSnapshot = resolvePurchasePriceSnapshot(product);
+    const costTotal = round2(purchasePriceSnapshot * qtyUsedForTotal);
+
+    let components: ResolvedSaleItem["components"] = [];
+
+    if (product.type === ProductType.COMPUESTO) {
+      if (!product.components.length) {
+        throw new Error(`El producto compuesto "${product.name}" no tiene componentes`);
+      }
+
+      components = product.components.map((component) => ({
+        productId: component.componentId,
+        quantity: component.quantity ?? null,
+        quantityKg: component.quantityKg ?? null,
+      }));
+    } else if (Array.isArray(item.boxContents) && item.boxContents.length > 0) {
+      components = item.boxContents.map((component) => ({
+        productId: component.productId,
+        quantity:
+          component.quantity !== undefined ? Number(component.quantity) : null,
+        quantityKg:
+          component.quantityKg !== undefined ? Number(component.quantityKg) : null,
+      }));
+    }
+
+    itemsWithPrices.push({
+      productId: product.id,
+      productName: product.name,
+      productSku: product.sku,
+      productType: product.type,
+      saleUnit: product.saleUnit,
+      isService: product.isService,
+      quantity,
+      quantityKg,
+      price: unitPrice,
+      priceType: itemPriceType,
+      subtotal,
+      purchasePriceSnapshot,
+      costTotal,
+      profit: 0,
+      components,
+    });
+  }
+
+  return itemsWithPrices;
+}
+
+function saleItemToResolved(item: any): ResolvedSaleItem {
+  const qtyForCost = item.quantityKg ?? item.quantity;
+
+  return {
+    productId: item.productId,
+    productName:
+      item.productNameSnapshot ?? item.product?.name ?? "Producto",
+    productSku: item.productSkuSnapshot ?? item.product?.sku ?? null,
+    productType: item.product?.type as ProductType,
+    saleUnit: item.product?.saleUnit as SaleUnit,
+    isService: Boolean(item.product?.isService),
+    quantity: item.quantity,
+    quantityKg: item.quantityKg ?? null,
+    price: item.price,
+    priceType: item.priceType ?? SaleItemPriceType.PRICE,
+    subtotal: item.subtotal ?? round2(item.price * qtyForCost),
+    purchasePriceSnapshot: item.purchasePriceSnapshot ?? 0,
+    costTotal: round2((item.purchasePriceSnapshot ?? 0) * qtyForCost),
+    profit: item.profit ?? 0,
+    components:
+      item.boxContents?.map((box: any) => ({
+        productId: box.productId,
+        quantity: box.quantity ?? null,
+        quantityKg: box.quantityKg ?? null,
+      })) ?? [],
+  };
+}
+
+function buildSaleItemCreateData(item: ResolvedSaleItem) {
+  return {
+    productId: item.productId,
+    quantity: item.quantity,
+    quantityKg: item.quantityKg,
+    price: item.price,
+    priceType: item.priceType,
+    subtotal: item.subtotal,
+    purchasePriceSnapshot: item.purchasePriceSnapshot,
+    profit: item.profit,
+    productNameSnapshot: item.productName,
+    productSkuSnapshot: item.productSku,
+
+    boxContents: item.components.length
+      ? {
+          create: item.components.map((component) => ({
+            productId: component.productId,
+            quantity: component.quantity,
+            quantityKg: component.quantityKg,
+          })),
+        }
+      : undefined,
+  };
+}
+
+function getPaymentsFromExistingSale(sale: any) {
+  if (Array.isArray(sale.payments) && sale.payments.length > 0) {
+    return sale.payments.map((payment: any) => ({
+      method: payment.method as PaymentMethod,
+      amount: Number(payment.amount),
+      reference: payment.reference ?? undefined,
+      notes: payment.notes ?? undefined,
+    }));
+  }
+
+  if (sale.paymentMethod === PaymentMethod.CUENTA_CORRIENTE) {
+    return [
+      {
+        method: PaymentMethod.CUENTA_CORRIENTE,
+        amount: Number(sale.total ?? 0),
+      },
+    ];
+  }
+
+  return undefined;
 }
 
 function applyDiscountAndProfitToItems(
@@ -800,19 +1099,148 @@ function queueSalePdfGeneration(saleId: string) {
   });
 }
 
-export const saleService = {
-  async getAll() {
-    const sales = await prisma.sale.findMany({
-      include: buildSaleInclude(),
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+function normalizePositiveInt(value: unknown, fallback?: number) {
+  if (value === undefined || value === null || value === "") return fallback;
 
-    return sales.map((sale) => ({
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+
+  const valueAsInt = Math.trunc(parsed);
+  return valueAsInt > 0 ? valueAsInt : fallback;
+}
+
+function normalizeSaleStatusFilter(value?: string | SaleStatus) {
+  if (!value) return undefined;
+
+  const status = String(value).toUpperCase();
+  return Object.values(SaleStatus).includes(status as SaleStatus)
+    ? (status as SaleStatus)
+    : undefined;
+}
+
+function buildSalesWhere(params: GetSalesParams = {}, includeStatus = true) {
+  const where: any = {};
+  const status = includeStatus ? normalizeSaleStatusFilter(params.status) : undefined;
+  const search = String(params.search ?? "").trim();
+
+  if (status) {
+    where.status = status;
+  }
+
+  if (search) {
+    where.OR = [
+      { id: { contains: search, mode: "insensitive" } },
+      { client: { nombre: { contains: search, mode: "insensitive" } } },
+      { client: { apellido: { contains: search, mode: "insensitive" } } },
+      { client: { dni: { contains: search, mode: "insensitive" } } },
+      { client: { gmail: { contains: search, mode: "insensitive" } } },
+    ];
+  }
+
+  return where;
+}
+
+function getConfirmedMoneyWhere(baseWhere: any = {}) {
+  return {
+    AND: [
+      baseWhere,
+      { status: { not: SaleStatus.CANCELLED } },
+      {
+        OR: [
+          { status: SaleStatus.COMPLETED },
+          { isInvoiced: true },
+          { invoiceStatus: InvoiceStatus.INVOICED },
+        ],
+      },
+    ],
+  };
+}
+
+async function buildSalesStats(params: GetSalesParams = {}) {
+  const baseWhere = buildSalesWhere(params, false);
+  const confirmedWhere = getConfirmedMoneyWhere(baseWhere);
+
+  const [
+    totalCount,
+    pendingCount,
+    completedCount,
+    cancelledCount,
+    confirmedTotal,
+    debt,
+  ] = await Promise.all([
+    prisma.sale.count({ where: baseWhere }),
+    prisma.sale.count({ where: { ...baseWhere, status: SaleStatus.PENDING } }),
+    prisma.sale.count({ where: { ...baseWhere, status: SaleStatus.COMPLETED } }),
+    prisma.sale.count({ where: { ...baseWhere, status: SaleStatus.CANCELLED } }),
+    prisma.sale.aggregate({ where: confirmedWhere, _sum: { total: true } }),
+    prisma.sale.aggregate({ where: confirmedWhere, _sum: { accountDebtAmount: true } }),
+  ]);
+
+  return {
+    totalCount,
+    pendingCount,
+    completedCount,
+    cancelledCount,
+    confirmedTotal: round2(Number(confirmedTotal._sum.total ?? 0)),
+    debt: round2(Number(debt._sum.accountDebtAmount ?? 0)),
+  };
+}
+
+export const saleService = {
+  async getAll(params: GetSalesParams = {}) {
+    const page = normalizePositiveInt(params.page);
+    const limit = normalizePositiveInt(params.limit);
+    const where = buildSalesWhere(params);
+
+    const mapSale = (sale: any) => ({
       ...sale,
       hasCreditNote: Boolean(sale.invoiceAfip?.creditNotes?.length),
-    }));
+    });
+
+    // Compatibilidad: si no viene page/limit, devuelve todo como antes.
+    if (!page || !limit) {
+      const sales = await prisma.sale.findMany({
+        where,
+        include: buildSaleInclude(),
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      return sales.map(mapSale);
+    }
+
+    const safeLimit = Math.min(limit, 100);
+    const skip = (page - 1) * safeLimit;
+
+    const [items, totalItems, stats] = await Promise.all([
+      prisma.sale.findMany({
+        where,
+        include: buildSaleInclude(),
+        orderBy: {
+          createdAt: "desc",
+        },
+        skip,
+        take: safeLimit,
+      }),
+      prisma.sale.count({ where }),
+      buildSalesStats(params),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(totalItems / safeLimit));
+
+    return {
+      items: items.map(mapSale),
+      meta: {
+        page,
+        limit: safeLimit,
+        totalItems,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+      stats,
+    };
   },
 
   async getPending() {
@@ -917,122 +1345,7 @@ export const saleService = {
       }
     }
 
-    const itemsWithPrices: ResolvedSaleItem[] = [];
-
-    for (const item of data.items) {
-      const product = await prisma.product.findUnique({
-        where: {
-          id: item.productId,
-        },
-        select: {
-          id: true,
-          name: true,
-          sku: true,
-          type: true,
-          saleUnit: true,
-          isService: true,
-
-          price: true,
-          pricePerKg: true,
-          purchasePrice: true,
-
-          clientPrice: true,
-          wholesalePrice: true,
-          clientPricePerKg: true,
-          wholesalePricePerKg: true,
-
-          components: {
-            select: {
-              componentId: true,
-              quantity: true,
-              quantityKg: true,
-              component: {
-                select: {
-                  id: true,
-                  name: true,
-                  purchasePrice: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (!product) {
-        throw new Error("Producto no encontrado");
-      }
-
-      const isDeliveryProduct = normalizeText(product.sku) === DELIVERY_SKU;
-
-      const { quantity, quantityKg, qtyUsedForTotal } = isDeliveryProduct
-        ? {
-            quantity: Number(item.quantity ?? 1),
-            quantityKg: null as number | null,
-            qtyUsedForTotal: Number(item.quantity ?? 1),
-          }
-        : resolveQty(product, item);
-
-      if (isDeliveryProduct && (!Number.isFinite(quantity) || quantity <= 0)) {
-        throw new Error(`Cantidad inválida para ${product.name}`);
-      }
-
-      const manualPrice = item.price !== undefined ? Number(item.price) : NaN;
-
-      if (
-        item.price !== undefined &&
-        (!Number.isFinite(manualPrice) || manualPrice < 0)
-      ) {
-        throw new Error(`Precio inválido para ${product.name}`);
-      }
-
-      const unitPrice =
-        item.price !== undefined
-          ? round2(manualPrice)
-          : resolveUnitPrice(product, client);
-
-      const subtotal = round2(unitPrice * qtyUsedForTotal);
-      const purchasePriceSnapshot = resolvePurchasePriceSnapshot(product);
-      const costTotal = round2(purchasePriceSnapshot * qtyUsedForTotal);
-
-      let components: ResolvedSaleItem["components"] = [];
-
-      if (product.type === ProductType.COMPUESTO) {
-        if (!product.components.length) {
-          throw new Error(`El producto compuesto "${product.name}" no tiene componentes`);
-        }
-
-        components = product.components.map((component) => ({
-          productId: component.componentId,
-          quantity: component.quantity ?? null,
-          quantityKg: component.quantityKg ?? null,
-        }));
-      } else if (Array.isArray(item.boxContents) && item.boxContents.length > 0) {
-        components = item.boxContents.map((component) => ({
-          productId: component.productId,
-          quantity:
-            component.quantity !== undefined ? Number(component.quantity) : null,
-          quantityKg:
-            component.quantityKg !== undefined ? Number(component.quantityKg) : null,
-        }));
-      }
-
-      itemsWithPrices.push({
-        productId: product.id,
-        productName: product.name,
-        productSku: product.sku,
-        productType: product.type,
-        saleUnit: product.saleUnit,
-        isService: product.isService,
-        quantity,
-        quantityKg,
-        price: unitPrice,
-        subtotal,
-        purchasePriceSnapshot,
-        costTotal,
-        profit: 0,
-        components,
-      });
-    }
+    const itemsWithPrices = await resolveSaleItems(data.items, client);
 
     const subtotal = round2(
       itemsWithPrices.reduce((acc, item) => acc + item.subtotal, 0)
@@ -1165,27 +1478,7 @@ export const saleService = {
             accountDebtAmount: paymentState.debtAmount,
 
             items: {
-              create: itemsWithProfit.map((item) => ({
-                productId: item.productId,
-                quantity: item.quantity,
-                quantityKg: item.quantityKg,
-                price: item.price,
-                subtotal: item.subtotal,
-                purchasePriceSnapshot: item.purchasePriceSnapshot,
-                profit: item.profit,
-                productNameSnapshot: item.productName,
-                productSkuSnapshot: item.productSku,
-
-                boxContents: item.components.length
-                  ? {
-                      create: item.components.map((component) => ({
-                        productId: component.productId,
-                        quantity: component.quantity,
-                        quantityKg: component.quantityKg,
-                      })),
-                    }
-                  : undefined,
-              })),
+              create: itemsWithProfit.map(buildSaleItemCreateData),
             },
 
             payments: paymentState.hasPayments
@@ -1251,6 +1544,348 @@ export const saleService = {
       invoice: null,
       pdfQueued: true,
     };
+  },
+
+  async updateItems(id: string, data: Partial<CreateSaleInput>) {
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("La venta debe tener al menos un producto");
+    }
+
+    const sale = await prisma.sale.findUnique({
+      where: { id },
+      include: {
+        payments: true,
+        accountMovements: true,
+        businessLocation: true,
+        items: {
+          include: {
+            product: true,
+            boxContents: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        },
+        client: true,
+        user: true,
+        invoiceAfip: true,
+      },
+    });
+
+    if (!sale) {
+      throw new Error("Venta no encontrada");
+    }
+
+    if (sale.status === SaleStatus.CANCELLED) {
+      throw new Error("No se puede editar una venta cancelada");
+    }
+
+    if (sale.status !== SaleStatus.PENDING) {
+      throw new Error("Solo se puede editar una venta pendiente antes de confirmarla");
+    }
+
+    if (sale.isInvoiced || sale.invoiceStatus === "INVOICED" || sale.invoiceAfip) {
+      throw new Error("No se puede editar una venta facturada. Emití una nota de crédito y generá una nueva venta");
+    }
+
+    const clientId = data.clientId !== undefined ? data.clientId : sale.clientId ?? undefined;
+    let client: ClientMini = null;
+
+    if (clientId) {
+      client = await prisma.client.findUnique({
+        where: { id: clientId },
+        select: { category: true },
+      });
+
+      if (!client) {
+        throw new Error("Cliente no encontrado");
+      }
+    }
+
+    const businessLocationId =
+      data.businessLocationId !== undefined
+        ? data.businessLocationId
+        : sale.businessLocationId ?? null;
+
+    if (businessLocationId) {
+      const location = await prisma.businessLocation.findUnique({
+        where: { id: businessLocationId },
+        select: { id: true, isActive: true },
+      });
+
+      if (!location) {
+        throw new Error("Sucursal/depósito no encontrado");
+      }
+
+      if (!location.isActive) {
+        throw new Error("La sucursal/depósito seleccionado está inactiva");
+      }
+    }
+
+    const stockLocation = normalizeStockLocation(
+      data.stockLocation ?? (sale as any).stockLocation ?? "LOCAL"
+    );
+
+    const itemsWithPrices = await resolveSaleItems(data.items, client);
+
+    const subtotal = round2(
+      itemsWithPrices.reduce((acc, item) => acc + item.subtotal, 0)
+    );
+
+    const deliveryMethod = data.deliveryMethod ?? sale.deliveryMethod ?? DeliveryMethod.PICKUP;
+    const deliveryStatus = data.deliveryStatus ?? sale.deliveryStatus ?? DeliveryStatus.NONE;
+    const deliveryCost = round2(Number(data.deliveryCost ?? sale.deliveryCost ?? 0));
+
+    if (!Number.isFinite(deliveryCost) || deliveryCost < 0) {
+      throw new Error("El costo de envío no puede ser negativo");
+    }
+
+    const deliveryLineSubtotal = round2(
+      itemsWithPrices
+        .filter(isDeliverySaleItem)
+        .reduce((acc, item) => acc + item.subtotal, 0)
+    );
+
+    const discountType = data.discountType !== undefined ? data.discountType : sale.discountType ?? undefined;
+    const discountValue = data.discountValue !== undefined ? data.discountValue : sale.discountValue ?? undefined;
+    const discountBaseSubtotal = round2(subtotal - deliveryLineSubtotal);
+
+    let discountAmount = 0;
+
+    if (discountType && typeof discountValue === "number") {
+      discountAmount =
+        discountType === "PERCENTAGE"
+          ? discountBaseSubtotal * (discountValue / 100)
+          : discountValue;
+    }
+
+    discountAmount = round2(discountAmount);
+
+    if (deliveryMethod === DeliveryMethod.LOCAL_DELIVERY) {
+      if (deliveryCost <= 0) {
+        throw new Error("El costo de envío debe ser mayor a 0");
+      }
+
+      if (deliveryLineSubtotal <= 0) {
+        throw new Error(
+          `El envío debe venir cargado como item (${DELIVERY_SKU}) en la venta`
+        );
+      }
+
+      if (Math.abs(deliveryLineSubtotal - deliveryCost) > 0.01) {
+        throw new Error(
+          `El item de envío (${round2(deliveryLineSubtotal)}) no coincide con deliveryCost (${deliveryCost})`
+        );
+      }
+    }
+
+    const total = round2(subtotal - discountAmount);
+
+    if (total < 0) {
+      throw new Error("El total no puede ser negativo");
+    }
+
+    const itemsWithProfit = applyDiscountAndProfitToItems(
+      itemsWithPrices,
+      discountBaseSubtotal,
+      discountAmount
+    );
+
+    const grossProfit = round2(
+      itemsWithProfit.reduce((acc, item) => acc + item.profit, 0)
+    );
+
+    const paymentsForCalculation =
+      data.payments !== undefined ? data.payments : getPaymentsFromExistingSale(sale);
+
+    const paymentState = calculatePaymentState({
+      total,
+      paymentMethod: data.paymentMethod ?? sale.paymentMethod,
+      payments: paymentsForCalculation,
+    });
+
+    if (paymentState.isAccountSale && !clientId) {
+      throw new Error("Para vender en cuenta corriente necesitás seleccionar un cliente");
+    }
+
+    const oldDebt = round2(Number(sale.accountDebtAmount ?? 0));
+    const newDebt = round2(paymentState.debtAmount);
+    const debtDelta = round2(newDebt - oldDebt);
+
+    if (debtDelta !== 0 && !clientId) {
+      throw new Error("Para ajustar deuda necesitás seleccionar cliente");
+    }
+
+    const oldStockLines = buildStockLines(sale.items.map(saleItemToResolved));
+    const newStockLines = buildStockLines(itemsWithProfit);
+    const pendingAlerts: string[] = [];
+
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        await restoreStockLines(
+          tx,
+          oldStockLines,
+          sale.userId ?? undefined,
+          sale.id,
+          normalizeStockLocation((sale as any).stockLocation ?? "LOCAL"),
+          pendingAlerts
+        );
+
+        await validateStockAvailability(tx, newStockLines, stockLocation);
+
+        await tx.boxContent.deleteMany({
+          where: {
+            saleItem: {
+              saleId: sale.id,
+            },
+          },
+        });
+
+        await tx.saleItem.deleteMany({
+          where: {
+            saleId: sale.id,
+          },
+        });
+
+        if (debtDelta !== 0 && clientId) {
+          const currentClient = await tx.client.findUnique({
+            where: { id: clientId },
+            select: {
+              id: true,
+              currentBalance: true,
+              isAccountEnabled: true,
+              creditLimit: true,
+            },
+          });
+
+          if (!currentClient) throw new Error("Cliente no encontrado");
+
+          if (!currentClient.isAccountEnabled && debtDelta > 0) {
+            throw new Error("La cuenta corriente de este cliente está deshabilitada");
+          }
+
+          const previousBalance = round2(currentClient.currentBalance);
+          const newBalance = round2(Math.max(previousBalance + debtDelta, 0));
+
+          if (
+            debtDelta > 0 &&
+            currentClient.creditLimit !== null &&
+            currentClient.creditLimit !== undefined &&
+            currentClient.creditLimit > 0 &&
+            newBalance > currentClient.creditLimit
+          ) {
+            throw new Error(
+              `La deuda supera el límite de crédito del cliente. Límite: ${currentClient.creditLimit}`
+            );
+          }
+
+          await tx.client.update({
+            where: { id: clientId },
+            data: { currentBalance: newBalance },
+          });
+
+          await tx.accountMovement.create({
+            data: {
+              clientId,
+              saleId: sale.id,
+              userId: sale.userId ?? null,
+              type:
+                debtDelta > 0
+                  ? AccountMovementType.ADJUSTMENT_POSITIVE
+                  : AccountMovementType.ADJUSTMENT_NEGATIVE,
+              amount: Math.abs(debtDelta),
+              previousBalance,
+              newBalance,
+              paymentMethod: null,
+              reference: sale.id,
+              description:
+                debtDelta > 0
+                  ? "Aumento de deuda por edición de venta"
+                  : "Reducción de deuda por edición de venta",
+            },
+          });
+        }
+
+        const editedSale = await tx.sale.update({
+          where: { id: sale.id },
+          data: {
+            clientId: clientId ?? null,
+            businessLocationId,
+            subtotal,
+            total,
+            grossProfit,
+            discountType: discountType ?? null,
+            discountValue: discountValue ?? null,
+            paymentMethod: data.paymentMethod ?? sale.paymentMethod,
+            receiptType: data.receiptType ?? sale.receiptType,
+            stockLocation,
+            deliveryMethod,
+            deliveryStatus,
+            deliveryAddressSnapshot:
+              data.deliveryAddressSnapshot !== undefined
+                ? data.deliveryAddressSnapshot
+                : sale.deliveryAddressSnapshot,
+            deliveryDistanceKm:
+              data.deliveryDistanceKm !== undefined
+                ? data.deliveryDistanceKm
+                : sale.deliveryDistanceKm,
+            deliveryPricePerKm:
+              data.deliveryPricePerKm !== undefined
+                ? data.deliveryPricePerKm
+                : sale.deliveryPricePerKm,
+            deliveryCost,
+            transportName:
+              data.transportName !== undefined ? data.transportName : sale.transportName,
+            transportCuit:
+              data.transportCuit !== undefined ? data.transportCuit : sale.transportCuit,
+            packagesCount:
+              data.packagesCount !== undefined ? data.packagesCount : sale.packagesCount,
+            declaredValue:
+              data.declaredValue !== undefined ? data.declaredValue : sale.declaredValue,
+            isAccountSale: paymentState.isAccountSale,
+            accountDebtAmount: newDebt,
+            items: {
+              create: itemsWithProfit.map(buildSaleItemCreateData),
+            },
+            payments: {
+              deleteMany: {},
+              create: paymentState.paymentsToPersist.map((payment) => ({
+                method: payment.method,
+                amount: payment.amount,
+                reference: payment.reference ?? null,
+                notes: payment.notes ?? null,
+              })),
+            },
+          },
+          include: buildSaleInclude(),
+        });
+
+        await discountStockLines(
+          tx,
+          newStockLines,
+          sale.userId ?? undefined,
+          sale.id,
+          stockLocation,
+          pendingAlerts
+        );
+
+        return editedSale;
+      },
+      {
+        timeout: 30000,
+        maxWait: 30000,
+      }
+    );
+
+    queueStockAlerts(pendingAlerts);
+    queueSalePdfGeneration(updated.id);
+
+    if (updated.status === SaleStatus.COMPLETED) {
+      await financeService.registerIncomeFromSale(id);
+    }
+
+    return updated;
   },
 
   async updateStatus(id: string, status: SaleStatus) {
@@ -1319,6 +1954,7 @@ export const saleService = {
         quantity: item.quantity,
         quantityKg: item.quantityKg ?? null,
         price: item.price,
+        priceType: (item as any).priceType ?? SaleItemPriceType.PRICE,
         subtotal: (item as any).subtotal ?? item.price * (item.quantityKg ?? item.quantity),
         purchasePriceSnapshot: (item as any).purchasePriceSnapshot ?? 0,
         costTotal:

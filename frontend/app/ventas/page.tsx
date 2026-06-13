@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
-import type { PaymentMethod, Sale } from '@/types';
+import type { PaymentMethod, Product, Sale } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
 import { remitoApi, type Remito } from '@/service/remito.service';
 import toast from 'react-hot-toast';
@@ -13,6 +13,8 @@ import {
   AlertTriangle,
   Check,
   FileText,
+  Package,
+  Plus,
   Loader2,
   MessageCircle,
   MoreHorizontal,
@@ -20,6 +22,7 @@ import {
   ReceiptText,
   Search,
   Send,
+  Trash2,
   Truck,
   X,
 } from 'lucide-react';
@@ -82,11 +85,14 @@ type PaymentView = {
 };
 
 type ProductView = {
+  id?: string | null;
   name?: string | null;
+  saleUnit?: string | null;
 };
 
 type SaleItemView = {
   id?: string;
+  productId?: string | null;
   productNameSnapshot?: string | null;
   product?: ProductView | null;
   quantity?: number | null;
@@ -159,6 +165,35 @@ type CreditNoteResponse = {
   notaCredito?: {
     cae?: string;
   };
+};
+
+type SalesStats = {
+  totalCount?: number;
+  pendingCount?: number;
+  completedCount?: number;
+  cancelledCount?: number;
+  confirmedTotal?: number;
+  debt?: number;
+};
+
+type SalesFetchResult = {
+  items: Sale[];
+  serverPaginated: boolean;
+  totalItems: number;
+  totalPages: number;
+  page: number;
+  stats?: SalesStats | null;
+};
+
+type SaleEditLine = {
+  key: string;
+  productId: string;
+  name: string;
+  saleUnit?: string | null;
+  quantity: number;
+  quantityKg?: number | null;
+  price: number;
+  priceType?: string | null;
 };
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -371,6 +406,28 @@ function getSalePaymentLabel(sale: Sale) {
   return sale.paymentMethod;
 }
 
+function countsAsMoney(sale: Sale) {
+  return sale.status !== 'CANCELLED' && (sale.status === 'COMPLETED' || isSaleInvoiced(sale));
+}
+
+function canEditSaleItems(sale: Sale) {
+  return sale.status === 'PENDING' && !isSaleInvoiced(sale);
+}
+
+function getProductEditPrice(product: Product) {
+  const productAny = product as Product & { pricePerKg?: number | null };
+
+  if (productAny.saleUnit === 'KG') {
+    return num(productAny.pricePerKg, productAny.price);
+  }
+
+  return num(productAny.price);
+}
+
+function productEditName(product: Product) {
+  return String((product as Product & { name?: string | null }).name ?? 'Producto');
+}
+
 function getQuotationExpirationLabel(sale: Sale) {
   const saleExtra = sale as SaleExtra;
 
@@ -379,21 +436,68 @@ function getQuotationExpirationLabel(sale: Sale) {
   return fmtDate(String(saleExtra.quotationExpiresAt));
 }
 
-async function fetchSales() {
-  const r = await api.get('/sales');
-  return normalizeArray<Sale>(r.data);
+function normalizeSalesFetchResponse(data: any, fallbackPage: number): SalesFetchResult {
+  if (Array.isArray(data)) {
+    const items = normalizeArray<Sale>(data);
+
+    return {
+      items,
+      serverPaginated: false,
+      totalItems: items.length,
+      totalPages: Math.max(1, Math.ceil(items.length / PAGE_SIZE)),
+      page: fallbackPage,
+      stats: null,
+    };
+  }
+
+  const items = normalizeArray<Sale>(
+    data?.items ?? data?.sales ?? data?.data ?? data?.results ?? data?.rows ?? []
+  );
+
+  const meta = data?.meta ?? data?.pagination ?? data;
+  const totalItems = num(meta?.totalItems, meta?.total, meta?.count, items.length);
+  const totalPages = Math.max(1, num(meta?.totalPages, meta?.pages, Math.ceil(totalItems / PAGE_SIZE)));
+  const page = Math.max(1, num(meta?.page, meta?.currentPage, fallbackPage));
+
+  return {
+    items,
+    serverPaginated: Boolean(data?.meta || data?.pagination || meta?.total || meta?.totalItems || meta?.count),
+    totalItems,
+    totalPages,
+    page,
+    stats: data?.stats ?? data?.summary ?? null,
+  };
+}
+
+async function fetchSales(params?: { page?: number; limit?: number; search?: string; status?: string }) {
+  const r = await api.get('/sales', { params });
+  return normalizeSalesFetchResponse(r.data, params?.page ?? 1);
 }
 
 export default function VentasPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [detail, setDetail] = useState<Sale | null>(null);
   const [payEdit, setPayEdit] = useState<Sale | null>(null);
   const [mobileActionsSale, setMobileActionsSale] = useState<Sale | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+
+  const [serverPaginated, setServerPaginated] = useState(false);
+  const [serverTotalItems, setServerTotalItems] = useState(0);
+  const [serverTotalPages, setServerTotalPages] = useState(1);
+  const [serverStats, setServerStats] = useState<SalesStats | null>(null);
+
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [editItemsSale, setEditItemsSale] = useState<Sale | null>(null);
+  const [editLines, setEditLines] = useState<SaleEditLine[]>([]);
+  const [editProductSearch, setEditProductSearch] = useState('');
+  const [savingItems, setSavingItems] = useState(false);
 
   const [payments, setPayments] = useState<PaymentView[]>([]);
 
@@ -415,12 +519,51 @@ export default function VentasPage() {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    let alive = true;
+
+    api
+      .get('/auth/me')
+      .then((response) => {
+        if (!alive) return;
+        const user = response.data?.user ?? response.data?.content ?? response.data;
+        setCurrentUserRole(String(user?.role ?? '').toUpperCase() || null);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setCurrentUserRole(null);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const isAdmin = currentUserRole === 'ADMIN';
+
   const load = async (showSuccess = false) => {
     setLoading(true);
 
     try {
-      const data = await fetchSales();
-      setSales(data);
+      const result = await fetchSales({
+        page: currentPage,
+        limit: PAGE_SIZE,
+        search: debouncedSearch || undefined,
+        status: status || undefined,
+      });
+
+      setSales(result.items);
+      setServerPaginated(result.serverPaginated);
+      setServerTotalItems(result.totalItems);
+      setServerTotalPages(result.totalPages);
+      setServerStats(result.stats ?? null);
 
       if (showSuccess) {
         toast.success('Ventas actualizadas');
@@ -434,31 +577,13 @@ export default function VentasPage() {
   };
 
   useEffect(() => {
-    let alive = true;
-
-    fetchSales()
-      .then((data) => {
-        if (!alive) return;
-        setSales(data);
-      })
-      .catch((error) => {
-        console.error(error);
-
-        if (!alive) return;
-        toast.error('Error al cargar ventas');
-      })
-      .finally(() => {
-        if (!alive) return;
-        setLoading(false);
-      });
-
-    return () => {
-      alive = false;
-    };
-  }, []);
+    void load();
+  }, [currentPage, debouncedSearch, status]);
 
   const filtered = useMemo(() => {
-    const cleanSearch = search.trim().toLowerCase();
+    if (serverPaginated) return sales;
+
+    const cleanSearch = debouncedSearch.toLowerCase();
 
     return sales.filter(
       (s) =>
@@ -467,17 +592,22 @@ export default function VentasPage() {
           s.id.toLowerCase().includes(cleanSearch) ||
           clientName(s.client).toLowerCase().includes(cleanSearch))
     );
-  }, [sales, search, status]);
+  }, [sales, debouncedSearch, status, serverPaginated]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = serverPaginated
+    ? serverTotalPages
+    : Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
   const paginatedSales = useMemo(() => {
+    if (serverPaginated) return filtered;
+
     const start = (currentPage - 1) * PAGE_SIZE;
     return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, currentPage]);
+  }, [filtered, currentPage, serverPaginated]);
 
-  const pageStart = filtered.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
-  const pageEnd = Math.min(currentPage * PAGE_SIZE, filtered.length);
+  const totalFilteredItems = serverPaginated ? serverTotalItems : filtered.length;
+  const pageStart = totalFilteredItems ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(currentPage * PAGE_SIZE, totalFilteredItems);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -489,11 +619,33 @@ export default function VentasPage() {
     }
   }, [currentPage, totalPages]);
 
-  const total = sales
-    .filter((s) => s.status !== 'CANCELLED')
-    .reduce((a, s) => a + num(s.total), 0);
+  const visibleMoneySales = sales.filter(countsAsMoney);
+  const fallbackTotal = visibleMoneySales.reduce((a, s) => a + num(s.total), 0);
+  const fallbackDebt = visibleMoneySales.reduce((a, s) => a + num(s.accountDebtAmount), 0);
 
-  const debt = sales.reduce((a, s) => a + num(s.accountDebtAmount), 0);
+  const total =
+    serverStats?.confirmedTotal !== undefined && serverStats?.confirmedTotal !== null
+      ? num(serverStats.confirmedTotal)
+      : fallbackTotal;
+
+  const debt =
+    serverStats?.debt !== undefined && serverStats?.debt !== null
+      ? num(serverStats.debt)
+      : fallbackDebt;
+
+  const salesCount = num(serverStats?.totalCount, serverPaginated ? serverTotalItems : sales.length);
+  const pendingCount = num(
+    serverStats?.pendingCount,
+    sales.filter((s) => s.status === 'PENDING').length
+  );
+  const completedCount = num(
+    serverStats?.completedCount,
+    sales.filter((s) => s.status === 'COMPLETED').length
+  );
+  const cancelledCount = num(
+    serverStats?.cancelledCount,
+    sales.filter((s) => s.status === 'CANCELLED').length
+  );
 
   const confirmAction = async () => {
     if (!confirmModal) return;
@@ -790,6 +942,138 @@ export default function VentasPage() {
     }
   };
 
+
+  const loadProductsForSaleEdit = async () => {
+    if (products.length || loadingProducts) return;
+
+    setLoadingProducts(true);
+
+    try {
+      const response = await api.get('/products');
+      setProducts(normalizeArray<Product>(response.data).filter((p: any) => p.isActive !== false));
+    } catch (error) {
+      console.error(error);
+      toast.error('No se pudieron cargar los productos');
+    } finally {
+      setLoadingProducts(false);
+    }
+  };
+
+  const openItemsEditor = async (sale: Sale) => {
+    if (!canEditSaleItems(sale)) {
+      toast.error('Solo se puede editar una venta pendiente y sin factura');
+      return;
+    }
+
+    const saleExtra = sale as SaleExtra;
+
+    setEditItemsSale(sale);
+    setEditProductSearch('');
+    setEditLines(
+      (saleExtra.items ?? []).map((item, index) => ({
+        key: item.id || `${item.productId || item.product?.id || 'item'}-${index}`,
+        productId: String(item.productId || item.product?.id || ''),
+        name: item.productNameSnapshot || item.product?.name || 'Producto',
+        saleUnit: item.product?.saleUnit || (item.quantityKg ? 'KG' : 'UNIT'),
+        quantity: Math.max(1, num(item.quantity || 1)),
+        quantityKg: item.quantityKg ?? null,
+        price: num(item.price),
+        priceType: null,
+      })).filter((line) => line.productId)
+    );
+
+    await loadProductsForSaleEdit();
+  };
+
+  const editProductsFiltered = useMemo(() => {
+    const q = editProductSearch.trim().toLowerCase();
+
+    return products
+      .filter((product: any) => {
+        if (!q) return true;
+        return (
+          String(product.name ?? '').toLowerCase().includes(q) ||
+          String(product.sku ?? '').toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 24);
+  }, [products, editProductSearch]);
+
+  const addProductToEditSale = (product: Product) => {
+    const productAny = product as any;
+    const productId = String(productAny.id);
+
+    setEditLines((prev) => {
+      const existing = prev.find((line) => line.productId === productId);
+
+      if (existing && existing.saleUnit !== 'KG') {
+        return prev.map((line) =>
+          line.productId === productId ? { ...line, quantity: line.quantity + 1 } : line
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          key: `${productId}-${Date.now()}`,
+          productId,
+          name: productEditName(product),
+          saleUnit: productAny.saleUnit || 'UNIT',
+          quantity: productAny.saleUnit === 'KG' ? 1 : 1,
+          quantityKg: productAny.saleUnit === 'KG' ? 0.1 : null,
+          price: getProductEditPrice(product),
+          priceType: 'price',
+        },
+      ];
+    });
+  };
+
+  const updateEditLine = (key: string, patch: Partial<SaleEditLine>) => {
+    setEditLines((prev) => prev.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  };
+
+  const removeEditLine = (key: string) => {
+    setEditLines((prev) => prev.filter((line) => line.key !== key));
+  };
+
+  const editItemsTotal = editLines.reduce((acc, line) => {
+    const qty = line.saleUnit === 'KG' ? num(line.quantityKg) : num(line.quantity);
+    return acc + qty * num(line.price);
+  }, 0);
+
+  const saveSaleItems = async () => {
+    if (!editItemsSale) return;
+
+    if (!editLines.length) {
+      toast.error('La venta tiene que tener al menos un producto');
+      return;
+    }
+
+    setSavingItems(true);
+    const toastId = toast.loading('Actualizando productos de la venta...');
+
+    try {
+      await api.patch(`/sales/${editItemsSale.id}/items`, {
+        items: editLines.map((line) => ({
+          productId: line.productId,
+          quantity: line.saleUnit === 'KG' ? undefined : Math.max(1, num(line.quantity)),
+          quantityKg: line.saleUnit === 'KG' ? Math.max(0.001, num(line.quantityKg)) : undefined,
+          price: num(line.price),
+          priceType: line.priceType || 'price',
+        })),
+      });
+
+      setEditItemsSale(null);
+      setEditLines([]);
+      await load();
+      toast.success('Productos de la venta actualizados', { id: toastId });
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, 'No se pudieron actualizar los productos'), { id: toastId });
+    } finally {
+      setSavingItems(false);
+    }
+  };
+
   const openInvoiceModal = (sale: Sale) => {
     const saleExtra = sale as SaleExtra;
     const clientDoc = saleExtra.client?.dni || '';
@@ -1027,44 +1311,56 @@ export default function VentasPage() {
         </button>
       }
     >
-      <div
-        className="sales-stats-grid"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 12,
-          marginBottom: 18,
-        }}
-      >
-        <div className="stat-card">
-          <div className="stat-value">{sales.length}</div>
-          <div className="stat-label">Ventas</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-value" style={{ color: 'var(--accent)' }}>
-            {fmtMoney(total)}
+      {isAdmin && (
+        <div
+          className="sales-stats-grid"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(6, 1fr)',
+            gap: 12,
+            marginBottom: 18,
+          }}
+        >
+          <div className="stat-card">
+            <div className="stat-value">{salesCount}</div>
+            <div className="stat-label">Ventas</div>
           </div>
-          <div className="stat-label">Total activo</div>
-        </div>
 
-        <div className="stat-card">
-          <div className="stat-value">
-            {sales.filter((s) => s.status === 'PENDING').length}
+          <div className="stat-card">
+            <div className="stat-value" style={{ color: 'var(--accent)' }}>
+              {fmtMoney(total)}
+            </div>
+            <div className="stat-label">Total real</div>
           </div>
-          <div className="stat-label">Pendientes</div>
-        </div>
 
-        <div className="stat-card">
-          <div
-            className="stat-value"
-            style={{ color: debt > 0 ? 'var(--warn)' : 'var(--accent)' }}
-          >
-            {fmtMoney(debt)}
+          <div className="stat-card">
+            <div className="stat-value">{pendingCount}</div>
+            <div className="stat-label">Pendientes</div>
           </div>
-          <div className="stat-label">Deuda generada</div>
+
+          <div className="stat-card">
+            <div className="stat-value">{completedCount}</div>
+            <div className="stat-label">Completadas</div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-value" style={{ color: cancelledCount > 0 ? 'var(--danger)' : 'var(--text)' }}>
+              {cancelledCount}
+            </div>
+            <div className="stat-label">Canceladas</div>
+          </div>
+
+          <div className="stat-card">
+            <div
+              className="stat-value"
+              style={{ color: debt > 0 ? 'var(--warn)' : 'var(--accent)' }}
+            >
+              {fmtMoney(debt)}
+            </div>
+            <div className="stat-label">Deuda real</div>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="sales-filters" style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
         <div className="sales-search" style={{ position: 'relative', flex: 1 }}>
@@ -1131,6 +1427,7 @@ export default function VentasPage() {
                   const saleCanDownloadCreditNote = canDownloadCreditNote(s);
                   const saleHasRemito = hasRemito(s);
                   const saleCanEmitRemito = canEmitRemito(s);
+                  const saleCountsAsMoney = countsAsMoney(s);
 
                   return (
                     <tr
@@ -1156,10 +1453,16 @@ export default function VentasPage() {
                         style={{
                           fontFamily: 'var(--mono)',
                           fontWeight: 900,
-                          color: 'var(--accent)',
+                          color: saleCountsAsMoney ? 'var(--accent)' : 'var(--text3)',
+                          textDecoration: s.status === 'CANCELLED' ? 'line-through' : undefined,
                         }}
                       >
-                        {fmtMoney(s.total)}
+                        <div>{fmtMoney(s.total)}</div>
+                        {!saleCountsAsMoney && (
+                          <small style={{ color: 'var(--text3)', fontFamily: 'inherit', fontWeight: 700 }}>
+                            No suma
+                          </small>
+                        )}
                       </td>
 
                       <td>
@@ -1201,169 +1504,15 @@ export default function VentasPage() {
                       </td>
 
                       <td onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {s.status === 'PENDING' && (
-                            <button
-                              className="btn btn-primary btn-sm"
-                              onClick={() => setSaleStatus(s, 'COMPLETED')}
-                            >
-                              Confirmar
-                            </button>
-                          )}
-
-                          {s.status !== 'CANCELLED' && (
-                            <button
-                              className="btn btn-danger btn-sm"
-                              onClick={() => setSaleStatus(s, 'CANCELLED')}
-                            >
-                              Cancelar
-                            </button>
-                          )}
-
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => openPayments(s)}
-                          >
-                            Pagos
-                          </button>
-
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            disabled={printingTicketId === s.id}
-                            onClick={() => printTicket(s)}
-                            title="Imprimir ticket no fiscal"
-                          >
-                            {printingTicketId === s.id ? (
-                              <Loader2 size={13} className="animate-spin" />
-                            ) : (
-                              <Printer size={13} />
-                            )}
-                            Ticket
-                          </button>
-
-                          {saleCanEmitRemito && !saleHasRemito && s.status !== 'CANCELLED' && (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              disabled={remitoLoadingId === s.id}
-                              onClick={() => createRemito(s)}
-                              title="Generar remito"
-                            >
-                              {remitoLoadingId === s.id ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <Truck size={13} />
-                              )}
-                              Remito
-                            </button>
-                          )}
-
-                          {saleHasRemito && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              disabled={openingRemitoId === s.id}
-                              onClick={() => openRemitoPdf(s)}
-                              title="Descargar remito PDF"
-                            >
-                              {openingRemitoId === s.id ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <FileText size={13} />
-                              )}
-                              Ver remito
-                            </button>
-                          )}
-
-                          {saleCanEmitRemito && !saleHasRemito && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              disabled={openingRemitoId === s.id}
-                              onClick={() => openRemitoPdf(s)}
-                              title="Buscar remito existente"
-                            >
-                              {openingRemitoId === s.id ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <FileText size={13} />
-                              )}
-                              Ver remito
-                            </button>
-                          )}
-
-                          {s.status === 'PENDING' && (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              disabled={quotationLoadingId === s.id}
-                              onClick={() => setQuotationModal(s)}
-                              title="Cotización PDF"
-                            >
-                              {quotationLoadingId === s.id ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <FileText size={13} />
-                              )}
-                              Cotización
-                            </button>
-                          )}
-
-                          {!isSaleInvoiced(s) && s.status !== 'CANCELLED' && (
-                            <button
-                              className="btn btn-primary btn-sm"
-                              disabled={invoicingId === s.id}
-                              onClick={() => openInvoiceModal(s)}
-                              title="Facturar en ARCA"
-                            >
-                              {invoicingId === s.id ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <ReceiptText size={13} />
-                              )}
-                              Facturar
-                            </button>
-                          )}
-
-                          {isSaleInvoiced(s) && (
-                            <>
-                              <button
-                                className="btn btn-ghost btn-sm"
-                                onClick={() => {
-                                  toast.success('Abriendo factura');
-                                  window.open(`${API_URL}/factura-pdf/${s.id}/descargar`, '_blank');
-                                }}
-                                title="Descargar factura PDF"
-                              >
-                                <FileText size={13} />
-                                Factura
-                              </button>
-
-                              {saleCanDownloadCreditNote && (
-                                <button
-                                  className="btn btn-ghost btn-sm"
-                                  onClick={() => openCreditNotePdf(s)}
-                                  title="Descargar nota de crédito PDF"
-                                >
-                                  <FileText size={13} />
-                                  NC PDF
-                                </button>
-                              )}
-
-                              {saleCanEmitCreditNote && (
-                                <button
-                                  className="btn btn-danger btn-sm"
-                                  disabled={creditNoteLoadingId === s.id}
-                                  onClick={() => openCreditNoteModal(s)}
-                                  title="Emitir nota de crédito en ARCA"
-                                >
-                                  {creditNoteLoadingId === s.id ? (
-                                    <Loader2 size={13} className="animate-spin" />
-                                  ) : (
-                                    <ReceiptText size={13} />
-                                  )}
-                                  Nota crédito
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
+                        <button
+                          className="btn btn-secondary btn-sm sales-row-actions-button"
+                          onClick={() => setMobileActionsSale(s)}
+                          title="Ver opciones de la venta"
+                          aria-label="Ver opciones de la venta"
+                        >
+                          <MoreHorizontal size={15} />
+                          Opciones
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1395,6 +1544,7 @@ export default function VentasPage() {
               const saleCanDownloadCreditNote = canDownloadCreditNote(s);
               const saleHasRemito = hasRemito(s);
               const saleCanEmitRemito = canEmitRemito(s);
+              const saleCountsAsMoney = countsAsMoney(s);
 
               return (
                 <article
@@ -1436,8 +1586,16 @@ export default function VentasPage() {
 
                   <div className="sales-mobile-data">
                     <div>
-                      <small>Total</small>
-                      <strong className="sales-accent">{fmtMoney(s.total)}</strong>
+                      <small>{saleCountsAsMoney ? 'Total' : 'Total no sumado'}</small>
+                      <strong
+                        className={saleCountsAsMoney ? 'sales-accent' : ''}
+                        style={{
+                          color: saleCountsAsMoney ? undefined : 'var(--text3)',
+                          textDecoration: s.status === 'CANCELLED' ? 'line-through' : undefined,
+                        }}
+                      >
+                        {fmtMoney(s.total)}
+                      </strong>
                     </div>
 
                     <div>
@@ -1454,6 +1612,16 @@ export default function VentasPage() {
                       >
                         <Check size={14} />
                         Confirmar
+                      </button>
+                    )}
+
+                    {canEditSaleItems(s) && (
+                      <button
+                        className="btn btn-secondary btn-sm sales-mobile-main-action"
+                        onClick={() => openItemsEditor(s)}
+                      >
+                        <Plus size={14} />
+                        Productos
                       </button>
                     )}
 
@@ -1506,10 +1674,10 @@ export default function VentasPage() {
           )}
         </div>
 
-        {!loading && filtered.length > 0 && (
+        {!loading && totalFilteredItems > 0 && (
           <div className="sales-pagination">
             <div className="sales-pagination-info">
-              Mostrando {pageStart} - {pageEnd} de {filtered.length} ventas
+              Mostrando {pageStart} - {pageEnd} de {totalFilteredItems} ventas
             </div>
 
             <div className="sales-pagination-actions">
@@ -1629,6 +1797,24 @@ export default function VentasPage() {
                         <small>Productos, pagos y remitos</small>
                       </div>
                     </button>
+
+                    {canEditSaleItems(s) && (
+                      <button
+                        className="sales-action-row"
+                        onClick={() => {
+                          openItemsEditor(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          <Plus size={17} />
+                        </span>
+                        <div>
+                          <b>Editar productos</b>
+                          <small>Agregar o modificar productos antes de confirmar</small>
+                        </div>
+                      </button>
+                    )}
 
                     {s.status === 'PENDING' && (
                       <button
@@ -1863,7 +2049,7 @@ export default function VentasPage() {
           document.body
         )}
 
-      {detail && (
+      {mounted && detail && createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setDetail(null)}
@@ -1893,8 +2079,16 @@ export default function VentasPage() {
                 </div>
 
                 <div>
-                  <small>Total</small>
-                  <b style={{ display: 'block' }}>{fmtMoney(detail.total)}</b>
+                  <small>{countsAsMoney(detail) ? 'Total' : 'Total no sumado'}</small>
+                  <b
+                    style={{
+                      display: 'block',
+                      color: countsAsMoney(detail) ? 'var(--accent)' : 'var(--text3)',
+                      textDecoration: detail.status === 'CANCELLED' ? 'line-through' : undefined,
+                    }}
+                  >
+                    {fmtMoney(detail.total)}
+                  </b>
                 </div>
 
                 <div>
@@ -1934,6 +2128,15 @@ export default function VentasPage() {
                       <FileText size={13} />
                     )}
                     Cotización
+                  </button>
+                </div>
+              )}
+
+              {canEditSaleItems(detail) && (
+                <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => openItemsEditor(detail)}>
+                    <Plus size={13} />
+                    Editar productos
                   </button>
                 </div>
               )}
@@ -2053,9 +2256,11 @@ export default function VentasPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {quotationModal && (
+      {mounted && quotationModal && createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setQuotationModal(null)}
@@ -2136,9 +2341,11 @@ export default function VentasPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {invoiceModal && (
+      {mounted && invoiceModal && createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setInvoiceModal(null)}
@@ -2255,9 +2462,11 @@ export default function VentasPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {creditNoteModal && (
+      {mounted && creditNoteModal && createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setCreditNoteModal(null)}
@@ -2348,9 +2557,183 @@ export default function VentasPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {payEdit && (
+      {mounted && editItemsSale && createPortal(
+        <div className="modal-overlay">
+          <div className="modal sales-edit-items-modal">
+            <div className="modal-header">
+              <div>
+                <b>Editar productos · #{editItemsSale.id.slice(-8)}</b>
+                <small style={{ display: 'block', color: 'var(--text3)', marginTop: 3 }}>
+                  Solo disponible antes de confirmar o facturar la venta.
+                </small>
+              </div>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setEditItemsSale(null)}
+                disabled={savingItems}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body sales-edit-items-body">
+              <div className="sales-edit-products-picker">
+                <div className="sales-edit-lines-head" style={{ position: 'static', margin: 0, padding: 0, borderBottom: 'none' }}>
+                  <b>Agregar productos</b>
+                  <span>{editProductsFiltered.length}</span>
+                </div>
+
+                <div className="sales-search" style={{ position: 'relative' }}>
+                  <Search
+                    size={14}
+                    style={{
+                      position: 'absolute',
+                      left: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: 'var(--text3)',
+                    }}
+                  />
+                  <input
+                    value={editProductSearch}
+                    onChange={(e) => setEditProductSearch(e.target.value)}
+                    placeholder="Buscar producto para agregar..."
+                    style={{ paddingLeft: 34, width: '100%' }}
+                  />
+                </div>
+
+                <div className="sales-edit-products-list">
+                  {loadingProducts ? (
+                    <div className="sales-edit-empty">Cargando productos...</div>
+                  ) : editProductsFiltered.length ? (
+                    editProductsFiltered.map((product: any) => (
+                      <button
+                        key={product.id}
+                        type="button"
+                        className="sales-edit-product-row"
+                        onClick={() => addProductToEditSale(product)}
+                      >
+                        <span>
+                          <Package size={16} />
+                        </span>
+                        <div>
+                          <b>{product.name}</b>
+                          <small>{product.sku || 'SIN-SKU'} · {fmtMoney(getProductEditPrice(product))}</small>
+                        </div>
+                        <Plus size={15} />
+                      </button>
+                    ))
+                  ) : (
+                    <div className="sales-edit-empty">No encontré productos</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="sales-edit-lines">
+                <div className="sales-edit-lines-head">
+                  <b>Productos de la venta</b>
+                  <span>{editLines.length} items</span>
+                </div>
+
+                {editLines.map((line) => (
+                  <div className="sales-edit-line" key={line.key}>
+                    <div className="sales-edit-line-title">
+                      <b>{line.name}</b>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => removeEditLine(line.key)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+
+                    <div className="sales-edit-line-controls">
+                      {line.saleUnit === 'KG' ? (
+                        <label>
+                          <span>Kg</span>
+                          <input
+                            type="number"
+                            step="0.001"
+                            value={line.quantityKg ?? ''}
+                            onChange={(e) => updateEditLine(line.key, { quantityKg: num(e.target.value) })}
+                          />
+                        </label>
+                      ) : (
+                        <label>
+                          <span>Cantidad</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={line.quantity}
+                            onChange={(e) => updateEditLine(line.key, { quantity: Math.max(1, num(e.target.value)) })}
+                          />
+                        </label>
+                      )}
+
+                      <label>
+                        <span>Precio</span>
+                        <input
+                          type="number"
+                          value={line.price}
+                          onChange={(e) => updateEditLine(line.key, { price: num(e.target.value) })}
+                        />
+                      </label>
+
+                      <div>
+                        <span>Subtotal</span>
+                        <b>
+                          {fmtMoney(
+                            num(line.price) *
+                              (line.saleUnit === 'KG' ? num(line.quantityKg) : num(line.quantity))
+                          )}
+                        </b>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {!editLines.length && (
+                  <div className="sales-edit-empty">Agregá productos para actualizar la venta.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer sales-edit-items-footer">
+              <div>
+                <small>Total recalculado</small>
+                <b>{fmtMoney(editItemsTotal)}</b>
+              </div>
+
+              <button
+                className="btn btn-secondary"
+                onClick={() => setEditItemsSale(null)}
+                disabled={savingItems}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className="btn btn-primary"
+                onClick={saveSaleItems}
+                disabled={savingItems || !editLines.length}
+              >
+                {savingItems ? <span className="spinner" /> : <Check size={16} />}
+                Guardar productos
+              </button>
+            </div>
+          </div>
+        </div>
+        ,
+        document.body
+      )}
+
+      {mounted && payEdit && createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && setPayEdit(null)}
@@ -2452,9 +2835,11 @@ export default function VentasPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
-      {confirmModal && (
+      {mounted && confirmModal && createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => {
@@ -2523,13 +2908,15 @@ export default function VentasPage() {
             </div>
           </div>
         </div>
+        ,
+        document.body
       )}
 
       <style jsx>{`
         .modal-overlay {
-          position: fixed;
-          inset: 0;
-          z-index: 9999;
+          position: fixed !important;
+          inset: 0 !important;
+          z-index: 2147483000 !important;
           background: rgba(0, 0, 0, 0.45);
           display: flex;
           align-items: center;
@@ -2587,6 +2974,250 @@ export default function VentasPage() {
 
         .sales-accent {
           color: var(--accent);
+        }
+
+        .sales-row-actions-button {
+          min-width: 112px;
+          justify-content: center;
+          gap: 6px;
+        }
+
+        .sales-edit-items-modal {
+          width: min(980px, calc(100vw - 32px));
+          height: min(88dvh, 820px);
+          max-height: calc(100dvh - 32px);
+          overflow: hidden;
+        }
+
+        .sales-edit-items-modal .modal-header {
+          flex-shrink: 0;
+          padding: 18px 24px;
+          border-bottom: 1px solid var(--border);
+        }
+
+        .sales-edit-items-body {
+          flex: 1 1 auto;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          padding: 16px !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          background: var(--bg);
+        }
+
+        .sales-edit-products-picker,
+        .sales-edit-lines {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          border: 1px solid var(--border);
+          border-radius: 18px;
+          background: var(--surface);
+          padding: 12px;
+        }
+
+        .sales-edit-products-picker {
+          flex: 0 0 auto;
+          max-height: 390px;
+          overflow: hidden;
+        }
+
+        .sales-edit-lines {
+          flex: 0 0 auto;
+          overflow: visible;
+        }
+
+        .sales-edit-products-list {
+          flex: 1 1 auto;
+          min-height: 0;
+          max-height: 270px;
+          display: grid;
+          align-content: start;
+          gap: 8px;
+          overflow-y: auto;
+          overflow-x: hidden;
+          padding-right: 4px;
+        }
+
+        .sales-edit-product-row {
+          width: 100%;
+          min-width: 0;
+          border: 1px solid var(--border);
+          border-radius: 15px;
+          background: var(--surface2);
+          color: var(--text);
+          padding: 11px;
+          display: grid;
+          grid-template-columns: 36px minmax(0, 1fr) 28px;
+          gap: 10px;
+          align-items: center;
+          text-align: left;
+          cursor: pointer;
+          transition:
+            transform 0.12s ease,
+            border-color 0.12s ease,
+            background 0.12s ease;
+        }
+
+        .sales-edit-product-row:hover {
+          border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+          background: color-mix(in srgb, var(--accent) 7%, var(--surface2));
+        }
+
+        .sales-edit-product-row:active {
+          transform: scale(0.99);
+        }
+
+        .sales-edit-product-row > span {
+          width: 36px;
+          height: 36px;
+          border-radius: 13px;
+          background: var(--bg);
+          display: grid;
+          place-items: center;
+          color: var(--accent);
+          flex-shrink: 0;
+        }
+
+        .sales-edit-product-row > div {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+
+        .sales-edit-product-row b,
+        .sales-edit-product-row small {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .sales-edit-product-row b,
+        .sales-edit-line-title b {
+          font-size: 13px;
+          line-height: 1.25;
+        }
+
+        .sales-edit-product-row small {
+          color: var(--text3);
+          font-size: 11px;
+        }
+
+        .sales-edit-lines-head {
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          margin: -12px -12px 0;
+          padding: 12px;
+          background: var(--surface);
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          align-items: center;
+        }
+
+        .sales-edit-lines-head span {
+          color: var(--text3);
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .sales-edit-line {
+          border: 1px solid var(--border);
+          border-radius: 18px;
+          background: var(--surface2);
+          padding: 13px;
+          display: grid;
+          gap: 12px;
+        }
+
+        .sales-edit-line-title {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          align-items: flex-start;
+          min-width: 0;
+        }
+
+        .sales-edit-line-title b {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-edit-line-controls {
+          display: grid;
+          grid-template-columns: minmax(120px, 1fr) minmax(140px, 1fr) minmax(150px, 0.8fr);
+          gap: 10px;
+          align-items: stretch;
+        }
+
+        .sales-edit-line-controls label,
+        .sales-edit-line-controls > div {
+          min-width: 0;
+          display: grid;
+          gap: 6px;
+        }
+
+        .sales-edit-line-controls > div {
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--bg);
+          padding: 9px 10px;
+          align-content: center;
+        }
+
+        .sales-edit-line-controls span,
+        .sales-edit-items-footer small {
+          color: var(--text3);
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .sales-edit-line-controls input {
+          width: 100%;
+          min-width: 0;
+          height: 42px;
+        }
+
+        .sales-edit-line-controls b,
+        .sales-edit-items-footer b {
+          color: var(--accent);
+          font-family: var(--mono);
+          font-size: 14px;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-edit-empty {
+          border: 1px dashed var(--border);
+          border-radius: 16px;
+          padding: 18px;
+          color: var(--text3);
+          text-align: center;
+          font-size: 12px;
+          background: var(--surface2);
+        }
+
+        .sales-edit-items-footer {
+          flex-shrink: 0;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          gap: 12px;
+          align-items: center;
+          padding: 14px 24px !important;
+          border-top: 1px solid var(--border);
+          background: var(--surface);
+        }
+
+        .sales-edit-items-footer > div {
+          display: grid;
+          gap: 3px;
         }
 
         @media (max-width: 1024px) {
@@ -2770,12 +3401,29 @@ export default function VentasPage() {
           }
 
           .sales-detail-modal,
-          .sales-small-modal {
+          .sales-small-modal,
+          .sales-edit-items-modal {
             width: calc(100vw - 24px) !important;
             max-width: calc(100vw - 24px) !important;
             max-height: calc(100dvh - 24px);
             overflow: auto;
             border-radius: 18px;
+          }
+
+          .sales-edit-items-body {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-edit-products-list {
+            max-height: 220px;
+          }
+
+          .sales-edit-line-controls {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-edit-items-footer {
+            grid-template-columns: 1fr;
           }
 
           .sales-detail-grid {
@@ -3305,4 +3953,4 @@ export default function VentasPage() {
 
     </AppLayout>
   );
-}
+} 

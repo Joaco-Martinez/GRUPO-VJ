@@ -8,27 +8,22 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      Role
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Reset de contraseña para clientes de la tienda
-  passwordResetToken   String?   @unique
+  id                   String            @id @default(uuid())
+  email                String            @unique
+  password             String
+  name                 String
+  role                 Role
+  isActive             Boolean           @default(true)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
   passwordResetExpires DateTime?
-
-  // Si el usuario es CLIENTE, puede estar vinculado a una ficha comercial Client.
-  client Client?
-
-  mustChangePassword Boolean @default(false)
-  Sale             Sale[]
-  StockMovements   StockMovement[]
-  accountMovements AccountMovement[]
-  remitos          Remito[]
+  passwordResetToken   String?           @unique
+  mustChangePassword   Boolean           @default(false)
+  accountMovements     AccountMovement[]
+  client               Client?
+  remitos              Remito[]
+  Sale                 Sale[]
+  StockMovements       StockMovement[]
 
   @@index([role])
   @@index([isActive])
@@ -36,41 +31,33 @@ model User {
 }
 
 model Client {
-  id        String         @id @default(uuid())
-  nombre    String
-  apellido  String
-  dni       String         @unique
-  telefono  String?
-  gmail     String?        @unique
-  category  CategoryClient @default(Price)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-
-  addressStreet     String?
-  addressNumber     String?
-  addressFloor      String?
+  id                String            @id @default(uuid())
+  nombre            String
+  apellido          String
+  dni               String            @unique
+  telefono          String?
+  gmail             String?           @unique
+  category          CategoryClient    @default(Price)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  userId            String?           @unique
+  currentBalance    Float             @default(0)
+  creditLimit       Float?
+  isAccountEnabled  Boolean           @default(false)
   addressApartment  String?
   addressCity       String?
-  addressProvince   String?
-  addressPostalCode String?
+  addressFloor      String?
   addressNotes      String?
-
-  // Coordenadas para calcular envío con Google Routes API
-  latitude  Float?
-  longitude Float?
-
-  // Usuario de login para ecommerce/web.
-  userId String? @unique
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  // Cuenta corriente
-  currentBalance   Float   @default(0)
-  creditLimit      Float?
-  isAccountEnabled Boolean @default(false)
-
-  sales            Sale[]
-  remitos          Remito[]
-  accountMovements AccountMovement[]
+  addressNumber     String?
+  addressPostalCode String?
+  addressProvince   String?
+  addressStreet     String?
+  latitude          Float?
+  longitude         Float?
+  accountMovements  AccountMovement[]
+  user              User?             @relation(fields: [userId], references: [id])
+  remitos           Remito[]
+  sales             Sale[]
 
   @@index([dni])
   @@index([gmail])
@@ -79,28 +66,23 @@ model Client {
 }
 
 model BusinessLocation {
-  id   String               @id @default(uuid())
-  name String
-  type BusinessLocationType @default(BRANCH)
-
+  id                String               @id @default(uuid())
+  name              String
+  type              BusinessLocationType @default(BRANCH)
   addressStreet     String?
   addressNumber     String?
   addressCity       String?
   addressProvince   String?
   addressPostalCode String?
   addressNotes      String?
-
-  latitude  Float?
-  longitude Float?
-
-  isDefault Boolean @default(false)
-  isActive  Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  sales   Sale[]
-  remitos Remito[]
+  latitude          Float?
+  longitude         Float?
+  isDefault         Boolean              @default(false)
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  remitos           Remito[]
+  sales             Sale[]
 
   @@index([type])
   @@index([isDefault])
@@ -108,91 +90,57 @@ model BusinessLocation {
 }
 
 model ProductCategory {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   name        String
-  slug        String   @unique
+  slug        String    @unique
   description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  products Product[]
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
 
   @@index([slug])
   @@index([isActive])
 }
 
 model Product {
-  id          String      @id @default(uuid())
-  name        String
-  description String?
-  type        ProductType @default(SIMPLE)
-
-  // Precios para venta por unidad
-  // price = precio minorista / público
-  // wholesalePrice = precio mayorista
-  // clientPrice queda por compatibilidad, pero ya no se usa visualmente.
-  price          Float
-  wholesalePrice Float
-  clientPrice    Float
-
-  // Costo de compra base.
-  // Para productos UNIT = costo por unidad.
-  // Para productos KG = costo por kilogramo.
-  // Para productos COMPUESTOS, el costo real de venta se calcula desde sus componentes.
-  purchasePrice Float @default(0)
-
-  // Stock por unidad
-  // minStock queda como mínimo del LOCAL para no romper compatibilidad.
-  minStock          Int?
-  minStockDeposito  Int?
-  stockLocal        Int @default(0)
-  stockDeposito     Int @default(0)
-
-  // Categoría dinámica
-  categoryId String?
-  category   ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-
-  imageUrl  String?
-  imageId   String?
-  isService Boolean @default(false)
-  isActive  Boolean @default(true)
-  sku       String? @unique
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Venta por unidad o por KG
-  saleUnit SaleUnit @default(UNIT)
-
-  // Precios por KG
-  // pricePerKg = precio minorista / público por kg
-  // wholesalePricePerKg = precio mayorista por kg
-  // clientPricePerKg queda por compatibilidad, pero ya no se usa visualmente.
+  id                  String             @id @default(uuid())
+  name                String
+  description         String?
+  type                ProductType        @default(SIMPLE)
+  price               Float
+  wholesalePrice      Float
+  clientPrice         Float
+  minStock            Int?
+  stockLocal          Int                @default(0)
+  stockDeposito       Int                @default(0)
+  categoryId          String?
+  imageUrl            String?
+  imageId             String?
+  isActive            Boolean            @default(true)
+  sku                 String?            @unique
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  saleUnit            SaleUnit           @default(UNIT)
   pricePerKg          Float?
   wholesalePricePerKg Float?
   clientPricePerKg    Float?
-
-  // Stock por KG
-  // minStockKg queda como mínimo KG del LOCAL para no romper compatibilidad.
-  stockLocalKg         Float  @default(0)
-  stockDepositoKg      Float  @default(0)
-  minStockKg           Float? @default(0)
-  minStockDepositoKg   Float?
-
-  // Producto compuesto:
-  // Si este producto es una promo/pack/caja, acá van sus componentes.
-  components ProductComponent[] @relation("CompositeProduct")
-
-  // Si este producto simple participa dentro de una promo/pack/caja.
-  usedIn ProductComponent[] @relation("ComponentProduct")
-
-  SaleItem      SaleItem[]
-  remitoItems   RemitoItem[]
-  BoxContent    BoxContent[]
-  StockMovement StockMovement[]
-  alerts        Alert[]
-  stats         ProductStats[]
+  stockLocalKg        Float              @default(0)
+  stockDepositoKg     Float              @default(0)
+  minStockKg          Float?             @default(0)
+  purchasePrice       Float              @default(0)
+  isService           Boolean            @default(false)
+  minStockDeposito    Int?
+  minStockDepositoKg  Float?
+  alerts              Alert[]
+  BoxContent          BoxContent[]
+  category            ProductCategory?   @relation(fields: [categoryId], references: [id])
+  usedIn              ProductComponent[] @relation("ComponentProduct")
+  components          ProductComponent[] @relation("CompositeProduct")
+  stats               ProductStats[]
+  remitoItems         RemitoItem[]
+  SaleItem            SaleItem[]
+  StockMovement       StockMovement[]
 
   @@index([sku])
   @@index([categoryId])
@@ -201,68 +149,52 @@ model Product {
 }
 
 model ProductComponent {
-  id String @id @default(uuid())
-
+  id          String   @id @default(uuid())
   compositeId String
-  composite   Product @relation("CompositeProduct", fields: [compositeId], references: [id], onDelete: Cascade)
-
   componentId String
-  component   Product @relation("ComponentProduct", fields: [componentId], references: [id])
-
-  quantity   Int?
-  quantityKg Float?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  quantity    Int?
+  quantityKg  Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  component   Product  @relation("ComponentProduct", fields: [componentId], references: [id])
+  composite   Product  @relation("CompositeProduct", fields: [compositeId], references: [id], onDelete: Cascade)
 
   @@unique([compositeId, componentId])
   @@index([componentId])
 }
 
 model ArcaConfig {
-  id String @id @default(uuid())
-
-  // Configuracion fiscal unica para Grupo VJ.
-  // No es multi-tenant: este ERP/POS pertenece a Grupo VJ.
-  scope String @unique @default("GRUPO_VJ")
-
-  businessName  String
-  cuit          String
-  ivaCondition  String?
-  fiscalAddress String?
-  iibb          String?
-  activityStart DateTime?
-
-  csrEncrypted   String?
-  csrGeneratedAt DateTime?
-
-  environment ArcaEnvironment  @default(HOMOLOGACION)
-  status      ArcaConfigStatus @default(INACTIVE)
-
+  id                 String            @id @default(uuid())
+  businessName       String
+  cuit               String
+  ivaCondition       String?
+  environment        ArcaEnvironment   @default(HOMOLOGACION)
+  status             ArcaConfigStatus  @default(INACTIVE)
+  certEncrypted      String?
+  keyEncrypted       String?
+  certExpiresAt      DateTime?
+  lastTokenAt        DateTime?
+  lastCheckAt        DateTime?
+  lastError          String?
+  isActive           Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  activityStart      DateTime?
+  certAlias          String?
+  defaultConcept     Int               @default(1)
+  defaultCurrencyId  String            @default("PES")
   defaultPointOfSale Int?
-  defaultCurrencyId  String @default("PES")
-  defaultConcept     Int    @default(1)
-
-  certEncrypted String?
-  keyEncrypted  String?
-  certAlias     String?
-  certExpiresAt DateTime?
-
-  lastTokenAt   DateTime?
-  lastCheckAt   DateTime?
-  lastError     String?
-  lastSuccessAt DateTime?
-
-  isActive Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  tokens       AfipToken[]
-  pointsOfSale ArcaPointOfSale[]
-  remitoCais   RemitoCaiConfig[]
-  remitos      Remito[]
-  auditLogs    ArcaAuditLog[]
+  fiscalAddress      String?
+  iibb               String?
+  lastSuccessAt      DateTime?
+  scope              String            @unique @default("GRUPO_VJ")
+  csrEncrypted       String?
+  csrGeneratedAt     DateTime?
+  tokens             AfipToken[]
+  auditLogs          ArcaAuditLog[]
+  pointsOfSale       ArcaPointOfSale[]
+  remitos            Remito[]
+  remitoCais         RemitoCaiConfig[]
 
   @@index([cuit])
   @@index([isActive])
@@ -271,39 +203,31 @@ model ArcaConfig {
 }
 
 model AfipToken {
-  id String @id @default(uuid())
-
-  arcaConfigId String
-  arcaConfig   ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
-
-  service        String   @default("wsfe")
-  tokenEncrypted String
-  signEncrypted  String
+  id             String     @id @default(uuid())
+  arcaConfigId   String
   expiration     DateTime
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  service        String     @default("wsfe")
+  signEncrypted  String
+  tokenEncrypted String
+  arcaConfig     ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
 
   @@unique([arcaConfigId, service])
   @@index([expiration])
 }
 
 model ArcaPointOfSale {
-  id String @id @default(uuid())
-
-  arcaConfigId String
-  arcaConfig   ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
-
-  number      Int
-  description String?
-  enabled     Boolean @default(true)
-  isDefault   Boolean @default(false)
-
-  // Tipos AFIP habilitados, por ejemplo [1, 6, 11, 3, 8, 13].
-  enabledCbteTypes Int[] @default([])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String     @id @default(uuid())
+  arcaConfigId     String
+  number           Int
+  description      String?
+  enabled          Boolean    @default(true)
+  isDefault        Boolean    @default(false)
+  enabledCbteTypes Int[]      @default([])
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  arcaConfig       ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
 
   @@unique([arcaConfigId, number])
   @@index([number])
@@ -311,24 +235,20 @@ model ArcaPointOfSale {
 }
 
 model RemitoCaiConfig {
-  id String @id @default(uuid())
-
+  id           String     @id @default(uuid())
   arcaConfigId String
+  mode         RemitoMode @default(PREPRINTED_FORM)
+  pointOfSale  Int
+  cai          String
+  expiresAt    DateTime
+  rangeFrom    Int?
+  rangeTo      Int?
+  nextNumber   Int?
+  enabled      Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  remitos      Remito[]
   arcaConfig   ArcaConfig @relation(fields: [arcaConfigId], references: [id], onDelete: Cascade)
-
-  mode        RemitoMode @default(PREPRINTED_FORM)
-  pointOfSale Int
-  cai         String
-  expiresAt   DateTime
-  rangeFrom   Int?
-  rangeTo     Int?
-  nextNumber  Int?
-  enabled     Boolean    @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  remitos Remito[]
 
   @@index([pointOfSale])
   @@index([enabled])
@@ -336,54 +256,25 @@ model RemitoCaiConfig {
 }
 
 model Remito {
-  id String @id @default(uuid())
-
-  // Venta origen.
-  // No es obligatorio para permitir remitos manuales en el futuro.
-  // Por ahora lo vamos a generar desde una venta aceptada o facturada.
-  saleId String?
-  sale   Sale?   @relation(fields: [saleId], references: [id], onDelete: SetNull)
-
-  clientId String?
-  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
-
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  businessLocationId String?
-  businessLocation   BusinessLocation? @relation(fields: [businessLocationId], references: [id], onDelete: SetNull)
-
-  // Configuración fiscal usada al momento de emitir.
-  arcaConfigId String?
-  arcaConfig   ArcaConfig? @relation(fields: [arcaConfigId], references: [id], onDelete: SetNull)
-
-  // CAI configurado usado para este remito.
-  remitoCaiConfigId String?
-  remitoCaiConfig   RemitoCaiConfig? @relation(fields: [remitoCaiConfigId], references: [id], onDelete: SetNull)
-
-  // Datos propios del comprobante.
-  status RemitoStatus @default(ISSUED)
-  mode   RemitoMode   @default(DIGITAL_FULL)
-
-  pointOfSale Int
-  number      Int
-  fullNumber  String @unique
-
-  // Para remito R suele ser código 91.
-  code String @default("91")
-
-  issueDate    DateTime @default(now())
-  placeOfIssue String?
-
-  // Snapshot del CAI.
-  // Esto se guarda en el remito para que aunque después cambies el CAI,
-  // el remito viejo siga mostrando el CAI original.
-  cai          String?
-  caiExpiresAt DateTime?
-  caiRangeFrom Int?
-  caiRangeTo   Int?
-
-  // Snapshot fiscal de Grupo VJ.
+  id                    String            @id @default(uuid())
+  saleId                String?
+  clientId              String?
+  userId                String?
+  businessLocationId    String?
+  arcaConfigId          String?
+  remitoCaiConfigId     String?
+  status                RemitoStatus      @default(ISSUED)
+  mode                  RemitoMode        @default(DIGITAL_FULL)
+  pointOfSale           Int
+  number                Int
+  fullNumber            String            @unique
+  code                  String            @default("91")
+  issueDate             DateTime          @default(now())
+  placeOfIssue          String?
+  cai                   String?
+  caiExpiresAt          DateTime?
+  caiRangeFrom          Int?
+  caiRangeTo            Int?
   businessName          String?
   businessCuit          String?
   businessIvaCondition  String?
@@ -393,30 +284,29 @@ model Remito {
   businessAddress       String?
   businessEmail         String?
   businessPhone         String?
-
-  // Snapshot del cliente.
-  clientName         String?
-  clientDni          String?
-  clientCuit         String?
-  clientIvaCondition String?
-  clientAddress      String?
-  clientLocality     String?
-
-  // Datos logísticos / comerciales.
-  sellerName    String?
-  saleCondition String?
-  transportName String?
-  transportCuit String?
-  packagesCount Int?
-  declaredValue Float?
-  observations  String?
-
-  pdfUrl String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  items RemitoItem[]
+  clientName            String?
+  clientDni             String?
+  clientCuit            String?
+  clientIvaCondition    String?
+  clientAddress         String?
+  clientLocality        String?
+  sellerName            String?
+  saleCondition         String?
+  transportName         String?
+  transportCuit         String?
+  packagesCount         Int?
+  declaredValue         Float?
+  observations          String?
+  pdfUrl                String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  arcaConfig            ArcaConfig?       @relation(fields: [arcaConfigId], references: [id])
+  businessLocation      BusinessLocation? @relation(fields: [businessLocationId], references: [id])
+  client                Client?           @relation(fields: [clientId], references: [id])
+  remitoCaiConfig       RemitoCaiConfig?  @relation(fields: [remitoCaiConfigId], references: [id])
+  sale                  Sale?             @relation(fields: [saleId], references: [id])
+  user                  User?             @relation(fields: [userId], references: [id])
+  items                 RemitoItem[]
 
   @@unique([pointOfSale, number])
   @@index([saleId])
@@ -430,39 +320,31 @@ model Remito {
 }
 
 model RemitoItem {
-  id String @id @default(uuid())
-
-  remitoId String
-  remito   Remito @relation(fields: [remitoId], references: [id], onDelete: Cascade)
-
-  productId String?
-  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
-
+  id          String   @id @default(uuid())
+  remitoId    String
+  productId   String?
   code        String?
   description String
-
-  quantity   Int?
-  quantityKg Float?
-  saleUnit   SaleUnit @default(UNIT)
-
-  createdAt DateTime @default(now())
+  quantity    Int?
+  quantityKg  Float?
+  saleUnit    SaleUnit @default(UNIT)
+  createdAt   DateTime @default(now())
+  product     Product? @relation(fields: [productId], references: [id])
+  remito      Remito   @relation(fields: [remitoId], references: [id], onDelete: Cascade)
 
   @@index([remitoId])
   @@index([productId])
 }
 
 model ArcaAuditLog {
-  id String @id @default(uuid())
-
+  id           String          @id @default(uuid())
   arcaConfigId String?
-  arcaConfig   ArcaConfig? @relation(fields: [arcaConfigId], references: [id], onDelete: SetNull)
-
-  userId String?
-  action ArcaAuditAction
-  detail String?
-  ip     String?
-
-  createdAt DateTime @default(now())
+  userId       String?
+  action       ArcaAuditAction
+  detail       String?
+  ip           String?
+  createdAt    DateTime        @default(now())
+  arcaConfig   ArcaConfig?     @relation(fields: [arcaConfigId], references: [id])
 
   @@index([arcaConfigId])
   @@index([userId])
@@ -482,14 +364,9 @@ model CbteCounter {
 }
 
 model InvoiceAfip {
-  id     String  @id @default(uuid())
-  saleId String? @unique
-  sale   Sale?   @relation(fields: [saleId], references: [id])
-
-  relatedInvoiceId String?
-  relatedInvoice   InvoiceAfip?  @relation("CreditNoteRelation", fields: [relatedInvoiceId], references: [id])
-  creditNotes      InvoiceAfip[] @relation("CreditNoteRelation")
-
+  id                   String        @id @default(uuid())
+  saleId               String?       @unique
+  relatedInvoiceId     String?
   cuit                 String
   puntoVenta           Int
   tipoComprobante      Int
@@ -504,84 +381,68 @@ model InvoiceAfip {
   neto                 Float
   iva                  Float
   condicionIVAReceptor Int
-  moneda               String    @default("PES")
+  moneda               String        @default("PES")
   urlQR                String?
   qrBase64             String?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  relatedInvoice       InvoiceAfip?  @relation("CreditNoteRelation", fields: [relatedInvoiceId], references: [id])
+  creditNotes          InvoiceAfip[] @relation("CreditNoteRelation")
+  sale                 Sale?         @relation(fields: [saleId], references: [id])
 
   @@unique([puntoVenta, tipoComprobante, numero])
   @@index([cuit, puntoVenta, tipoComprobante])
 }
 
 model Sale {
-  id     String  @id @default(uuid())
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id])
-
-  clientId String?
-  client   Client? @relation(fields: [clientId], references: [id])
-
-  businessLocationId String?
-  businessLocation   BusinessLocation? @relation(fields: [businessLocationId], references: [id], onDelete: SetNull)
-
-  gmailSend          String?
-  deliveryPricePerKm Float?
-
-  subtotal    Float @default(0)
-  total       Float @default(0)
-  grossProfit Float @default(0)
-
-  quotationExpiresAt DateTime?
-  quotationExpiredAt DateTime?
-  quotationPdfUrl    String?
-
-  discountType  DiscountType?
-  discountValue Float?
-
-  isInvoiced   Boolean @default(false)
-  isNoteCredit Boolean @default(false)
-
-  invoiceStatus   InvoiceStatus @default(NONE)
-  afipLastError   String?
-  nextRetryAt     DateTime?
-  retryCount      Int           @default(0)
-  afipPayloadJson Json?
-
-  paymentMethod PaymentMethod
-  receiptType   ReceiptType
-  status        SaleStatus    @default(PENDING)
-
-  // Sirve para devolver el stock al mismo lugar si se cancela.
-  stockLocation Location @default(LOCAL)
-
-  // Envío / logística
-  deliveryMethod          DeliveryMethod @default(PICKUP)
-  deliveryStatus          DeliveryStatus @default(NONE)
+  id                      String            @id @default(uuid())
+  userId                  String?
+  clientId                String?
+  gmailSend               String?
+  subtotal                Float             @default(0)
+  total                   Float             @default(0)
+  discountType            DiscountType?
+  discountValue           Float?
+  isInvoiced              Boolean           @default(false)
+  isNoteCredit            Boolean           @default(false)
+  invoiceStatus           InvoiceStatus     @default(NONE)
+  afipLastError           String?
+  nextRetryAt             DateTime?
+  retryCount              Int               @default(0)
+  afipPayloadJson         Json?
+  paymentMethod           PaymentMethod
+  receiptType             ReceiptType
+  status                  SaleStatus        @default(PENDING)
+  isAccountSale           Boolean           @default(false)
+  accountDebtAmount       Float             @default(0)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  pdfUrl                  String?
+  stockLocation           Location          @default(LOCAL)
+  quotationExpiredAt      DateTime?
+  quotationExpiresAt      DateTime?
+  quotationPdfUrl         String?
+  grossProfit             Float             @default(0)
+  businessLocationId      String?
+  declaredValue           Float?
   deliveryAddressSnapshot String?
+  deliveryCost            Float             @default(0)
   deliveryDistanceKm      Float?
-  deliveryCost            Float          @default(0)
-
-  transportName String?
-  transportCuit String?
-
-  packagesCount Int?
-  declaredValue Float?
-
-  // Cuenta corriente
-  isAccountSale     Boolean @default(false)
-  accountDebtAmount Float   @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  invoiceAfip      InvoiceAfip?
-  pdfUrl           String?
-  invoice          Invoice?
-  items            SaleItem[]
-  payments         SalePayment[]
-  remitos          Remito[]
-  accountMovements AccountMovement[]
+  deliveryMethod          DeliveryMethod    @default(PICKUP)
+  deliveryStatus          DeliveryStatus    @default(NONE)
+  packagesCount           Int?
+  transportCuit           String?
+  transportName           String?
+  deliveryPricePerKm      Float?
+  accountMovements        AccountMovement[]
+  invoice                 Invoice?
+  invoiceAfip             InvoiceAfip?
+  remitos                 Remito[]
+  businessLocation        BusinessLocation? @relation(fields: [businessLocationId], references: [id])
+  client                  Client?           @relation(fields: [clientId], references: [id])
+  user                    User?             @relation(fields: [userId], references: [id])
+  items                   SaleItem[]
+  payments                SalePayment[]
 
   @@index([quotationExpiresAt])
   @@index([clientId])
@@ -592,94 +453,72 @@ model Sale {
 }
 
 model SaleItem {
-  id     String @id @default(uuid())
-  saleId String
-  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
-
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-
-  quantity   Int
-  quantityKg Float?
-
-  price    Float
-  subtotal Float @default(0)
-
-  // Costo historico al momento de vender.
-  // En SIMPLE: costo por unidad/KG.
-  // En COMPUESTO: costo total de componentes por 1 unidad del producto padre.
-  purchasePriceSnapshot Float @default(0)
-
-  // Utilidad bruta del item, con descuento proporcional aplicado.
-  profit Float @default(0)
-
-  productNameSnapshot String?
-  productSkuSnapshot  String?
-
-  boxContents BoxContent[]
-
-  createdAt DateTime @default(now())
+  id                    String       @id @default(uuid())
+  saleId                String
+  productId             String
+  quantity              Int
+  quantityKg            Float?
+  price                 Float
+  priceType             SaleItemPriceType @default(PRICE)
+  subtotal              Float        @default(0)
+  productNameSnapshot   String?
+  productSkuSnapshot    String?
+  createdAt             DateTime     @default(now())
+  profit                Float        @default(0)
+  purchasePriceSnapshot Float        @default(0)
+  boxContents           BoxContent[]
+  product               Product      @relation(fields: [productId], references: [id])
+  sale                  Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
   @@index([saleId])
   @@index([productId])
+  @@index([priceType])
 }
 
 model BoxContent {
   id         String   @id @default(uuid())
   saleItemId String
-  saleItem   SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
-
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-
+  productId  String
   quantity   Int?
   quantityKg Float?
+  product    Product  @relation(fields: [productId], references: [id])
+  saleItem   SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
 
   @@index([saleItemId])
   @@index([productId])
 }
 
 model SalePayment {
-  id     String @id @default(uuid())
-  saleId String
-  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
-
-  method PaymentMethod
-  amount Float
-
+  id        String        @id @default(uuid())
+  saleId    String
+  method    PaymentMethod
+  amount    Float
   reference String?
   notes     String?
-  createdAt DateTime @default(now())
+  createdAt DateTime      @default(now())
+  sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
   @@index([saleId])
   @@index([method])
 }
 
 model AccountMovement {
-  id String @id @default(uuid())
-
-  clientId String
-  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
-
-  saleId String?
-  sale   Sale?   @relation(fields: [saleId], references: [id], onDelete: SetNull)
-
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  type AccountMovementType
-
-  amount Float
-
+  id              String              @id @default(uuid())
+  clientId        String
+  saleId          String?
+  userId          String?
+  type            AccountMovementType
+  amount          Float
   previousBalance Float
   newBalance      Float
-
-  paymentMethod PaymentMethod?
-  reference      String?
-  description    String?
-
-  date      DateTime @default(now())
-  createdAt DateTime @default(now())
+  paymentMethod   PaymentMethod?
+  reference       String?
+  description     String?
+  date            DateTime            @default(now())
+  createdAt       DateTime            @default(now())
+  client          Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sale            Sale?               @relation(fields: [saleId], references: [id])
+  user            User?               @relation(fields: [userId], references: [id])
 
   @@index([clientId])
   @@index([saleId])
@@ -690,25 +529,23 @@ model AccountMovement {
 model Alert {
   id        String   @id @default(uuid())
   productId String
-  product   Product  @relation(fields: [productId], references: [id])
   message   String
   createdAt DateTime @default(now())
   resolved  Boolean  @default(false)
+  product   Product  @relation(fields: [productId], references: [id])
 
   @@index([productId])
   @@index([resolved])
 }
 
 model ProductStats {
-  id        String  @id @default(uuid())
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-
+  id         String   @id @default(uuid())
+  productId  String
   quantity   Int?
   quantityKg Float?
-
-  date      DateTime @default(now())
-  createdAt DateTime @default(now())
+  date       DateTime @default(now())
+  createdAt  DateTime @default(now())
+  product    Product  @relation(fields: [productId], references: [id])
 
   @@index([productId])
   @@index([date])
@@ -731,25 +568,19 @@ model Finance {
 }
 
 model StockMovement {
-  id        String  @id @default(uuid())
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id])
-
-  type MovementType
-
-  from Location?
-  to   Location?
-
+  id         String       @id @default(uuid())
+  productId  String
+  userId     String?
+  type       MovementType
+  from       Location?
+  to         Location?
   quantity   Int?
   quantityKg Float?
-
-  reason    String?
-  reference String?
-
-  createdAt DateTime @default(now())
+  reason     String?
+  reference  String?
+  createdAt  DateTime     @default(now())
+  product    Product      @relation(fields: [productId], references: [id])
+  user       User?        @relation(fields: [userId], references: [id])
 
   @@index([productId])
   @@index([userId])
@@ -760,9 +591,9 @@ model StockMovement {
 model Invoice {
   id        String   @id @default(uuid())
   saleId    String   @unique
-  sale      Sale     @relation(fields: [saleId], references: [id])
   pdfUrl    String?
   createdAt DateTime @default(now())
+  sale      Sale     @relation(fields: [saleId], references: [id])
 }
 
 enum Role {
@@ -924,4 +755,10 @@ enum DeliveryStatus {
   IN_TRANSIT
   DELIVERED
   CANCELLED
+}
+
+enum SaleItemPriceType {
+  PRICE
+  WHOLESALE_PRICE
+  MANUAL
 }

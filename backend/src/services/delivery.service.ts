@@ -1,6 +1,18 @@
 import prisma from "../prisma";
 
 const DEFAULT_PRICE_PER_KM = Number(process.env.DELIVERY_PRICE_PER_KM ?? 8000);
+const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
+const GOOGLE_ROUTES_TIMEOUT_MS = Number(process.env.GOOGLE_ROUTES_TIMEOUT_MS ?? 8000);
+const DELIVERY_FALLBACK_MULTIPLIER = Number(process.env.DELIVERY_FALLBACK_MULTIPLIER ?? 1.4);
+
+type DeliveryRouteSource = "GOOGLE_ROUTES" | "COORDINATES_FALLBACK";
+
+type GoogleRoutesResponse = {
+  routes?: {
+    distanceMeters?: number;
+    duration?: string;
+  }[];
+};
 
 function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -8,6 +20,28 @@ function round2(n: number) {
 
 function toRad(value: number) {
   return (value * Math.PI) / 180;
+}
+
+function isValidCoordinate(lat: unknown, lng: unknown) {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+
+  return (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  );
+}
+
+function parseGoogleDurationSeconds(duration?: string | null) {
+  if (!duration) return null;
+  const match = duration.match(/^(\d+(?:\.\d+)?)s$/);
+  if (!match) return null;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? seconds : null;
 }
 
 function haversineKm(params: {
@@ -76,7 +110,7 @@ function buildLocationAddress(location: {
   return [street, city, location.addressNotes].filter(Boolean).join(" - ");
 }
 
-async function getGoogleRouteDistanceKm(params: {
+async function getGoogleRoute(params: {
   originLat: number;
   originLng: number;
   destinationLat: number;
@@ -86,54 +120,68 @@ async function getGoogleRouteDistanceKm(params: {
 
   if (!apiKey) return null;
 
-  const response = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": "routes.distanceMeters",
-    },
-    body: JSON.stringify({
-      origin: {
-        location: {
-          latLng: {
-            latitude: params.originLat,
-            longitude: params.originLng,
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GOOGLE_ROUTES_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(GOOGLE_ROUTES_URL, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+      },
+      body: JSON.stringify({
+        origin: {
+          location: {
+            latLng: {
+              latitude: params.originLat,
+              longitude: params.originLng,
+            },
           },
         },
-      },
-      destination: {
-        location: {
-          latLng: {
-            latitude: params.destinationLat,
-            longitude: params.destinationLng,
+        destination: {
+          location: {
+            latLng: {
+              latitude: params.destinationLat,
+              longitude: params.destinationLng,
+            },
           },
         },
-      },
-      travelMode: "DRIVE",
-      routingPreference: "TRAFFIC_AWARE",
-    }),
-  });
+        travelMode: "DRIVE",
+        // Importante: TRAFFIC_UNAWARE evita pedir features Pro de tráfico.
+        // Para cobrar envíos por km real, alcanza con la ruta por calles.
+        routingPreference: "TRAFFIC_UNAWARE",
+        units: "METRIC",
+        languageCode: "es-AR",
+      }),
+    });
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    console.error("Google Routes API error:", response.status, text);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.error("Google Routes API error:", response.status, text);
+      return null;
+    }
+
+    const json = (await response.json()) as GoogleRoutesResponse;
+    const route = json.routes?.[0];
+    const distanceMeters = route?.distanceMeters;
+
+    if (!distanceMeters || !Number.isFinite(distanceMeters)) return null;
+
+    const durationSeconds = parseGoogleDurationSeconds(route?.duration);
+
+    return {
+      distanceKm: distanceMeters / 1000,
+      durationMinutes: durationSeconds !== null ? round2(durationSeconds / 60) : null,
+    };
+  } catch (error) {
+    console.error("Google Routes API request failed:", error);
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const json = (await response.json()) as {
-    routes?: {
-      distanceMeters?: number;
-    }[];
-  };
-
-  const distanceMeters = json.routes?.[0]?.distanceMeters;
-
-  if (!distanceMeters || !Number.isFinite(distanceMeters)) {
-    return null;
-  }
-
-  return distanceMeters / 1000;
 }
 
 export const deliveryService = {
@@ -185,54 +233,52 @@ export const deliveryService = {
       }),
     ]);
 
-    if (!location) {
-      throw new Error("Sucursal/depósito no encontrado");
+    if (!location) throw new Error("Sucursal/depósito no encontrado");
+    if (!location.isActive) throw new Error("La sucursal/depósito seleccionada está inactiva");
+    if (!client) throw new Error("Cliente no encontrado");
+
+    if (!isValidCoordinate(location.latitude, location.longitude)) {
+      throw new Error("La sucursal/depósito no tiene coordenadas válidas cargadas");
     }
 
-    if (!location.isActive) {
-      throw new Error("La sucursal/depósito seleccionada está inactiva");
+    if (!isValidCoordinate(client.latitude, client.longitude)) {
+      throw new Error("El cliente no tiene coordenadas válidas cargadas");
     }
 
-    if (!client) {
-      throw new Error("Cliente no encontrado");
-    }
+    const originLat = Number(location.latitude);
+    const originLng = Number(location.longitude);
+    const destinationLat = Number(client.latitude);
+    const destinationLng = Number(client.longitude);
 
-    if (
-      location.latitude === null ||
-      location.latitude === undefined ||
-      location.longitude === null ||
-      location.longitude === undefined
-    ) {
-      throw new Error("La sucursal/depósito no tiene coordenadas cargadas");
-    }
-
-    if (
-      client.latitude === null ||
-      client.latitude === undefined ||
-      client.longitude === null ||
-      client.longitude === undefined
-    ) {
-      throw new Error("El cliente no tiene coordenadas cargadas");
-    }
-
-    let source: "GOOGLE_ROUTES" | "COORDINATES_FALLBACK" = "COORDINATES_FALLBACK";
-
-    let distanceKm = await getGoogleRouteDistanceKm({
-      originLat: location.latitude,
-      originLng: location.longitude,
-      destinationLat: client.latitude,
-      destinationLng: client.longitude,
+    const straightDistanceKm = haversineKm({
+      originLat,
+      originLng,
+      destinationLat,
+      destinationLng,
     });
 
-    if (distanceKm !== null) {
+    let source: DeliveryRouteSource = "COORDINATES_FALLBACK";
+    let durationMinutes: number | null = null;
+
+    const googleRoute = await getGoogleRoute({
+      originLat,
+      originLng,
+      destinationLat,
+      destinationLng,
+    });
+
+    let distanceKm: number;
+
+    if (googleRoute) {
       source = "GOOGLE_ROUTES";
+      distanceKm = googleRoute.distanceKm;
+      durationMinutes = googleRoute.durationMinutes;
     } else {
-      distanceKm = haversineKm({
-        originLat: location.latitude,
-        originLng: location.longitude,
-        destinationLat: client.latitude,
-        destinationLng: client.longitude,
-      });
+      const multiplier = Number.isFinite(DELIVERY_FALLBACK_MULTIPLIER) && DELIVERY_FALLBACK_MULTIPLIER > 0
+        ? DELIVERY_FALLBACK_MULTIPLIER
+        : 1.4;
+
+      distanceKm = straightDistanceKm * multiplier;
     }
 
     const roundedDistanceKm = round2(distanceKm);
@@ -243,6 +289,8 @@ export const deliveryService = {
 
     return {
       distanceKm: roundedDistanceKm,
+      straightDistanceKm: round2(straightDistanceKm),
+      durationMinutes,
       pricePerKm,
       deliveryCost,
       source,

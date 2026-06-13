@@ -27,12 +27,6 @@ import {
 
 const NAV = [
   {
-    href: '/dashboard',
-    icon: LayoutDashboard,
-    label: 'Dashboard',
-    color: '#0f9f5c',
-  },
-  {
     href: '/pos',
     icon: ShoppingCart,
     label: 'POS — Ventas',
@@ -83,6 +77,12 @@ const NAV = [
 ];
 
 const ADMIN_NAV = [
+  {
+    href: '/dashboard',
+    icon: LayoutDashboard,
+    label: 'Dashboard',
+    color: '#0f9f5c',
+  },
   {
     href: '/usuarios',
     icon: UserCog,

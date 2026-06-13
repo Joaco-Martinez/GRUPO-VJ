@@ -74,7 +74,7 @@ export function middleware(req: NextRequest) {
   if (isLoginRoute) {
     if (isAdminOrEmployee) {
       const dashboardUrl = req.nextUrl.clone();
-      dashboardUrl.pathname = '/dashboard';
+      dashboardUrl.pathname = '/pos';
       return NextResponse.redirect(dashboardUrl);
     }
 

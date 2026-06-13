@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { deliveryService } from "../services/delivery.service";
 
-function toNumber(value: any) {
+function toNumber(value: unknown) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
@@ -32,12 +32,12 @@ export const deliveryController = {
         pricePerKm: toNumber(req.body.pricePerKm),
       });
 
-      res.json({
+      return res.json({
         ok: true,
         ...result,
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   },
 };

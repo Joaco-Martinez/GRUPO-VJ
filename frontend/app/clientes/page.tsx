@@ -389,6 +389,19 @@ export default function ClientesPage() {
     setMovements([]);
   };
 
+  const requestCloseClientFormModal = () => {
+    if (saving) return;
+
+    setConfirmModal({
+      title: modal === "create" ? "Cerrar nuevo cliente" : "Cerrar edición",
+      message:
+        "¿Seguro que querés cerrar este formulario? Los datos que no guardaste se van a perder.",
+      confirmText: "Cerrar sin guardar",
+      danger: true,
+      onConfirm: forceCloseModal,
+    });
+  };
+
   const saveClient = async () => {
     if (!form.nombre.trim()) {
       toast.error("Ingresá el nombre del cliente");
@@ -1652,13 +1665,12 @@ export default function ClientesPage() {
           document.body,
         )}
 
-      {(modal === "create" || modal === "edit") && (
-        <div
-          className="modal-overlay"
-          onClick={(e) => e.target === e.currentTarget && closeModal()}
-        >
+      {(modal === "create" || modal === "edit") &&
+        typeof document !== "undefined" &&
+        createPortal(
+        <div className="modal-overlay client-form-modal-overlay">
           <div
-            className="modal"
+            className="modal client-form-modal"
             style={{
               maxWidth: isMobile ? "100vw" : 860,
               width: isMobile ? "100vw" : undefined,
@@ -1678,7 +1690,7 @@ export default function ClientesPage() {
 
               <button
                 className="btn btn-ghost btn-sm"
-                onClick={closeModal}
+                onClick={requestCloseClientFormModal}
                 disabled={saving}
               >
                 <X size={16} />
@@ -2195,7 +2207,7 @@ export default function ClientesPage() {
             >
               <button
                 className="btn btn-secondary"
-                onClick={closeModal}
+                onClick={requestCloseClientFormModal}
                 disabled={saving}
                 style={{ width: isMobile ? "100%" : undefined }}
               >
@@ -2224,7 +2236,8 @@ export default function ClientesPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {modal === "payment" && editing && (
@@ -2541,9 +2554,11 @@ export default function ClientesPage() {
         </div>
       )}
 
-      {confirmModal && (
+      {confirmModal &&
+        typeof document !== "undefined" &&
+        createPortal(
         <div
-          className="modal-overlay"
+          className="modal-overlay confirm-modal-overlay"
           onClick={(e) => {
             if (confirmLoading) return;
             if (e.target === e.currentTarget) setConfirmModal(null);
@@ -2640,7 +2655,8 @@ export default function ClientesPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       <style jsx global>{`
@@ -2651,6 +2667,59 @@ export default function ClientesPage() {
 
         .modal-overlay {
           z-index: 2147483000 !important;
+        }
+
+        .confirm-modal-overlay {
+          position: fixed !important;
+          inset: 0 !important;
+          z-index: 2147483600 !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          padding: 18px !important;
+          background: rgba(0, 0, 0, 0.58) !important;
+        }
+
+        .confirm-modal-overlay .modal {
+          width: min(440px, calc(100vw - 24px)) !important;
+          max-width: calc(100vw - 24px) !important;
+        }
+
+        .client-form-modal-overlay {
+          position: fixed !important;
+          inset: 0 !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          padding: 18px !important;
+          background: rgba(0, 0, 0, 0.48) !important;
+          overflow-y: auto !important;
+        }
+
+        .client-form-modal {
+          width: min(860px, calc(100vw - 36px)) !important;
+          max-height: calc(100dvh - 36px) !important;
+          display: flex !important;
+          flex-direction: column !important;
+          overflow: hidden !important;
+        }
+
+        .client-form-modal .modal-body {
+          overflow-y: auto !important;
+        }
+
+        @media (max-width: 768px) {
+          .client-form-modal-overlay {
+            align-items: flex-end !important;
+            padding: 8px 0 0 !important;
+          }
+
+          .client-form-modal {
+            width: 100vw !important;
+            max-width: 100vw !important;
+            max-height: min(94dvh, calc(100dvh - 8px)) !important;
+            border-radius: 22px 22px 0 0 !important;
+          }
         }
 
         .clients-mobile-sheet-backdrop {

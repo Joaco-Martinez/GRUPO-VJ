@@ -11,6 +11,8 @@ router.post("/pending/bulk-update", authMiddleware, saleController.bulkUpdate);
 
 router.post("/", authMiddleware, saleController.create);
 
+router.patch("/:id/items", authMiddleware, saleController.updateItems);
+
 router.patch("/:id/status", authMiddleware, saleController.updateStatus);
 
 router.patch("/:id/payment", authMiddleware, saleController.updatePaymentMethod);

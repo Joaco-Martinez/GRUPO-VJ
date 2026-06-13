@@ -62,6 +62,8 @@ type DeliveryCalculation = {
   distanceKm: number;
   pricePerKm: number;
   deliveryCost: number;
+  durationMinutes?: number | null;
+  straightDistanceKm?: number | null;
   source?: "GOOGLE_ROUTES" | "COORDINATES_FALLBACK";
   businessLocationId: string;
   businessLocationName: string;
@@ -82,6 +84,8 @@ type ConfirmState = {
 
 const DELIVERY_SKU = "ENVIO-FLETE2";
 const POS_SKU_SCANNER_ELEMENT_ID = "grupo-vj-pos-sku-scanner";
+const RETAIL_PRICE_TYPE = "price" as CartItem["priceType"];
+const WHOLESALE_PRICE_TYPE = "wholesalePrice" as CartItem["priceType"];
 
 function stockLocationLabel(stockLocation: StockLocation) {
   return stockLocation === "DEPOSITO" ? "Minorista" : "Mayorista";
@@ -89,6 +93,18 @@ function stockLocationLabel(stockLocation: StockLocation) {
 
 function stockLocationLabelLower(stockLocation: StockLocation) {
   return stockLocation === "DEPOSITO" ? "minorista" : "mayorista";
+}
+
+function priceTypeLabel(priceType?: CartItem["priceType"] | null) {
+  return priceType === WHOLESALE_PRICE_TYPE ? "Mayorista" : "Minorista";
+}
+
+function priceTypeLabelLower(priceType?: CartItem["priceType"] | null) {
+  return priceType === WHOLESALE_PRICE_TYPE ? "mayorista" : "minorista";
+}
+
+function clientDefaultPriceType(client?: Client | null): CartItem["priceType"] {
+  return client?.category === "Mayorista" ? WHOLESALE_PRICE_TYPE : RETAIL_PRICE_TYPE;
 }
 
 function normalizeText(value?: string | null) {
@@ -234,6 +250,42 @@ function getItemPrice(item: CartItem, selectedPriceType: CartItem["priceType"]) 
   );
 }
 
+function cartLineKey(item: CartItem) {
+  if (item.isDeliveryItem || isDeliveryProduct(item.product)) {
+    return `${item.product.id}-delivery`;
+  }
+
+  return `${item.product.id}-${item.priceType || RETAIL_PRICE_TYPE}`;
+}
+
+function mergeSimilarCartItems(items: CartItem[]) {
+  const map = new Map<string, CartItem>();
+
+  for (const item of items) {
+    const key = cartLineKey(item);
+    const existing = map.get(key);
+
+    if (!existing) {
+      map.set(key, item);
+      continue;
+    }
+
+    if (item.product.saleUnit === "KG") {
+      map.set(key, {
+        ...existing,
+        quantityKg: num(existing.quantityKg) + num(item.quantityKg),
+      });
+    } else {
+      map.set(key, {
+        ...existing,
+        quantity: existing.quantity + item.quantity,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 function clientHasCoordinates(client?: Client | null) {
   return (
     client?.latitude !== null &&
@@ -272,6 +324,22 @@ function buildClientAddress(client?: Client | null) {
 function clientCategoryLabel(category?: string | null) {
   if (category === "Mayorista") return "Mayorista";
   return "Minorista";
+}
+
+function deliverySourceLabel(source?: DeliveryCalculation["source"] | null) {
+  if (source === "GOOGLE_ROUTES") return "Google Routes";
+  if (source === "COORDINATES_FALLBACK") return "Estimado";
+  return "Calculado";
+}
+
+function formatDurationMinutes(minutes?: number | null) {
+  const value = num(minutes);
+  if (value <= 0) return "";
+  if (value < 60) return `${Math.round(value)} min`;
+
+  const hours = Math.floor(value / 60);
+  const remainingMinutes = Math.round(value % 60);
+  return `${hours} h${remainingMinutes ? ` ${remainingMinutes} min` : ""}`;
 }
 
 function cartItemCounterLabel(item?: CartItem | null) {
@@ -315,6 +383,8 @@ export default function POSPage() {
   const [categoryId, setCategoryId] = useState("");
   const [sortMode, setSortMode] = useState<ProductSortMode>("name-asc");
   const [clientId, setClientId] = useState("");
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientSuggestionsOpen, setClientSuggestionsOpen] = useState(false);
   const [stockLocation, setStockLocation] = useState<StockLocation>("LOCAL");
 
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("PICKUP");
@@ -323,7 +393,8 @@ export default function POSPage() {
   const [deliveryCalculation, setDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
   const [calculatingDelivery, setCalculatingDelivery] = useState(false);
 
-  const [receiptType, setReceiptType] = useState<ReceiptType>("TICKET");
+  const receiptType: ReceiptType = "TICKET";
+  const [defaultPriceType, setDefaultPriceType] = useState<CartItem["priceType"]>(RETAIL_PRICE_TYPE);
   const [discountType, setDiscountType] = useState<DiscountType | "">("");
   const [discountValue, setDiscountValue] = useState("");
 
@@ -421,13 +492,79 @@ export default function POSPage() {
   const selectedBusinessLocation =
     businessLocations.find((location) => location.id === businessLocationId) ?? null;
 
+  const filteredClients = useMemo(() => {
+    const q = normalizeText(clientSearch);
+
+    const result = clients.filter((client) => {
+      if (!q) return true;
+
+      const haystack = normalizeText([
+        client.nombre,
+        client.apellido,
+        client.dni,
+        client.gmail,
+        client.telefono,
+      ].filter(Boolean).join(" "));
+
+      return haystack.includes(q);
+    });
+
+    return result.slice(0, 80);
+  }, [clients, clientSearch]);
+
   const deliveryProduct = useMemo(
     () => products.find((p) => isDeliveryProduct(p)),
     [products],
   );
 
-  const priceType: CartItem["priceType"] =
-    selectedClient?.category === "Mayorista" ? "wholesalePrice" : "price";
+  const activeDefaultPriceType = defaultPriceType || RETAIL_PRICE_TYPE;
+
+  const applyPriceTypeToCart = (nextPriceType: CartItem["priceType"]) => {
+    setDefaultPriceType(nextPriceType);
+    setCart((prev) =>
+      mergeSimilarCartItems(
+        prev.map((item) =>
+          item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService
+            ? item
+            : { ...item, priceType: nextPriceType },
+        ),
+      ),
+    );
+  };
+
+  const setItemPriceType = (lineKey: string, nextPriceType: CartItem["priceType"]) => {
+    setCart((prev) =>
+      mergeSimilarCartItems(
+        prev.map((item) =>
+          cartLineKey(item) === lineKey ? { ...item, priceType: nextPriceType } : item,
+        ),
+      ),
+    );
+  };
+
+  const handleClientChange = (nextClientId: string) => {
+    const nextClient = clients.find((client) => client.id === nextClientId) ?? null;
+    const nextPriceType = clientDefaultPriceType(nextClient);
+
+    setClientId(nextClientId);
+    setClientSearch(nextClient ? clientName(nextClient) : "");
+    setClientSuggestionsOpen(false);
+    setDeliveryCalculation(null);
+    if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
+
+    if (!nextClient) {
+      setDefaultPriceType(RETAIL_PRICE_TYPE);
+      return;
+    }
+
+    setConfirmModal({
+      title: "Actualizar precios del carrito",
+      message: `Cliente ${clientName(nextClient)} es ${clientCategoryLabel(nextClient.category)}. ¿Querés que todos los productos usen precio ${priceTypeLabelLower(nextPriceType)}?`,
+      confirmText: `Usar precios ${priceTypeLabelLower(nextPriceType)}`,
+      danger: false,
+      onConfirm: () => applyPriceTypeToCart(nextPriceType),
+    });
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -536,12 +673,21 @@ export default function POSPage() {
     return true;
   };
 
-  const buildCartWithProduct = (product: Product) => {
-    const exists = cart.find((i) => i.product.id === product.id);
+  const buildCartWithProduct = (
+    product: Product,
+    selectedPriceType: CartItem["priceType"] = activeDefaultPriceType,
+  ) => {
+    const exists = cart.find(
+      (i) =>
+        i.product.id === product.id &&
+        !i.isDeliveryItem &&
+        !isDeliveryProduct(i.product) &&
+        (i.priceType || activeDefaultPriceType) === selectedPriceType,
+    );
 
     if (exists) {
       return cart.map((i) => {
-        if (i.product.id !== product.id) return i;
+        if (cartLineKey(i) !== cartLineKey(exists)) return i;
         if (product.saleUnit === "KG") return i;
         return { ...i, quantity: i.quantity + 1 };
       });
@@ -553,12 +699,12 @@ export default function POSPage() {
         product,
         quantity: product.saleUnit === "KG" ? 0 : 1,
         quantityKg: product.saleUnit === "KG" ? 0.1 : undefined,
-        priceType,
+        priceType: selectedPriceType,
       },
     ];
   };
 
-  const add = (product: Product) => {
+  const add = (product: Product, selectedPriceType: CartItem["priceType"] = activeDefaultPriceType) => {
     const stock = productStockByLocation(product, stockLocation);
 
     if (isStockControlledProduct(product) && stock <= 0) {
@@ -572,7 +718,7 @@ export default function POSPage() {
       return;
     }
 
-    const nextCart = buildCartWithProduct(product);
+    const nextCart = buildCartWithProduct(product, selectedPriceType);
     if (!validateCartStockItems(nextCart)) return;
     setCart(nextCart);
   };
@@ -695,11 +841,11 @@ export default function POSPage() {
       window.clearTimeout(timeoutId);
       void stopSkuScanner();
     };
-  }, [skuScannerOpen, products, stockLocation, cart, priceType]);
+  }, [skuScannerOpen, products, stockLocation, cart, activeDefaultPriceType]);
 
-  const setQty = (id: string, value: number) => {
+  const setQty = (lineKey: string, value: number) => {
     const nextCart = cart.map((i) => {
-      if (i.product.id !== id) return i;
+      if (cartLineKey(i) !== lineKey) return i;
 
       if (i.isDeliveryItem || isDeliveryProduct(i.product) || i.product.isService) {
         return { ...i, quantity: 1 };
@@ -712,9 +858,9 @@ export default function POSPage() {
     setCart(nextCart);
   };
 
-  const setKg = (id: string, value: number) => {
+  const setKg = (lineKey: string, value: number) => {
     const nextCart = cart.map((i) => {
-      if (i.product.id !== id) return i;
+      if (cartLineKey(i) !== lineKey) return i;
       return { ...i, quantityKg: Math.max(0.001, value) };
     });
 
@@ -722,10 +868,12 @@ export default function POSPage() {
     setCart(nextCart);
   };
 
-  const remove = (id: string) => {
-    setCart((prev) => prev.filter((i) => i.product.id !== id));
+  const remove = (lineKey: string) => {
+    const removed = cart.find((item) => cartLineKey(item) === lineKey);
 
-    if (deliveryProduct?.id === id) {
+    setCart((prev) => prev.filter((i) => cartLineKey(i) !== lineKey));
+
+    if (removed && deliveryProduct?.id === removed.product.id) {
       setDeliveryCalculation(null);
       setDeliveryMode("PICKUP");
     }
@@ -818,6 +966,8 @@ export default function POSPage() {
         distanceKm: num(response.data.distanceKm),
         pricePerKm: num(response.data.pricePerKm),
         deliveryCost: num(response.data.deliveryCost),
+        durationMinutes: response.data.durationMinutes ?? null,
+        straightDistanceKm: response.data.straightDistanceKm ?? null,
         source: response.data.source,
         businessLocationId: response.data.businessLocationId,
         businessLocationName: response.data.businessLocationName,
@@ -831,7 +981,9 @@ export default function POSPage() {
       setDeliveryCalculation(calculation);
       applyDeliveryToCart(calculation);
       toast.success(
-        `Envío calculado: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`,
+        calculation.source === "GOOGLE_ROUTES"
+          ? `Envío calculado por ruta real: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`
+          : `Envío estimado: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`,
         { id: toastId },
       );
     } catch (e) {
@@ -844,12 +996,12 @@ export default function POSPage() {
   const productsSubtotal = cart.reduce((a, item) => {
     if (item.isDeliveryItem || isDeliveryProduct(item.product)) return a;
     const qty = item.product.saleUnit === "KG" ? num(item.quantityKg) : item.quantity;
-    return a + getItemPrice(item, priceType) * qty;
+    return a + getItemPrice(item, activeDefaultPriceType) * qty;
   }, 0);
 
   const deliveryLineSubtotal = cart.reduce((a, item) => {
     if (!item.isDeliveryItem && !isDeliveryProduct(item.product)) return a;
-    return a + num(item.manualPrice, getItemPrice(item, priceType));
+    return a + num(item.manualPrice, getItemPrice(item, activeDefaultPriceType));
   }, 0);
 
   const deliveryCostForTotal =
@@ -971,7 +1123,8 @@ export default function POSPage() {
               productId: i.product.id,
               quantity: i.product.saleUnit === "KG" ? undefined : i.quantity,
               quantityKg: i.product.saleUnit === "KG" ? num(i.quantityKg) : undefined,
-              price: getItemPrice(i, priceType),
+              price: getItemPrice(i, activeDefaultPriceType),
+              priceType: i.priceType || activeDefaultPriceType,
             })),
           ...(deliveryMode === "LOCAL_DELIVERY" && deliveryProduct && deliveryCostForTotal > 0
             ? [
@@ -980,6 +1133,7 @@ export default function POSPage() {
                   quantity: 1,
                   quantityKg: undefined,
                   price: deliveryCostForTotal,
+                  priceType: "manual",
                 },
               ]
             : []),
@@ -1043,21 +1197,173 @@ export default function POSPage() {
     setPayments((prev) => [...prev, { method: "TRANSFERENCIA", amount: 0 }]);
   };
 
+  const renderPricePresetSelector = (compact = false) => (
+    <section className={compact ? "pos-pre-price-bar compact" : "pos-pre-price-bar"}>
+      <div className="pos-pre-price-copy">
+        <b>Precio para agregar productos</b>
+        <span>Elegí antes de cargar: los nuevos productos entran como {priceTypeLabel(activeDefaultPriceType)}.</span>
+      </div>
+      <div className="pos-pre-price-actions">
+        <button
+          type="button"
+          className={activeDefaultPriceType === RETAIL_PRICE_TYPE ? "active" : ""}
+          onClick={() => applyPriceTypeToCart(RETAIL_PRICE_TYPE)}
+        >
+          Minorista
+        </button>
+        <button
+          type="button"
+          className={activeDefaultPriceType === WHOLESALE_PRICE_TYPE ? "active" : ""}
+          onClick={() => applyPriceTypeToCart(WHOLESALE_PRICE_TYPE)}
+        >
+          Mayorista
+        </button>
+      </div>
+    </section>
+  );
+
+  const renderClientPicker = (compact = false) => {
+    const shouldShowSuggestions = clientSuggestionsOpen && clientSearch.trim().length > 0;
+
+    return (
+      <div className={compact ? "pos-client-picker compact" : "pos-client-picker"}>
+        <label className="form-label">Cliente</label>
+        <div className="pos-client-search-wrap">
+          <div className="pos-client-search">
+            <Search size={14} />
+            <input
+              value={clientSearch}
+              onChange={(e) => {
+                setClientSearch(e.target.value);
+                setClientSuggestionsOpen(true);
+              }}
+              onFocus={() => {
+                if (clientSearch.trim()) setClientSuggestionsOpen(true);
+              }}
+              placeholder="Buscar cliente por nombre, DNI, mail o teléfono..."
+            />
+            {(clientId || clientSearch) && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleClientChange("");
+                  setClientSuggestionsOpen(false);
+                }}
+                aria-label="Limpiar cliente"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          {shouldShowSuggestions && (
+            <div className="pos-client-suggestions">
+              <button
+                type="button"
+                className={!clientId ? "active" : ""}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleClientChange("")}
+              >
+                <b>Consumidor final</b>
+                <span>Sin cliente registrado</span>
+              </button>
+
+              {filteredClients.length ? (
+                filteredClients.map((client) => (
+                  <button
+                    key={client.id}
+                    type="button"
+                    className={clientId === client.id ? "active" : ""}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleClientChange(client.id)}
+                  >
+                    <b>{clientName(client)}</b>
+                    <span>{clientCategoryLabel(client.category)} · DNI {client.dni || "-"} · deuda {fmtMoney(client.currentBalance)}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="pos-client-no-results">No encontré clientes con esa búsqueda</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {selectedClient ? (
+          <small className="pos-client-help">Seleccionado: {clientName(selectedClient)} · {clientCategoryLabel(selectedClient.category)}</small>
+        ) : (
+          <small className="pos-client-help">Consumidor final</small>
+        )}
+      </div>
+    );
+  };
+
+  const productCartQtyByPrice = (product: Product, priceTypeToCount: CartItem["priceType"]) => {
+    return cart.reduce((acc, item) => {
+      if (item.product.id !== product.id || item.isDeliveryItem || isDeliveryProduct(item.product)) return acc;
+      if ((item.priceType || RETAIL_PRICE_TYPE) !== priceTypeToCount) return acc;
+
+      if (item.product.saleUnit === "KG") return acc + num(item.quantityKg);
+      return acc + item.quantity;
+    }, 0);
+  };
+
+  const formatProductCartQty = (product: Product, qty: number) => {
+    if (product.saleUnit === "KG") {
+      return `${qty.toLocaleString("es-AR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 3,
+      })} kg`;
+    }
+
+    return String(qty);
+  };
+
+  const renderProductPrices = (product: Product, compact = false, disabled = false) => {
+    return (
+    <div className={compact ? "pos-price-dual compact" : "pos-price-dual"}>
+      <button
+        type="button"
+        className={activeDefaultPriceType === RETAIL_PRICE_TYPE ? "active" : ""}
+        onClick={() => add(product, RETAIL_PRICE_TYPE)}
+        disabled={disabled}
+        title="Agregar con precio minorista"
+      >
+        <small>Minorista</small>
+        <b>{fmtMoney(productPrice(product, RETAIL_PRICE_TYPE))}{product.saleUnit === "KG" ? "/kg" : ""}</b>
+      </button>
+      <button
+        type="button"
+        className={activeDefaultPriceType === WHOLESALE_PRICE_TYPE ? "active" : ""}
+        onClick={() => add(product, WHOLESALE_PRICE_TYPE)}
+        disabled={disabled}
+        title="Agregar con precio mayorista"
+      >
+        <small>Mayorista</small>
+        <b>{fmtMoney(productPrice(product, WHOLESALE_PRICE_TYPE))}{product.saleUnit === "KG" ? "/kg" : ""}</b>
+      </button>
+    </div>
+    );
+  };
+
   const renderProductCard = (product: Product, mobile = false) => {
     const stock = productStockByLocation(product, stockLocation);
     const withoutStock = isStockControlledProduct(product) && stock <= 0;
     const imageUrl = getProductImageUrl(product);
-    const cartItem = cart.find((item) => item.product.id === product.id);
-    const cartQty = cartItem?.product.saleUnit === "KG" ? num(cartItem.quantityKg) : (cartItem?.quantity ?? 0);
-    const cartQtyLabel = cartItemCounterLabel(cartItem);
+    const productCartItems = cart.filter((item) => item.product.id === product.id && !item.isDeliveryItem);
+    const cartQty = productCartItems.reduce((acc, item) => {
+      if (item.product.saleUnit === "KG") return acc + num(item.quantityKg);
+      return acc + item.quantity;
+    }, 0);
+    const cartQtyLabel = product.saleUnit === "KG"
+      ? `${cartQty.toLocaleString("es-AR", { maximumFractionDigits: 3 })} kg`
+      : String(cartQty);
+    const retailCartQty = productCartQtyByPrice(product, RETAIL_PRICE_TYPE);
+    const wholesaleCartQty = productCartQtyByPrice(product, WHOLESALE_PRICE_TYPE);
 
     return (
-      <button
+      <article
         key={product.id}
-        type="button"
-        className={mobile ? `pos-product ${withoutStock ? "disabled" : ""}` : "card pos-product-card"}
-        onClick={() => add(product)}
-        disabled={withoutStock}
+        className={mobile ? `pos-product ${withoutStock ? "disabled" : ""}` : `card pos-product-card ${withoutStock ? "disabled" : ""}`}
       >
         <span className={mobile ? "pos-product-img" : "pos-product-image"}>
           {imageUrl ? (
@@ -1087,10 +1393,14 @@ export default function POSPage() {
             </span>
             <strong>{product.name}</strong>
             <small>{product.sku ?? "SIN-SKU"}</small>
-            <b>
-              {fmtMoney(productPrice(product, priceType))}
-              {product.saleUnit === "KG" ? "/kg" : ""}
-            </b>
+            {renderProductPrices(product, true, withoutStock)}
+            {cartQty > 0 && (
+              <span className="pos-card-cart-breakdown compact">
+                <b>En carrito:</b>
+                {wholesaleCartQty > 0 && <span>{formatProductCartQty(product, wholesaleCartQty)}x P. Mayorista</span>}
+                {retailCartQty > 0 && <span>{formatProductCartQty(product, retailCartQty)}x P. Minorista</span>}
+              </span>
+            )}
           </span>
         ) : (
           <>
@@ -1104,32 +1414,34 @@ export default function POSPage() {
             </div>
             <b className="pos-product-title">{product.name}</b>
             <span className="muted small">{categoryName(product)} · {product.sku ?? "SIN-SKU"}</span>
-            <strong className="price">
-              {fmtMoney(productPrice(product, priceType))}
-              {product.saleUnit === "KG" ? "/kg" : ""}
-            </strong>
+            {renderProductPrices(product, false, withoutStock)}
             {cartQty > 0 && (
-              <span className="badge badge-blue pos-card-counter">
-                En carrito: {cartQtyLabel}
-              </span>
+              <div className="pos-card-cart-breakdown">
+                <b>En carrito:</b>
+                {wholesaleCartQty > 0 && <span>{formatProductCartQty(product, wholesaleCartQty)}x P. Mayorista</span>}
+                {retailCartQty > 0 && <span>{formatProductCartQty(product, retailCartQty)}x P. Minorista</span>}
+              </div>
             )}
             <span className={withoutStock ? "danger small" : "muted small"}>
               Stock {stockLocationLabelLower(stockLocation)}: {stockLabel(product, stockLocation)}
             </span>
+            <span className="muted small">Tocá un precio para agregarlo</span>
           </>
         )}
-      </button>
+      </article>
     );
   };
 
-  const renderCartItem = (item: CartItem, compact = false) => {
-    const itemPrice = getItemPrice(item, priceType);
+  const renderCartItem = (item: CartItem, compact = false, reactKey?: string) => {
+    const lineKey = cartLineKey(item);
+    const itemReactKey = reactKey ?? lineKey;
+    const itemPrice = getItemPrice(item, activeDefaultPriceType);
     const imageUrl = getProductImageUrl(item.product);
     const qty = item.product.saleUnit === "KG" ? num(item.quantityKg) : item.quantity;
     const lineTotal = itemPrice * qty;
 
     return (
-      <article key={item.product.id} className={compact ? "pos-cart-item" : "pos-cart-row"}>
+      <article key={itemReactKey} className={compact ? "pos-cart-item" : "pos-cart-row"}>
         <div className="pos-cart-item-img">
           {imageUrl ? (
             <img src={imageUrl} alt={item.product.name} loading="lazy" />
@@ -1141,18 +1453,38 @@ export default function POSPage() {
         <div className="pos-cart-item-main">
           <div className="pos-cart-item-title">
             <strong>{item.product.name}{item.isDeliveryItem ? " 🚚" : ""}</strong>
-            <button type="button" onClick={() => remove(item.product.id)}>
+            <button type="button" onClick={() => remove(lineKey)}>
               <Trash2 size={14} />
             </button>
           </div>
 
           <div className="pos-cart-item-meta">
             <span>{fmtMoney(itemPrice)}{item.product.saleUnit === "KG" ? "/kg" : ""}</span>
+            <span>Precio {priceTypeLabel(item.priceType || activeDefaultPriceType)}</span>
             {isCompositeProduct(item.product) && <span>Promo: descuenta componentes</span>}
             {!isCompositeProduct(item.product) && !isStockControlledProduct(item.product) && (
               <span>{isDeliveryProduct(item.product) ? "Envío / servicio" : "Servicio sin stock"}</span>
             )}
           </div>
+
+          {!item.isDeliveryItem && !isDeliveryProduct(item.product) && !item.product.isService && (
+            <div className="pos-item-price-switch">
+              <button
+                type="button"
+                className={(item.priceType || activeDefaultPriceType) === RETAIL_PRICE_TYPE ? "active" : ""}
+                onClick={() => setItemPriceType(lineKey, RETAIL_PRICE_TYPE)}
+              >
+                Minorista · {fmtMoney(productPrice(item.product, RETAIL_PRICE_TYPE))}{item.product.saleUnit === "KG" ? "/kg" : ""}
+              </button>
+              <button
+                type="button"
+                className={(item.priceType || activeDefaultPriceType) === WHOLESALE_PRICE_TYPE ? "active" : ""}
+                onClick={() => setItemPriceType(lineKey, WHOLESALE_PRICE_TYPE)}
+              >
+                Mayorista · {fmtMoney(productPrice(item.product, WHOLESALE_PRICE_TYPE))}{item.product.saleUnit === "KG" ? "/kg" : ""}
+              </button>
+            </div>
+          )}
 
           <div className="pos-cart-item-actions">
             {item.product.saleUnit === "KG" && !item.isDeliveryItem && !isDeliveryProduct(item.product) && !item.product.isService ? (
@@ -1162,14 +1494,14 @@ export default function POSPage() {
                   type="number"
                   step="0.001"
                   value={item.quantityKg ?? 0}
-                  onChange={(e) => setKg(item.product.id, num(e.target.value))}
+                  onChange={(e) => setKg(lineKey, num(e.target.value))}
                 />
               </label>
             ) : (
               <div className="pos-stepper">
                 <button
                   type="button"
-                  onClick={() => setQty(item.product.id, item.quantity - 1)}
+                  onClick={() => setQty(lineKey, item.quantity - 1)}
                   disabled={item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService}
                 >
                   <Minus size={14} />
@@ -1177,7 +1509,7 @@ export default function POSPage() {
                 <span>{item.quantity}</span>
                 <button
                   type="button"
-                  onClick={() => setQty(item.product.id, item.quantity + 1)}
+                  onClick={() => setQty(lineKey, item.quantity + 1)}
                   disabled={item.isDeliveryItem || isDeliveryProduct(item.product) || item.product.isService}
                 >
                   <Plus size={14} />
@@ -1252,6 +1584,8 @@ export default function POSPage() {
               </button>
             </div>
 
+            {renderPricePresetSelector()}
+
             <div className="pos-products-grid">
               {loading ? <div className="skeleton" style={{ height: 240 }} /> : filtered.map((p) => renderProductCard(p))}
             </div>
@@ -1267,6 +1601,9 @@ export default function POSPage() {
 
               <div className="badge badge-blue stock-badge"><Warehouse size={13} /> Descuenta de: {stockLocationLabel(stockLocation)}</div>
 
+
+              
+
               <div className="form-group">
                 <label className="form-label">Origen de stock</label>
                 <select value={stockLocation} onChange={(e) => setStockLocation(e.target.value as StockLocation)}>
@@ -1275,24 +1612,7 @@ export default function POSPage() {
                 </select>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Cliente</label>
-                <select
-                  value={clientId}
-                  onChange={(e) => {
-                    setClientId(e.target.value);
-                    setDeliveryCalculation(null);
-                    if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
-                  }}
-                >
-                  <option value="">Consumidor final</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {clientName(c)} · {clientCategoryLabel(c.category)} · deuda {fmtMoney(c.currentBalance)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {renderClientPicker()}
 
               <div className="pos-delivery-box">
                 <div className="box-title"><Truck size={16} /><b>Entrega</b></div>
@@ -1359,9 +1679,20 @@ export default function POSPage() {
                     </button>
 
                     {deliveryCalculation && (
-                      <div className="pos-delivery-ok">
-                        <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
-                        <span>{deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}</span>
+                      <div className={deliveryCalculation.source === "COORDINATES_FALLBACK" ? "pos-delivery-ok fallback" : "pos-delivery-ok"}>
+                        <div className="pos-delivery-ok-head">
+                          <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
+                          <span className={deliveryCalculation.source === "GOOGLE_ROUTES" ? "pos-route-source google" : "pos-route-source fallback"}>
+                            {deliverySourceLabel(deliveryCalculation.source)}
+                          </span>
+                        </div>
+                        <span>Ruta: {deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}</span>
+                        {formatDurationMinutes(deliveryCalculation.durationMinutes) && (
+                          <span>Tiempo estimado: {formatDurationMinutes(deliveryCalculation.durationMinutes)}</span>
+                        )}
+                        {deliveryCalculation.source === "COORDINATES_FALLBACK" && (
+                          <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
+                        )}
                       </div>
                     )}
                   </>
@@ -1369,18 +1700,12 @@ export default function POSPage() {
               </div>
 
               <div className="pos-cart-items">
-                {cart.map((item) => renderCartItem(item))}
+                {cart.map((item, index) => renderCartItem(item, false, `${cartLineKey(item)}-${index}`))}
                 {!cart.length && <div className="pos-empty compact"><ShoppingCart size={28} /><b>Carrito vacío</b><span>Tocá productos o escaneá un SKU.</span></div>}
               </div>
 
               <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Comprobante</label>
-                  <select value={receiptType} onChange={(e) => setReceiptType(e.target.value as ReceiptType)}>
-                    <option value="TICKET">Ticket</option>
-                    <option value="FACTURA">Factura</option>
-                  </select>
-                </div>
+                
                 <div className="form-group">
                   <label className="form-label">Descuento</label>
                   <select value={discountType} onChange={(e) => setDiscountType(e.target.value as DiscountType | "")}>
@@ -1481,6 +1806,8 @@ export default function POSPage() {
               {search && <button type="button" onClick={() => setSearch("")} aria-label="Limpiar búsqueda"><X size={15} /></button>}
             </div>
 
+            {renderPricePresetSelector(true)}
+
             <div className="pos-control-grid">
               <label>
                 <span>Stock</span>
@@ -1489,22 +1816,9 @@ export default function POSPage() {
                   <option value="DEPOSITO">Minorista</option>
                 </select>
               </label>
-              <label>
-                <span>Cliente</span>
-                <select
-                  value={clientId}
-                  onChange={(e) => {
-                    setClientId(e.target.value);
-                    setDeliveryCalculation(null);
-                    if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
-                  }}
-                >
-                  <option value="">Consumidor final</option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={client.id}>{clientName(client)} · {clientCategoryLabel(client.category)}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="pos-mobile-client-field">
+                {renderClientPicker(true)}
+              </div>
 
               <label className="pos-sort-mobile-field">
                 <span>Orden</span>
@@ -1563,12 +1877,30 @@ export default function POSPage() {
                   <div className="pos-cart-scroll">
                     <div className="pos-mini-summary">
                       <span><Warehouse size={14} />{stockLocationLabel(stockLocation)}</span>
+                      <span>Precio {priceTypeLabel(activeDefaultPriceType)}</span>
                       {debt > 0 && <span className="warn">Deuda {fmtMoney(debt)}</span>}
+                    </div>
+
+                    <div className="pos-mobile-price-actions">
+                      <button
+                        type="button"
+                        className={activeDefaultPriceType === RETAIL_PRICE_TYPE ? "active" : ""}
+                        onClick={() => applyPriceTypeToCart(RETAIL_PRICE_TYPE)}
+                      >
+                        Todos minoristas
+                      </button>
+                      <button
+                        type="button"
+                        className={activeDefaultPriceType === WHOLESALE_PRICE_TYPE ? "active" : ""}
+                        onClick={() => applyPriceTypeToCart(WHOLESALE_PRICE_TYPE)}
+                      >
+                        Todos mayoristas
+                      </button>
                     </div>
 
                     <div className="pos-cart-products">
                       {!cart.length && <div className="pos-empty compact"><ShoppingCart size={28} /><b>Carrito vacío</b><span>Tocá productos para agregarlos en segundos.</span></div>}
-                      {cart.map((item) => renderCartItem(item, true))}
+                      {cart.map((item, index) => renderCartItem(item, true, `${cartLineKey(item)}-${index}`))}
                     </div>
 
                     <section className="pos-sale-options">
@@ -1624,17 +1956,33 @@ export default function POSPage() {
                               <button type="button" className="pos-secondary-action" onClick={calculateDelivery} disabled={calculatingDelivery || !clientId || !businessLocationId}>
                                 <Truck size={15} />{calculatingDelivery ? "Calculando..." : "Calcular envío"}
                               </button>
-                              {deliveryCalculation && <div className="pos-delivery-ok"><b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b><span>{deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}</span></div>}
+                              {deliveryCalculation && (
+                                <div className={deliveryCalculation.source === "COORDINATES_FALLBACK" ? "pos-delivery-ok fallback" : "pos-delivery-ok"}>
+                                  <div className="pos-delivery-ok-head">
+                                    <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
+                                    <span className={deliveryCalculation.source === "GOOGLE_ROUTES" ? "pos-route-source google" : "pos-route-source fallback"}>
+                                      {deliverySourceLabel(deliveryCalculation.source)}
+                                    </span>
+                                  </div>
+                                  <span>Ruta: {deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}</span>
+                                  {formatDurationMinutes(deliveryCalculation.durationMinutes) && (
+                                    <span>Tiempo estimado: {formatDurationMinutes(deliveryCalculation.durationMinutes)}</span>
+                                  )}
+                                  {deliveryCalculation.source === "COORDINATES_FALLBACK" && (
+                                    <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
+                                  )}
+                                </div>
+                              )}
                             </>
                           )}
                         </div>
                       </details>
 
                       <details>
-                        <summary>Comprobante, descuento y pago</summary>
+                        <summary>Ticket, descuento y pago</summary>
                         <div className="pos-option-body">
+                          <div className="pos-ticket-fixed"><Check size={14} /> Siempre se emite ticket</div>
                           <div className="pos-control-grid">
-                            <label><span>Comprobante</span><select value={receiptType} onChange={(e) => setReceiptType(e.target.value as ReceiptType)}><option value="TICKET">Ticket</option><option value="FACTURA">Factura</option></select></label>
                             <label><span>Descuento</span><select value={discountType} onChange={(e) => setDiscountType(e.target.value as DiscountType | "")}><option value="">Sin descuento</option><option value="PERCENTAGE">%</option><option value="FIXED">$</option></select></label>
                           </div>
                           {discountType && <label><span>Valor descuento</span><input type="number" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="Valor" /></label>}
@@ -1674,9 +2022,9 @@ export default function POSPage() {
 
             {!cartOpen && cart.length > 0 && (
               <div className="pos-cart-preview" onClick={() => setCartOpen(true)}>
-                {cartPreview.map((item) => {
+                {cartPreview.map((item, index) => {
                   const imageUrl = getProductImageUrl(item.product);
-                  return <span key={item.product.id}>{imageUrl ? <img src={imageUrl} alt={item.product.name} loading="lazy" /> : <Package size={13} />}</span>;
+                  return <span key={`${cartLineKey(item)}-${index}`}>{imageUrl ? <img src={imageUrl} alt={item.product.name} loading="lazy" /> : <Package size={13} />}</span>;
                 })}
                 {cart.length > cartPreview.length && <b>+{cart.length - cartPreview.length}</b>}
               </div>
@@ -1754,25 +2102,88 @@ export default function POSPage() {
         .pos-filter { width: 220px; }
         .pos-sort-filter { width: 185px; }
         .pos-scan-desktop-btn, .pos-refresh-btn { height: 42px; white-space: nowrap; }
+        .pos-pre-price-bar { margin-bottom: 14px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--surface)), var(--surface)); border-radius: 20px; padding: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: center; box-shadow: 0 14px 34px rgba(0,0,0,.12); }
+        .pos-pre-price-copy { display: grid; gap: 3px; min-width: 0; }
+        .pos-pre-price-copy b { font-size: 13px; color: var(--text); }
+        .pos-pre-price-copy span { color: var(--text3); font-size: 12px; line-height: 1.35; }
+        .pos-pre-price-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 220px; }
+        .pos-pre-price-actions button { min-height: 42px; border: 1px solid var(--border); background: var(--surface); color: var(--text2); border-radius: 14px; padding: 8px 12px; font-weight: 950; font-size: 12px; cursor: pointer; }
+        .pos-pre-price-actions button.active { border-color: var(--accent); background: var(--accent); color: white; box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 32%, transparent); }
+        .pos-pre-price-actions button:not(.active):hover { border-color: var(--accent); }
+        .pos-pre-price-bar.compact { margin: 9px 0 10px; padding: 10px; border-radius: 18px; grid-template-columns: 1fr; gap: 9px; }
+        .pos-pre-price-bar.compact .pos-pre-price-copy b { font-size: 12px; }
+        .pos-pre-price-bar.compact .pos-pre-price-copy span { font-size: 11px; }
+        .pos-pre-price-bar.compact .pos-pre-price-actions { min-width: 0; }
         .pos-products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
-        .pos-product-card { min-height: 335px; padding: 12px; text-align: left; cursor: pointer; overflow: hidden; display: grid; gap: 8px; color: var(--text); }
-        .pos-product-card:disabled { opacity: .55; cursor: not-allowed; }
+        .pos-product-card { min-height: 360px; padding: 12px; text-align: left; overflow: hidden; display: grid; gap: 8px; color: var(--text); }
+        .pos-product-card.disabled { opacity: .62; }
         .pos-product-image { width: 100%; aspect-ratio: 1/1; border-radius: 14px; background: #fff; border: 1px solid var(--border); display: grid; place-items: center; overflow: hidden; padding: 8px; color: var(--text3); position: relative; }
         .pos-product-image img { width: 100%; height: 100%; object-fit: contain; display: block; }
         .pos-product-meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; font-weight: 800; }
         .pos-product-title { min-height: 38px; font-size: 14px; line-height: 1.25; }
         .price { font-family: var(--mono); color: var(--accent); font-weight: 900; font-size: 15px; }
+        .pos-price-dual { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+        .pos-price-dual button { border: 1px solid var(--border); border-radius: 12px; padding: 7px 8px; background: var(--surface2); display: grid; gap: 2px; min-width: 0; text-align: left; cursor: pointer; color: var(--text); }
+        .pos-price-dual button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--surface2)); }
+        .pos-price-dual button:hover { border-color: var(--accent); transform: translateY(-1px); }
+        .pos-price-dual button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+        .pos-price-dual small { color: var(--text3); font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+        .pos-price-dual b { color: var(--accent); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pos-price-dual.compact { gap: 5px; }
+        .pos-price-dual.compact button { padding: 5px 6px; border-radius: 10px; }
+        .pos-price-dual.compact small { font-size: 8px; }
+        .pos-price-dual.compact b { font-size: 10px; }
         .pos-card-counter { width: fit-content; font-size: 11px; }
+        .pos-card-cart-breakdown { width: fit-content; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface2)); border-radius: 12px; padding: 6px 8px; display: grid; gap: 2px; font-size: 10px; line-height: 1.15; color: var(--text2); }
+        .pos-card-cart-breakdown b { color: var(--text); font-size: 10px; font-family: inherit; }
+        .pos-card-cart-breakdown span { color: var(--text2); font-size: 10px; font-weight: 800; }
+        .pos-card-cart-breakdown.compact { width: 100%; padding: 5px 6px; }
+        .pos-card-cart-breakdown.compact b, .pos-card-cart-breakdown.compact span { font-size: 9px; }
+        .pos-card-add-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 2px; }
+        .pos-card-add-actions button { border: 1px solid var(--border); background: var(--surface2); color: var(--text); border-radius: 12px; min-height: 36px; padding: 7px 8px; font-size: 11px; font-weight: 900; cursor: pointer; }
+        .pos-card-add-actions button:first-child { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+        .pos-card-add-actions button:last-child { border-color: color-mix(in srgb, var(--success) 35%, var(--border)); }
+        .pos-card-add-actions button:disabled { opacity: .45; cursor: not-allowed; }
 
         .pos-cart { padding: 0; align-self: start; position: sticky; top: 76px; max-height: calc(100vh - 96px); display: flex; flex-direction: column; overflow: hidden; }
         .pos-cart-body { padding: 16px; overflow: auto; flex: 1; }
         .pos-cart-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
         .pos-cart-head span { margin-left: auto; color: var(--text3); font-size: 12px; }
         .stock-badge { margin-bottom: 12px; display: inline-flex; align-items: center; gap: 6px; width: fit-content; }
+        .pos-client-picker { position: relative; display: grid; gap: 7px; }
+        .pos-client-picker.compact { gap: 5px; }
+        .pos-client-search-wrap { position: relative; z-index: 30; }
+        .pos-client-search { position: relative; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; height: 42px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 0 8px 0 12px; }
+        .pos-client-search svg { color: var(--text3); }
+        .pos-client-search input { width: 100%; height: 100%; border: 0; background: transparent; outline: none; color: var(--text); padding: 0; }
+        .pos-client-search button { width: 28px; height: 28px; border: 0; border-radius: 999px; background: var(--surface2); color: var(--text3); display: grid; place-items: center; }
+        .pos-client-suggestions { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 2147482500; max-height: 285px; overflow: auto; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 18px 50px rgba(0,0,0,.35); padding: 6px; display: grid; gap: 4px; }
+        .pos-client-suggestions button { width: 100%; border: 0; border-radius: 12px; background: transparent; color: var(--text); text-align: left; padding: 10px; display: grid; gap: 2px; cursor: pointer; }
+        .pos-client-suggestions button:hover, .pos-client-suggestions button.active { background: var(--surface2); }
+        .pos-client-suggestions b { font-size: 13px; }
+        .pos-client-suggestions span, .pos-client-no-results, .pos-client-help { color: var(--text3); font-size: 11px; }
+        .pos-client-no-results { padding: 10px; text-align: center; }
+        .pos-price-global-box { margin-bottom: 12px; padding: 12px; border-radius: 15px; border: 1px solid var(--border); background: var(--surface2); display: grid; gap: 10px; }
+        .pos-price-global-box > div:first-child { display: grid; gap: 3px; }
+        .pos-price-global-box b { font-size: 13px; }
+        .pos-price-global-box span { color: var(--text3); font-size: 12px; }
+        .pos-price-global-actions, .pos-mobile-price-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .pos-price-global-actions button, .pos-mobile-price-actions button, .pos-item-price-switch button { border: 1px solid var(--border); background: var(--surface); color: var(--text2); border-radius: 12px; min-height: 36px; padding: 7px 8px; font-size: 11px; font-weight: 900; }
+        .pos-price-global-actions button.active, .pos-mobile-price-actions button.active, .pos-item-price-switch button.active { border-color: var(--accent); background: var(--accent); color: white; }
+        .pos-ticket-lock, .pos-ticket-fixed { display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(34,197,94,.25); background: rgba(34,197,94,.08); color: var(--success); border-radius: 13px; padding: 9px 10px; font-size: 12px; font-weight: 900; }
+        .pos-ticket-lock { width: 100%; margin-bottom: 12px; }
+        .pos-ticket-fixed { min-height: 42px; color: var(--text2); }
         .pos-delivery-box { margin: 14px 0; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface2); }
         .box-title { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 13px; }
-        .pos-delivery-ok { display: grid; gap: 3px; border: 1px solid rgba(34,197,94,.25); background: rgba(34,197,94,.08); color: var(--text2); border-radius: 14px; padding: 10px; font-size: 12px; margin-top: 10px; }
+        .pos-delivery-ok { display: grid; gap: 5px; border: 1px solid rgba(34,197,94,.25); background: rgba(34,197,94,.08); color: var(--text2); border-radius: 14px; padding: 10px; font-size: 12px; margin-top: 10px; }
+        .pos-delivery-ok.fallback { border-color: rgba(245,158,11,.32); background: rgba(245,158,11,.09); }
         .pos-delivery-ok b { color: var(--success); }
+        .pos-delivery-ok.fallback b { color: var(--warn); }
+        .pos-delivery-ok small { color: var(--text3); font-size: 11px; line-height: 1.35; }
+        .pos-delivery-ok-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .pos-route-source { flex-shrink: 0; border-radius: 999px; padding: 4px 7px; font-size: 10px; font-weight: 950; letter-spacing: .04em; text-transform: uppercase; }
+        .pos-route-source.google { background: rgba(34,197,94,.13); color: var(--success); border: 1px solid rgba(34,197,94,.25); }
+        .pos-route-source.fallback { background: rgba(245,158,11,.13); color: var(--warn); border: 1px solid rgba(245,158,11,.25); }
         .pos-cart-items { max-height: 260px; overflow: auto; margin-bottom: 12px; display: grid; gap: 8px; }
         .pos-cart-row, .pos-cart-item { display: grid; grid-template-columns: 52px minmax(0,1fr); gap: 10px; padding: 9px; border-radius: 18px; border: 1px solid var(--border); background: var(--surface); }
         .pos-cart-row { border-radius: 12px; border-left: 0; border-right: 0; border-top: 0; background: transparent; }
@@ -1783,6 +2194,7 @@ export default function POSPage() {
         .pos-cart-item-title strong { font-size: 13px; line-height: 1.2; }
         .pos-cart-item-title button { width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface2); color: var(--danger); display: grid; place-items: center; flex-shrink: 0; }
         .pos-cart-item-meta { display: flex; gap: 8px; flex-wrap: wrap; color: var(--text3); font-size: 11px; }
+        .pos-item-price-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
         .pos-cart-item-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
         .pos-cart-item-actions > b { font-family: var(--mono); color: var(--accent); font-size: 13px; }
         .pos-stepper { display: inline-grid; grid-template-columns: 36px 36px 36px; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface2); }
@@ -1813,10 +2225,10 @@ export default function POSPage() {
         .pos-searchbox button, .pos-search-scan-btn { border: 0; background: var(--surface2); color: var(--text2); border-radius: 999px; width: 30px; height: 30px; display: grid; place-items: center; }
         .pos-search-scan-btn { color: var(--accent) !important; }
         .pos-control-grid { display: grid; grid-template-columns: .82fr 1.18fr; gap: 8px; margin-top: 8px; }
-        .pos-sort-mobile-field { grid-column: 1 / -1; }
+        .pos-sort-mobile-field, .pos-mobile-client-field { grid-column: 1 / -1; }
         .pos-control-grid label, .pos-option-body label { display: grid; gap: 5px; min-width: 0; }
         .pos-control-grid span, .pos-option-body label > span { color: var(--text3); font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
-        .pos-control-grid select, .pos-option-body select, .pos-option-body input, .pos-payment-line input, .pos-payment-line select, .pos-kg-input input { min-width: 0; width: 100%; height: 42px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }
+        .pos-control-grid select, .pos-control-grid input, .pos-option-body select, .pos-option-body input, .pos-payment-line input, .pos-payment-line select, .pos-kg-input input { min-width: 0; width: 100%; height: 42px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }
         .pos-category-strip { display: flex; gap: 8px; overflow-x: auto; padding: 9px 1px 2px; scrollbar-width: none; }
         .pos-category-strip::-webkit-scrollbar { display: none; }
         .pos-category-strip button { border: 1px solid var(--border); background: var(--surface); color: var(--text2); border-radius: 999px; padding: 9px 12px; font-size: 12px; font-weight: 900; white-space: nowrap; }
@@ -1853,9 +2265,10 @@ export default function POSPage() {
         .pos-cart-header > div { display: grid; gap: 2px; }
         .pos-cart-header b { font-size: 18px; }
         .pos-cart-scroll { overflow: auto; padding: 12px 12px 0; }
-        .pos-mini-summary { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-size: 12px; font-weight: 900; }
+        .pos-mini-summary { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-size: 12px; font-weight: 900; flex-wrap: wrap; }
         .pos-mini-summary span { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--surface); color: var(--text2); border-radius: 999px; padding: 7px 9px; }
         .pos-mini-summary .warn { color: var(--warn); }
+        .pos-mobile-price-actions { margin-bottom: 10px; }
         .pos-cart-products { display: grid; gap: 8px; }
         .pos-sale-options { display: grid; gap: 8px; margin-top: 12px; padding-bottom: 12px; }
         .pos-sale-options details { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); overflow: hidden; }
@@ -1896,6 +2309,8 @@ export default function POSPage() {
           .pos-desktop-only { display: none !important; }
           .pos-mobile-only { display: block !important; }
           .pos-mobile-shell { padding-bottom: 124px !important; }
+          .pos-pre-price-bar { grid-template-columns: 1fr; }
+          .pos-pre-price-actions { min-width: 0; }
           .pos-scanner-modal { width: 100vw; max-width: 100vw; border-radius: 22px 22px 0 0; align-self: flex-end; }
           .pos-scanner-frame, .pos-scanner-reader { min-height: 340px; }
           .pos-scanner-reader video { height: 340px !important; }

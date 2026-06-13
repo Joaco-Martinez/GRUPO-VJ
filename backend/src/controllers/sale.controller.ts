@@ -25,18 +25,124 @@ function isDeliveryStatus(value: any): value is DeliveryStatus {
   return Object.values(DeliveryStatus).includes(value);
 }
 
+function normalizeSaleBody(body: any) {
+  const items = Array.isArray(body.items)
+    ? body.items.map((item: any) => ({
+        productId: item.productId,
+        quantity: toNumber(item.quantity) ?? 0,
+        quantityKg: toNumber(item.quantityKg),
+        price: toNumber(item.price),
+        priceType: item.priceType,
+        boxContents: Array.isArray(item.boxContents)
+          ? item.boxContents.map((box: any) => ({
+              productId: box.productId,
+              quantity: toNumber(box.quantity),
+              quantityKg: toNumber(box.quantityKg),
+            }))
+          : undefined,
+      }))
+    : [];
+
+  const stockLocation = body.stockLocation ?? body.stockSource ?? "LOCAL";
+
+  if (!["LOCAL", "DEPOSITO"].includes(stockLocation)) {
+    return {
+      error: {
+        status: 400,
+        body: {
+          message: "Depósito/origen de stock inválido. Usá LOCAL o DEPOSITO",
+        },
+      },
+    };
+  }
+
+  const deliveryMethod = body.deliveryMethod ?? "PICKUP";
+
+  if (!isDeliveryMethod(deliveryMethod)) {
+    return {
+      error: {
+        status: 400,
+        body: {
+          message:
+            "Método de entrega inválido. Usá PICKUP, LOCAL_DELIVERY o TRANSPORT",
+        },
+      },
+    };
+  }
+
+  const deliveryStatus = body.deliveryStatus ?? "NONE";
+
+  if (!isDeliveryStatus(deliveryStatus)) {
+    return {
+      error: {
+        status: 400,
+        body: {
+          message:
+            "Estado de entrega inválido. Usá NONE, PENDING, PREPARING, IN_TRANSIT, DELIVERED o CANCELLED",
+        },
+      },
+    };
+  }
+
+  return {
+    payload: {
+      ...body,
+      stockLocation,
+      quotationHours: toNumber(body.quotationHours),
+      discountValue: toNumber(body.discountValue),
+      businessLocationId: body.businessLocationId ?? null,
+      deliveryMethod,
+      deliveryStatus,
+      deliveryAddressSnapshot: body.deliveryAddressSnapshot ?? null,
+      deliveryDistanceKm: toNumber(body.deliveryDistanceKm),
+      deliveryPricePerKm: toNumber(body.deliveryPricePerKm),
+      deliveryCost: toNumber(body.deliveryCost) ?? 0,
+      transportName: body.transportName ?? null,
+      transportCuit: body.transportCuit ?? null,
+      packagesCount: toIntOrNull(body.packagesCount),
+      declaredValue: toNumber(body.declaredValue),
+      items,
+      payments: Array.isArray(body.payments)
+        ? body.payments.map((payment: any) => ({
+            method: payment.method as PaymentMethod,
+            amount: Number(payment.amount),
+            reference: payment.reference,
+            notes: payment.notes,
+          }))
+        : undefined,
+    },
+  };
+}
+
+function safeJson(data: any) {
+  return JSON.parse(
+    JSON.stringify(data, (_, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    )
+  );
+}
+
+function getAuthUserId(req: Request) {
+  const r = req as any;
+
+  return (
+    r.user?.id ??
+    r.user?.userId ??
+    r.auth?.id ??
+    r.auth?.userId ??
+    r.usuario?.id ??
+    r.usuario?.userId ??
+    r.userId ??
+    r.idUsuario ??
+    null
+  );
+}
+
 export const saleController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const sales = await saleService.getAll();
-
-      const safeSales = JSON.parse(
-        JSON.stringify(sales, (_, value) =>
-          typeof value === "bigint" ? value.toString() : value
-        )
-      );
-
-      res.json(safeSales);
+      res.json(safeJson(sales));
     } catch (err) {
       next(err);
     }
@@ -45,14 +151,7 @@ export const saleController = {
   async getPending(req: Request, res: Response, next: NextFunction) {
     try {
       const sales = await saleService.getPending();
-
-      const safeSales = JSON.parse(
-        JSON.stringify(sales, (_, value) =>
-          typeof value === "bigint" ? value.toString() : value
-        )
-      );
-
-      res.json(safeSales);
+      res.json(safeJson(sales));
     } catch (err) {
       next(err);
     }
@@ -68,13 +167,7 @@ export const saleController = {
         return res.status(404).json({ message: "Venta no encontrada" });
       }
 
-      const safeSale = JSON.parse(
-        JSON.stringify(sale, (_, value) =>
-          typeof value === "bigint" ? value.toString() : value
-        )
-      );
-
-      res.json(safeSale);
+      res.json(safeJson(sale));
     } catch (err) {
       next(err);
     }
@@ -101,86 +194,48 @@ export const saleController = {
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      const body = req.body;
+      const normalized = normalizeSaleBody(req.body);
 
-      const items = Array.isArray(body.items)
-        ? body.items.map((item: any) => ({
-            productId: item.productId,
-            quantity: toNumber(item.quantity) ?? 0,
-            quantityKg: toNumber(item.quantityKg),
-            price: toNumber(item.price),
-            boxContents: Array.isArray(item.boxContents)
-              ? item.boxContents.map((box: any) => ({
-                  productId: box.productId,
-                  quantity: toNumber(box.quantity),
-                  quantityKg: toNumber(box.quantityKg),
-                }))
-              : undefined,
-          }))
-        : [];
+      if (normalized.error) {
+        return res.status(normalized.error.status).json(normalized.error.body);
+      }
 
-      const stockLocation = body.stockLocation ?? body.stockSource ?? "LOCAL";
+      const userId = getAuthUserId(req);
 
-      if (!["LOCAL", "DEPOSITO"].includes(stockLocation)) {
-        return res.status(400).json({
-          message: "Depósito/origen de stock inválido. Usá LOCAL o DEPOSITO",
+      if (!userId) {
+        return res.status(401).json({
+          message: "No se pudo identificar el usuario autenticado para registrar la venta",
         });
       }
 
-      const deliveryMethod = body.deliveryMethod ?? "PICKUP";
+      const newSale = await saleService.create({
+        ...(normalized.payload as any),
+        userId,
+      });
 
-      if (!isDeliveryMethod(deliveryMethod)) {
-        return res.status(400).json({
-          message:
-            "Método de entrega inválido. Usá PICKUP, LOCAL_DELIVERY o TRANSPORT",
-        });
+      res.status(201).json(safeJson(newSale));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async updateItems(req: Request, res: Response, next: NextFunction) {
+    try {
+      const normalized = normalizeSaleBody(req.body);
+
+      if (normalized.error) {
+        return res.status(normalized.error.status).json(normalized.error.body);
       }
 
-      const deliveryStatus = body.deliveryStatus ?? "NONE";
-
-      if (!isDeliveryStatus(deliveryStatus)) {
-        return res.status(400).json({
-          message:
-            "Estado de entrega inválido. Usá NONE, PENDING, PREPARING, IN_TRANSIT, DELIVERED o CANCELLED",
-        });
-      }
-
-      const payload = {
-        ...body,
-        stockLocation,
-        quotationHours: toNumber(body.quotationHours),
-        discountValue: toNumber(body.discountValue),
-        businessLocationId: body.businessLocationId ?? null,
-        deliveryMethod,
-        deliveryStatus,
-        deliveryAddressSnapshot: body.deliveryAddressSnapshot ?? null,
-        deliveryDistanceKm: toNumber(body.deliveryDistanceKm),
-        deliveryPricePerKm: toNumber(body.deliveryPricePerKm),
-        deliveryCost: toNumber(body.deliveryCost) ?? 0,
-        transportName: body.transportName ?? null,
-        transportCuit: body.transportCuit ?? null,
-        packagesCount: toIntOrNull(body.packagesCount),
-        declaredValue: toNumber(body.declaredValue),
-        items,
-        payments: Array.isArray(body.payments)
-          ? body.payments.map((payment: any) => ({
-              method: payment.method as PaymentMethod,
-              amount: Number(payment.amount),
-              reference: payment.reference,
-              notes: payment.notes,
-            }))
-          : undefined,
-      };
-
-      const newSale = await saleService.create(payload);
-
-      const safeSale = JSON.parse(
-        JSON.stringify(newSale, (_, value) =>
-          typeof value === "bigint" ? value.toString() : value
-        )
+      const updated = await saleService.updateItems(
+        getParamAsString(req.params.id, "id"),
+        {
+          ...(normalized.payload as any),
+          userId: getAuthUserId(req) ?? undefined,
+        }
       );
 
-      res.status(201).json(safeSale);
+      res.json(safeJson(updated));
     } catch (err) {
       next(err);
     }

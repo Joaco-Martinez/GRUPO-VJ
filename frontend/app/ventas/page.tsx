@@ -228,6 +228,18 @@ function onlyNumbers(value: unknown) {
   return String(value ?? '').replace(/\D/g, '');
 }
 
+function firstNumber(...values: unknown[]) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue;
+
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return 0;
+}
+
+
 function detectDocType(doc: string) {
   const clean = onlyNumbers(doc);
 
@@ -455,9 +467,12 @@ function normalizeSalesFetchResponse(data: any, fallbackPage: number): SalesFetc
   );
 
   const meta = data?.meta ?? data?.pagination ?? data;
-  const totalItems = num(meta?.totalItems, meta?.total, meta?.count, items.length);
-  const totalPages = Math.max(1, num(meta?.totalPages, meta?.pages, Math.ceil(totalItems / PAGE_SIZE)));
-  const page = Math.max(1, num(meta?.page, meta?.currentPage, fallbackPage));
+  const totalItems = firstNumber(meta?.totalItems, meta?.total, meta?.count, items.length);
+  const totalPages = Math.max(
+    1,
+    firstNumber(meta?.totalPages, meta?.pages, Math.ceil(totalItems / PAGE_SIZE))
+  );
+  const page = Math.max(1, firstNumber(meta?.page, meta?.currentPage, fallbackPage));
 
   return {
     items,

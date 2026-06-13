@@ -104,9 +104,13 @@ function getErrorMessage(error: unknown, fallback: string) {
   );
 }
 
+function isBackofficeUser(user: User) {
+  return user.role === 'ADMIN' || user.role === 'EMPLEADO';
+}
+
 async function fetchUsers() {
   const response = await api.get('/users');
-  return normalizeArray<User>(response.data);
+  return normalizeArray<User>(response.data).filter(isBackofficeUser);
 }
 
 export default function UsuariosPage() {
@@ -173,13 +177,13 @@ export default function UsuariosPage() {
     const q = search.trim().toLowerCase();
 
     return users.filter((u) => {
+      if (!isBackofficeUser(u)) return false;
+
       return (
         !q ||
         u.name?.toLowerCase().includes(q) ||
         u.email?.toLowerCase().includes(q) ||
-        u.role?.toLowerCase().includes(q) ||
-        u.client?.dni?.toLowerCase().includes(q) ||
-        u.client?.category?.toLowerCase().includes(q)
+        u.role?.toLowerCase().includes(q)
       );
     });
   }, [users, search]);
@@ -429,7 +433,7 @@ export default function UsuariosPage() {
   return (
     <AppLayout
       title="Usuarios"
-      subtitle="Gestión de administradores, empleados y clientes ecommerce"
+      subtitle="Gestión de administradores y empleados"
       actions={
         <div className="users-actions" style={{ display: 'flex', gap: 8 }}>
 
@@ -444,7 +448,7 @@ export default function UsuariosPage() {
         className="users-stats-grid"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 12,
           marginBottom: 18,
         }}
@@ -466,13 +470,6 @@ export default function UsuariosPage() {
             {users.filter((u) => u.role === 'EMPLEADO').length}
           </div>
           <div className="stat-label">Empleados</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-value">
-            {users.filter((u) => u.role === 'CLIENTE').length}
-          </div>
-          <div className="stat-label">Clientes web</div>
         </div>
       </div>
 
@@ -952,7 +949,6 @@ export default function UsuariosPage() {
                   >
                     <option value="EMPLEADO">EMPLEADO</option>
                     <option value="ADMIN">ADMIN</option>
-                    <option value="CLIENTE">CLIENTE</option>
                   </select>
                 </div>
               </div>

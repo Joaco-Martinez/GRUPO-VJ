@@ -83,6 +83,7 @@ const ADMIN_NAV = [
     label: 'Dashboard',
     color: '#0f9f5c',
   },
+  
   {
     href: '/usuarios',
     icon: UserCog,
@@ -94,6 +95,12 @@ const ADMIN_NAV = [
     icon: BarChart2,
     label: 'Reportes',
     color: '#d97706',
+  },
+  {
+    href: '/compras',
+    icon: Receipt,
+    label: 'Compras',
+    color: '#0f9f5c',
   },
    {
     href: '/finanzas',

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/set-state-in-effect */
 'use client';
 
@@ -123,6 +124,7 @@ type SaleExtra = Sale & {
   isInvoiced?: boolean | null;
   isNoteCredit?: boolean | null;
   hasCreditNote?: boolean | null;
+  stockLocation?: 'LOCAL' | 'DEPOSITO' | string | null;
   receiptType?: 'TICKET' | 'FACTURA' | 'NOTA_CREDITO' | 'NOTA DE CREDITO' | 'NOTA DE CRÉDITO' | string | null;
   invoiceAfip?: InvoiceAfipView | null;
   invoiceAfipId?: string | null;
@@ -416,6 +418,24 @@ function getSalePaymentLabel(sale: Sale) {
   }
 
   return sale.paymentMethod;
+}
+
+function getStockLocationLabel(sale: Sale) {
+  const location = String((sale as SaleExtra).stockLocation ?? '').toUpperCase();
+
+  if (location === 'LOCAL') return 'Mayorista';
+  if (location === 'DEPOSITO') return 'Minorista';
+
+  return 'Sin dato';
+}
+
+function getStockLocationBadgeClass(sale: Sale) {
+  const location = String((sale as SaleExtra).stockLocation ?? '').toUpperCase();
+
+  if (location === 'LOCAL') return 'badge-green';
+  if (location === 'DEPOSITO') return 'badge-yellow';
+
+  return 'badge-gray';
 }
 
 function countsAsMoney(sale: Sale) {
@@ -1424,6 +1444,7 @@ export default function VentasPage() {
                   <th>Fecha</th>
                   <th>Cliente</th>
                   <th>Pago</th>
+                  <th>Stock</th>
                   <th>Total</th>
                   <th>Deuda</th>
                   <th>Estado</th>
@@ -1461,6 +1482,12 @@ export default function VentasPage() {
                       <td>
                         <span className="badge badge-gray">
                           {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                        </span>
+                      </td>
+
+                      <td>
+                        <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                          {getStockLocationLabel(s)}
                         </span>
                       </td>
 
@@ -1580,6 +1607,10 @@ export default function VentasPage() {
                   <div className="sales-mobile-badges">
                     <span className="badge badge-gray">
                       {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                    </span>
+
+                    <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                      Stock: {getStockLocationLabel(s)}
                     </span>
 
                     <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
@@ -1771,6 +1802,13 @@ export default function VentasPage() {
                     </div>
 
                     <div>
+                      <small>Stock</small>
+                      <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                        {getStockLocationLabel(s)}
+                      </span>
+                    </div>
+
+                    <div>
                       <small>AFIP</small>
                       <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
                         {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
@@ -1781,6 +1819,10 @@ export default function VentasPage() {
                   <div className="sales-actions-badges">
                     <span className="badge badge-gray">
                       {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                    </span>
+
+                    <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                      Stock: {getStockLocationLabel(s)}
                     </span>
 
                     {saleIsCreditNote ? (
@@ -2083,7 +2125,7 @@ export default function VentasPage() {
                 className="sales-detail-grid"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gridTemplateColumns: 'repeat(4, 1fr)',
                   gap: 12,
                   marginBottom: 18,
                 }}
@@ -2109,6 +2151,15 @@ export default function VentasPage() {
                 <div>
                   <small>Estado</small>
                   <b style={{ display: 'block' }}>{detail.status}</b>
+                </div>
+
+                <div>
+                  <small>Stock descontado de</small>
+                  <b style={{ display: 'block' }}>
+                    <span className={`badge ${getStockLocationBadgeClass(detail)}`}>
+                      {getStockLocationLabel(detail)}
+                    </span>
+                  </b>
                 </div>
               </div>
 
@@ -3582,7 +3633,7 @@ export default function VentasPage() {
 
         .sales-actions-summary {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 8px;
         }
 

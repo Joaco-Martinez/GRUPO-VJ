@@ -22,7 +22,8 @@ import {
   PanelLeftOpen,
   FolderTree,
   ShieldCheck,
-  MapPin
+  MapPin,
+  BadgeDollarSign,
 } from 'lucide-react';
 
 const NAV = [
@@ -83,12 +84,17 @@ const ADMIN_NAV = [
     label: 'Dashboard',
     color: '#0f9f5c',
   },
-  
   {
     href: '/usuarios',
     icon: UserCog,
     label: 'Usuarios',
     color: '#fb923c',
+  },
+  {
+    href: '/vendedores',
+    icon: BadgeDollarSign,
+    label: 'Vendedores',
+    color: '#22c55e',
   },
   {
     href: '/reportes',
@@ -102,30 +108,30 @@ const ADMIN_NAV = [
     label: 'Compras',
     color: '#0f9f5c',
   },
-   {
+  {
     href: '/finanzas',
     icon: Wallet,
     label: 'Finanzas',
     color: '#34d399',
   },
-    {
+  {
     href: '/cuentas-corrientes',
     icon: CreditCard,
     label: 'Cuentas Corrientes',
     color: '#d97706',
   },
   {
-  href: '/configuracion/business-locations',
-  icon: MapPin,
-  label: 'Sucursales y depósitos',
-  color: '#38bdf8',
-},
-{
-  href: '/configuracion/arca',
-  icon: ShieldCheck,
-  label: 'ARCA',
-  color: '#22c55e',
-}
+    href: '/configuracion/business-locations',
+    icon: MapPin,
+    label: 'Sucursales y depósitos',
+    color: '#38bdf8',
+  },
+  {
+    href: '/configuracion/arca',
+    icon: ShieldCheck,
+    label: 'ARCA',
+    color: '#22c55e',
+  },
 ];
 
 interface SidebarProps {
@@ -147,10 +153,10 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const { user, logout } = useAuthStore();
 
   const [collapsed, setCollapsed] = useState(() => {
-  if (typeof window === 'undefined') return false;
+    if (typeof window === 'undefined') return false;
 
-  return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
-});
+    return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
+  });
 
   const toggleCollapsed = () => {
     const nextCollapsed = !collapsed;

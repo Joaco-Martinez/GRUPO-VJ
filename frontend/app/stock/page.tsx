@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,6 +24,21 @@ type StockMode = "ADD" | "TRANSFER";
 type MobileTab = "stock" | "movements";
 type SortKey = "category" | "product" | "sku";
 type SortDirection = "asc" | "desc";
+
+type MovementUserView = {
+  id?: string | null;
+  name?: string | null;
+  email?: string | null;
+};
+
+type StockMovementExtra = StockMovement & {
+  userId?: string | null;
+  userName?: string | null;
+  user?: MovementUserView | null;
+  seller?: MovementUserView | null;
+  createdBy?: MovementUserView | null;
+  employee?: MovementUserView | null;
+};
 
 type StockForm = {
   productId: string;
@@ -230,6 +246,31 @@ function movementLocationLabel(location?: MovementLocation | null) {
   if (location === "LOCAL") return "Mayorista";
   if (location === "DEPOSITO") return "Minorista";
   return "—";
+}
+
+function getMovementUserLabel(movement: StockMovement) {
+  const m = movement as StockMovementExtra;
+
+  const name =
+    m.user?.name ||
+    m.seller?.name ||
+    m.createdBy?.name ||
+    m.employee?.name ||
+    m.userName;
+
+  if (name) return name;
+
+  const email =
+    m.user?.email ||
+    m.seller?.email ||
+    m.createdBy?.email ||
+    m.employee?.email;
+
+  if (email) return email;
+
+  if (m.userId) return `Usuario #${String(m.userId).slice(-8)}`;
+
+  return "Sin usuario";
 }
 
 function getProductCategoryLabel(product: Product) {
@@ -1295,6 +1336,7 @@ export default function StockPage() {
                 <th>Desde</th>
                 <th>Hacia</th>
                 <th>Cantidad</th>
+                <th>Usuario</th>
                 <th>Referencia</th>
               </tr>
             </thead>
@@ -1322,6 +1364,8 @@ export default function StockPage() {
                   <td style={{ fontFamily: "var(--mono)" }}>
                     {m.quantityKg ? `${m.quantityKg} kg` : (m.quantity ?? "—")}
                   </td>
+
+                  <td>{getMovementUserLabel(m)}</td>
 
                   <td>{m.reason ?? m.reference ?? "—"}</td>
                 </tr>
@@ -1371,6 +1415,11 @@ export default function StockPage() {
                   <strong>
                     {m.quantityKg ? `${m.quantityKg} kg` : (m.quantity ?? "—")}
                   </strong>
+                </div>
+
+                <div>
+                  <small>Usuario</small>
+                  <strong>{getMovementUserLabel(m)}</strong>
                 </div>
 
                 <div>

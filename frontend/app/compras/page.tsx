@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
 import type { PaymentMethod, Product, ProductCategory } from "@/types";
@@ -12,6 +13,7 @@ import toast from "react-hot-toast";
 import {
   AlertTriangle,
   Check,
+  History,
   Minus,
   Package,
   PackagePlus,
@@ -192,7 +194,7 @@ export default function ComprasPage() {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [sortMode, setSortMode] = useState<ProductSortMode>("name-asc");
-  const [stockLocation, setStockLocation] = useState<StockLocation>("DEPOSITO");
+  const [stockLocation, setStockLocation] = useState<StockLocation>("LOCAL");
 
   const [providerName, setProviderName] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
@@ -516,7 +518,7 @@ export default function ComprasPage() {
     setDescription("");
     setPaymentMethod("TRANSFERENCIA");
     setPurchaseDate(new Date().toISOString().slice(0, 10));
-    setStockLocation("DEPOSITO");
+    setStockLocation("LOCAL");
   };
 
   const validatePurchase = () => {
@@ -765,7 +767,16 @@ export default function ComprasPage() {
   };
 
   return (
-    <AppLayout title="Compras" subtitle="Compra de mercadería: elegí si ingresa a mayorista o minorista">
+    <AppLayout
+      title="Compras"
+      subtitle="Compra de mercadería: elegí si ingresa a mayorista o minorista"
+      actions={
+        <Link href="/compras/historial" className="btn btn-secondary btn-sm">
+          <History size={15} />
+          Historial de compras
+        </Link>
+      }
+    >
       <div className="pos-desktop-only">
         <div className="pos-root">
           <section>
@@ -822,6 +833,11 @@ export default function ComprasPage() {
                 <RefreshCcw size={14} />
                 Actualizar
               </button>
+
+              <Link href="/compras/historial" className="btn btn-primary btn-sm pos-history-btn">
+                <History size={14} />
+                Historial
+              </Link>
             </div>
 
             <section className="pos-pre-price-bar purchase-info-bar">
@@ -921,9 +937,14 @@ export default function ComprasPage() {
               <p className="pos-kicker">Compra rápida</p>
               <p>{filtered.length} productos · {selectedCategoryName} · Ingresa a {stockLocationLabelLower(stockLocation)}</p>
             </div>
-            <button className="pos-icon-btn" type="button" onClick={() => load(true)} disabled={loading}>
-              <RefreshCcw size={17} />
-            </button>
+            <div className="purchase-hero-actions">
+              <Link href="/compras/historial" className="pos-icon-btn" aria-label="Historial de compras">
+                <History size={17} />
+              </Link>
+              <button className="pos-icon-btn" type="button" onClick={() => load(true)} disabled={loading}>
+                <RefreshCcw size={17} />
+              </button>
+            </div>
           </section>
 
           <section className="pos-mobile-controls">
@@ -1125,7 +1146,7 @@ export default function ComprasPage() {
         .pos-search input { padding-left: 34px; width: 100%; }
         .pos-filter { width: 220px; }
         .pos-sort-filter { width: 185px; }
-        .pos-scan-desktop-btn, .pos-refresh-btn { height: 42px; white-space: nowrap; }
+        .pos-scan-desktop-btn, .pos-refresh-btn, .pos-history-btn { height: 42px; white-space: nowrap; }
         .pos-pre-price-bar { margin-bottom: 14px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--surface)), var(--surface)); border-radius: 20px; padding: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: center; box-shadow: 0 14px 34px rgba(0,0,0,.12); }
         .pos-pre-price-copy { display: grid; gap: 3px; min-width: 0; }
         .pos-pre-price-copy b { font-size: 13px; color: var(--text); }
@@ -1200,6 +1221,7 @@ export default function ComprasPage() {
         .pos-mobile-shell { padding-bottom: 112px; }
         .pos-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 24px; background: radial-gradient(circle at top left, rgba(59,130,246,.2), transparent 34%), var(--surface); margin-bottom: 12px; }
         .purchase-hero { background: radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 22%, transparent), transparent 36%), var(--surface); }
+        .purchase-hero-actions { display: flex; gap: 8px; align-items: center; }
         .pos-kicker, .pos-hero p { margin: 0; color: var(--text3); font-size: 12px; font-weight: 800; }
         .pos-icon-btn { width: 42px; height: 42px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); display: inline-grid; place-items: center; flex-shrink: 0; }
         .pos-mobile-controls { position: sticky; top: 0; z-index: 15; padding: 10px 0 12px; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(18px); }

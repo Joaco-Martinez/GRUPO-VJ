@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { AccountMovementType, PaymentMethod } from "@prisma/client";
 import { accountService } from "../services/account.service";
 import { getParamAsString } from "../utils/params";
+import { optionalRangeAR } from "../utils/dateAR";
 function toNumber(value: any) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
@@ -33,15 +34,16 @@ export const accountController = {
     try {
       const type = req.query.type as AccountMovementType | undefined;
 
+      const { start: fromDate, end: toDate } = optionalRangeAR(
+        req.query.fromDate as string | undefined,
+        req.query.toDate as string | undefined
+      );
+
       const movements = await accountService.getMovements({
         clientId: req.query.clientId as string | undefined,
         type,
-        fromDate: req.query.fromDate
-          ? new Date(req.query.fromDate as string)
-          : undefined,
-        toDate: req.query.toDate
-          ? new Date(req.query.toDate as string)
-          : undefined,
+        fromDate,
+        toDate,
       });
 
       res.json(movements);

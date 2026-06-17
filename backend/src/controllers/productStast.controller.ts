@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { productStatsService } from "../services/productStats.service";
+import { parseDateInputAR } from "../utils/dateAR";
 
 function parseUnit(unit: any): "UNIT" | "KG" | undefined {
   if (!unit) return undefined;
@@ -26,13 +27,11 @@ function parseLimit(limit: any, fallback = 10) {
 function parseDateParam(value: any) {
   if (!value) return null;
 
-  const date = new Date(`${String(value).slice(0, 10)}T12:00:00.000Z`);
-
-  if (Number.isNaN(date.getTime())) {
+  try {
+    return parseDateInputAR(String(value).slice(0, 10)) ?? null;
+  } catch {
     return null;
   }
-
-  return date;
 }
 
 function getStartDateQuery(req: Request) {

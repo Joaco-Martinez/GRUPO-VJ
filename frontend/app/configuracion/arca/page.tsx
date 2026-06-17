@@ -29,6 +29,7 @@ import {
   type RemitoCaiConfig,
   type RemitoMode,
 } from '@/service/arcaConfig.service';
+import { formatDateAR, formatDateTimeAR, toDateInputAR } from '@/lib/dateAR';
 
 type Toast = {
   type: 'success' | 'error' | 'info';
@@ -111,36 +112,15 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return '—';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(date);
+  return formatDateAR(value);
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return '—';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
+  return formatDateTimeAR(value);
 }
 
 function toDateInput(value?: string | null) {
-  if (!value) return '';
-  return String(value).slice(0, 10);
+  return toDateInputAR(value);
 }
 
 function normalizeCuit(value: string) {

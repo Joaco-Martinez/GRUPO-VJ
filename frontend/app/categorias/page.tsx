@@ -7,6 +7,7 @@ import api from '@/lib/api';
 import type { ProductCategory } from '@/types';
 import { normalizeArray } from '@/lib/helpers';
 import toast from 'react-hot-toast';
+import { formatDateAR } from '@/lib/dateAR';
 import {
   Tags,
   Plus,
@@ -63,13 +64,7 @@ function useIsMobile(maxWidth = 768) {
 }
 
 function formatDate(value?: string) {
-  if (!value) return '—';
-
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(new Date(value));
+  return formatDateAR(value);
 }
 
 function productsCount(category: ProductCategory) {

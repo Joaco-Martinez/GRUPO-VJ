@@ -1,7 +1,8 @@
 import type { Client, Product, ProductCategory } from '@/types';
+import { formatDateTimeAR } from '@/lib/dateAR';
 
 export const fmtMoney = (n: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(Number.isFinite(Number(n)) ? Number(n) : 0);
-export const fmtDate = (value?: string | null) => value ? new Date(value).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+export const fmtDate = (value?: string | null) => formatDateTimeAR(value);
 export const num = (value: unknown, fallback = 0) => { const n = Number(value); return Number.isFinite(n) ? n : fallback; };
 export const normalizeArray = <T,>(response: unknown): T[] => {
   if (Array.isArray(response)) return response as T[];

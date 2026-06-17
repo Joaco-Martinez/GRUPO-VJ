@@ -9,6 +9,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { TrendingUp, ShoppingCart, Package, AlertTriangle, DollarSign } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
+import { formatDateAR, formatShortDateAR, isSameDayAR, todayInputAR } from '@/lib/dateAR';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-AR', {
@@ -221,10 +222,7 @@ export default function DashboardPage() {
 
     (Array.isArray(sales) ? sales : []).forEach((s) => {
       if (s.status === 'COMPLETED') {
-        const d = new Date(s.createdAt).toLocaleDateString('es-AR', {
-          day: '2-digit',
-          month: '2-digit',
-        });
+        const d = formatShortDateAR(s.createdAt);
 
         map[d] = (map[d] || 0) + (s.total || 0);
       }
@@ -236,8 +234,8 @@ export default function DashboardPage() {
   })();
 
   const todaySales = (Array.isArray(sales) ? sales : []).filter((s) => {
-    const today = new Date().toDateString();
-    return new Date(s.createdAt).toDateString() === today && s.status === 'COMPLETED';
+    const today = todayInputAR();
+    return isSameDayAR(s.createdAt, today) && s.status === 'COMPLETED';
   });
 
   const todayRevenue = todaySales.reduce((a, s) => a + (s.total || 0), 0);
@@ -505,7 +503,7 @@ export default function DashboardPage() {
                       </td>
 
                       <td style={{ color: 'var(--text2)', fontSize: 13 }}>
-                        {new Date(s.createdAt).toLocaleDateString('es-AR')}
+                        {formatDateAR(s.createdAt)}
                       </td>
 
                       <td style={{ fontSize: 13 }}>{clientName(s.client)}</td>
@@ -555,7 +553,7 @@ export default function DashboardPage() {
                   <div className="dashboard-mobile-sale-head">
                     <div>
                       <strong>#{s.id.slice(-6)}</strong>
-                      <span>{new Date(s.createdAt).toLocaleDateString('es-AR')}</span>
+                      <span>{formatDateAR(s.createdAt)}</span>
                     </div>
 
                     <span

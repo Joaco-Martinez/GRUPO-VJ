@@ -2,6 +2,7 @@ import axios from "axios";
 import prisma from "../prisma";
 import PDFDocument from "pdfkit";
 import { Buffer } from "buffer";
+import { dayRangeAR, rangeAR } from "../utils/dateAR";
 
 type CashClosePrintBody =
   | { date: string }
@@ -28,18 +29,6 @@ async function textToPdfBase64(text: string) {
 
   const pdfBuffer = await done;
   return pdfBuffer.toString("base64");
-}
-
-// ===== Fechas AR (-03:00) =====
-function dayRangeAR(dateStr: string) {
-  const start = new Date(`${dateStr}T00:00:00-03:00`);
-  const end = new Date(`${dateStr}T23:59:59.999-03:00`);
-  return { start, end };
-}
-function rangeAR(from: string, to: string) {
-  const start = new Date(`${from}T00:00:00-03:00`);
-  const end = new Date(`${to}T23:59:59.999-03:00`);
-  return { start, end };
 }
 
 function formatMoneyARS(n: number) {

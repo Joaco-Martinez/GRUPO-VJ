@@ -1,3 +1,4 @@
+import { startOfDayAR, endOfDayAR } from "../utils/dateAR";
 import {
   AccountMovementType,
   CategoryFinance,
@@ -56,17 +57,6 @@ function toDateOnly(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function startOfDay(date: Date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfDay(date: Date) {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
 
 function n0(v: unknown) {
   const num = Number(v);
@@ -359,11 +349,11 @@ export const productStatsService = {
       where.sale.createdAt = {};
 
       if (params.startDate) {
-        where.sale.createdAt.gte = startOfDay(params.startDate);
+        where.sale.createdAt.gte = startOfDayAR(params.startDate);
       }
 
       if (params.endDate) {
-        where.sale.createdAt.lte = endOfDay(params.endDate);
+        where.sale.createdAt.lte = endOfDayAR(params.endDate);
       }
     }
 
@@ -639,8 +629,8 @@ export const productStatsService = {
     const salesWhere: any = {
       status: SaleStatus.COMPLETED,
       createdAt: {
-        gte: startOfDay(startDate),
-        lte: endOfDay(endDate),
+        gte: startOfDayAR(startDate),
+        lte: endOfDayAR(endDate),
       },
     };
 
@@ -662,8 +652,8 @@ export const productStatsService = {
           in: [CategoryFinance.VENTA, CategoryFinance.COBRANZA],
         },
         date: {
-          gte: startOfDay(startDate),
-          lte: endOfDay(endDate),
+          gte: startOfDayAR(startDate),
+          lte: endOfDayAR(endDate),
         },
       },
       _sum: {

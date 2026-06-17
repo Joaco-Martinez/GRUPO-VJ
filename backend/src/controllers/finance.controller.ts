@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { financeService } from "../services/finance.service";
-import { parseISO, startOfDay, endOfDay } from "date-fns";
+import { monthRangeAR, optionalRangeAR, parseDateInputAR, rangeAR } from "../utils/dateAR";
 import { getParamAsString } from "../utils/params";
 export const financeController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
@@ -18,7 +18,7 @@ export const financeController = {
       // Si te mandan date string desde el front, lo parseamos
       const body: any = { ...req.body };
       if (body.date && typeof body.date === "string") {
-        body.date = parseISO(body.date);
+        body.date = parseDateInputAR(body.date);
       }
 
       const updated = await financeService.update(getParamAsString(id, "id"), body);
@@ -65,7 +65,13 @@ export const financeController = {
 
   async create(req: Request, res: Response, next: NextFunction) {
     try {
-      res.status(201).json(await financeService.create(req.body));
+      const body: any = { ...req.body };
+
+      if (body.date && typeof body.date === "string") {
+        body.date = parseDateInputAR(body.date);
+      }
+
+      res.status(201).json(await financeService.create(body));
     } catch (err) {
       next(err);
     }
@@ -125,8 +131,7 @@ export const financeController = {
   async getIncomeByCategory(req: Request, res: Response, next: NextFunction) {
     try {
       const { from, to } = req.query;
-      const fromDate = startOfDay(parseISO(from as string));
-      const toDate = endOfDay(parseISO(to as string));
+      const { start: fromDate, end: toDate } = rangeAR(from as string, to as string);
       res.json(await financeService.getIncomeByCategory(fromDate, toDate));
     } catch (err) {
       next(err);
@@ -136,8 +141,7 @@ export const financeController = {
   async getBestProductMonth(req: Request, res: Response, next: NextFunction) {
     try {
       const { month, year } = req.query;
-      const startDate = startOfDay(new Date(Number(year), Number(month) - 1, 1));
-      const endDate = endOfDay(new Date(Number(year), Number(month), 0));
+      const { start: startDate, end: endDate } = monthRangeAR(Number(year), Number(month));
       const product = await financeService.getProductsRange(startDate, endDate, "desc");
       res.json(product[0] ?? null);
     } catch (err) {
@@ -148,8 +152,7 @@ export const financeController = {
   async getWorstProductMonth(req: Request, res: Response, next: NextFunction) {
     try {
       const { month, year } = req.query;
-      const startDate = startOfDay(new Date(Number(year), Number(month) - 1, 1));
-      const endDate = endOfDay(new Date(Number(year), Number(month), 0));
+      const { start: startDate, end: endDate } = monthRangeAR(Number(year), Number(month));
       const product = await financeService.getProductsRange(startDate, endDate, "asc");
       res.json(product[0] ?? null);
     } catch (err) {
@@ -160,8 +163,10 @@ export const financeController = {
   async getTopProductsInRange(req: Request, res: Response, next: NextFunction) {
     try {
       const { from, to, limit } = req.query;
-      const fromDate = from ? startOfDay(parseISO(from as string)) : undefined;
-      const toDate = to ? endOfDay(parseISO(to as string)) : undefined;
+      const { start: fromDate, end: toDate } = optionalRangeAR(
+        from as string | undefined,
+        to as string | undefined
+      );
       res.json(
         await financeService.getTopProductsInRange(fromDate, toDate, Number(limit) || 5)
       );
@@ -173,8 +178,7 @@ export const financeController = {
   async exportExcel(req: Request, res: Response, next: NextFunction) {
     try {
       const { from, to } = req.query;
-      const fromDate = startOfDay(parseISO(from as string));
-      const toDate = endOfDay(parseISO(to as string));
+      const { start: fromDate, end: toDate } = rangeAR(from as string, to as string);
       const buffer = await financeService.exportFinanceReport(fromDate, toDate);
 
       res.setHeader("Content-Disposition", "attachment; filename=reporte.xlsx");
@@ -191,8 +195,7 @@ export const financeController = {
   async exportPDF(req: Request, res: Response, next: NextFunction) {
     try {
       const { from, to } = req.query;
-      const fromDate = startOfDay(parseISO(from as string));
-      const toDate = endOfDay(parseISO(to as string));
+      const { start: fromDate, end: toDate } = rangeAR(from as string, to as string);
       await financeService.exportFinanceReportPDF(res, fromDate, toDate);
     } catch (err) {
       next(err);

@@ -35,6 +35,15 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import {
+  compareDateInputsAR,
+  endOfDayAR,
+  firstDayOfCurrentMonthAR,
+  formatDateAR,
+  formatShortDateAR,
+  startOfDayAR,
+  todayInputAR,
+} from '@/lib/dateAR';
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-AR', {
@@ -78,12 +87,9 @@ const categoryLabel = (value?: string | null) => {
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = todayInputAR;
 
-const firstDayOfCurrentMonth = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
-};
+const firstDayOfCurrentMonth = firstDayOfCurrentMonthAR;
 
 const getPartsFromDate = (date: string) => {
   const [year, month, day] = date.split('-').map(Number);
@@ -95,8 +101,8 @@ const getPartsFromDate = (date: string) => {
   };
 };
 
-const startOfDay = (date: string) => new Date(`${date}T00:00:00.000`);
-const endOfDay = (date: string) => new Date(`${date}T23:59:59.999`);
+const startOfDay = startOfDayAR;
+const endOfDay = endOfDayAR;
 
 type StatsState = {
   week: number;
@@ -536,10 +542,7 @@ export default function FinanzasPage() {
     > = {};
 
     filteredEntries.forEach(e => {
-      const d = new Date(e.date).toLocaleDateString('es-AR', {
-        day: '2-digit',
-        month: '2-digit',
-      });
+      const d = formatShortDateAR(e.date);
 
       if (!map[d]) {
         map[d] = {
@@ -558,10 +561,7 @@ export default function FinanzasPage() {
     });
 
     filteredSales.forEach(sale => {
-      const d = getSaleDate(sale).toLocaleDateString('es-AR', {
-        day: '2-digit',
-        month: '2-digit',
-      });
+      const d = formatShortDateAR(sale.createdAt);
 
       if (!map[d]) {
         map[d] = {
@@ -623,7 +623,7 @@ export default function FinanzasPage() {
       return;
     }
 
-    if (new Date(dateFrom) > new Date(dateTo)) {
+    if (compareDateInputsAR(dateFrom, dateTo) > 0) {
       alert('La fecha desde no puede ser mayor a la fecha hasta');
       return;
     }
@@ -1474,7 +1474,7 @@ export default function FinanzasPage() {
                         fontFamily: 'var(--mono)',
                       }}
                     >
-                      {new Date(e.date).toLocaleDateString('es-AR')}
+                      {formatDateAR(e.date)}
                     </td>
 
                     <td>
@@ -1541,7 +1541,7 @@ export default function FinanzasPage() {
                     </div>
 
                     <h4>{e.description || '—'}</h4>
-                    <p>{new Date(e.date).toLocaleDateString('es-AR')}</p>
+                    <p>{formatDateAR(e.date)}</p>
                   </div>
 
                   <strong className={e.type === 'INGRESO' ? 'finance-positive' : 'finance-negative'}>

@@ -5,6 +5,7 @@ import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { clientName } from '@/lib/helpers';
 import toast from 'react-hot-toast';
+import { formatDateAR } from '@/lib/dateAR';
 import {
   AlertTriangle,
   FileText,
@@ -84,12 +85,7 @@ async function fetchInvoices() {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return '—';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-
-  return date.toLocaleDateString('es-AR');
+  return formatDateAR(value);
 }
 
 function shortCae(cae?: string | null) {
@@ -299,7 +295,7 @@ export default function FacturacionPage() {
                         color: 'var(--text2)',
                       }}
                     >
-                      {inv.caeVto ? new Date(inv.caeVto).toLocaleDateString('es-AR') : '—'}
+                      {formatDate(inv.caeVto)}
                     </td>
 
                     <td
@@ -309,7 +305,7 @@ export default function FacturacionPage() {
                         fontFamily: 'var(--mono)',
                       }}
                     >
-                      {new Date(inv.createdAt).toLocaleDateString('es-AR')}
+                      {formatDate(inv.createdAt)}
                     </td>
 
                     <td>

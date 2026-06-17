@@ -1,5 +1,6 @@
 import { AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import type { ArcaConfig } from '@/types/arca';
+import { formatDateTimeAR } from '@/lib/dateAR';
 
 export function onlyDigits(value: string) {
   return value.replace(/\D/g, '');
@@ -12,18 +13,8 @@ export function maskCuit(cuit?: string | null) {
 }
 
 export function formatDate(value?: string | null) {
-  if (!value) return 'Sin dato';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Sin dato';
-
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
+  const formatted = formatDateTimeAR(value);
+  return formatted === '—' ? 'Sin dato' : formatted;
 }
 
 export function getErrorMessage(error: unknown) {

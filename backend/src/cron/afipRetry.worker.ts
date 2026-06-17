@@ -1,3 +1,4 @@
+import "../config/timezone";
 import prisma from "../prisma";
 import { emitirFacturaAFIP } from "../afip/wsfe.service";
 import { generarFacturaAfipPDF } from "../afip/utils/generarFacturaAfipPDF";

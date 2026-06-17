@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/set-state-in-effect */
 'use client';
 
@@ -118,11 +119,18 @@ type CreditNoteView = {
   } | null;
 };
 
+type SaleUserView = {
+  id?: string | null;
+  name?: string | null;
+  email?: string | null;
+};
+
 type SaleExtra = Sale & {
   invoiceStatus?: string | null;
   isInvoiced?: boolean | null;
   isNoteCredit?: boolean | null;
   hasCreditNote?: boolean | null;
+  stockLocation?: 'LOCAL' | 'DEPOSITO' | string | null;
   receiptType?: 'TICKET' | 'FACTURA' | 'NOTA_CREDITO' | 'NOTA DE CREDITO' | 'NOTA DE CRÉDITO' | string | null;
   invoiceAfip?: InvoiceAfipView | null;
   invoiceAfipId?: string | null;
@@ -140,6 +148,16 @@ type SaleExtra = Sale & {
   quotationExpiresAt?: string | null;
   payments?: PaymentView[];
   items?: SaleItemView[];
+  userId?: string | null;
+  sellerId?: string | null;
+  createdById?: string | null;
+  userName?: string | null;
+  sellerName?: string | null;
+  createdByName?: string | null;
+  user?: SaleUserView | null;
+  seller?: SaleUserView | null;
+  createdBy?: SaleUserView | null;
+  employee?: SaleUserView | null;
   client?: (NonNullable<Sale['client']> & {
     dni?: string | null;
     category?: string | null;
@@ -416,6 +434,53 @@ function getSalePaymentLabel(sale: Sale) {
   }
 
   return sale.paymentMethod;
+}
+
+function getSaleSellerLabel(sale: Sale) {
+  const saleExtra = sale as SaleExtra;
+
+  const name =
+    saleExtra.user?.name ||
+    saleExtra.seller?.name ||
+    saleExtra.createdBy?.name ||
+    saleExtra.employee?.name ||
+    saleExtra.userName ||
+    saleExtra.sellerName ||
+    saleExtra.createdByName;
+
+  if (name) return name;
+
+  const email =
+    saleExtra.user?.email ||
+    saleExtra.seller?.email ||
+    saleExtra.createdBy?.email ||
+    saleExtra.employee?.email;
+
+  if (email) return email;
+
+  const id = saleExtra.userId || saleExtra.sellerId || saleExtra.createdById;
+
+  if (id) return `Usuario #${String(id).slice(-8)}`;
+
+  return 'Sin vendedor';
+}
+
+function getStockLocationLabel(sale: Sale) {
+  const location = String((sale as SaleExtra).stockLocation ?? '').toUpperCase();
+
+  if (location === 'LOCAL') return 'Mayorista';
+  if (location === 'DEPOSITO') return 'Minorista';
+
+  return 'Sin dato';
+}
+
+function getStockLocationBadgeClass(sale: Sale) {
+  const location = String((sale as SaleExtra).stockLocation ?? '').toUpperCase();
+
+  if (location === 'LOCAL') return 'badge-green';
+  if (location === 'DEPOSITO') return 'badge-yellow';
+
+  return 'badge-gray';
 }
 
 function countsAsMoney(sale: Sale) {
@@ -1423,7 +1488,9 @@ export default function VentasPage() {
                   <th>ID</th>
                   <th>Fecha</th>
                   <th>Cliente</th>
+                  <th>Vendedor</th>
                   <th>Pago</th>
+                  <th>Stock</th>
                   <th>Total</th>
                   <th>Deuda</th>
                   <th>Estado</th>
@@ -1458,9 +1525,17 @@ export default function VentasPage() {
 
                       <td>{clientName(s.client)}</td>
 
+                      <td>{getSaleSellerLabel(s)}</td>
+
                       <td>
                         <span className="badge badge-gray">
                           {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                        </span>
+                      </td>
+
+                      <td>
+                        <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                          {getStockLocationLabel(s)}
                         </span>
                       </td>
 
@@ -1572,6 +1647,7 @@ export default function VentasPage() {
                       <span className="sales-mobile-id">#{s.id.slice(-8)}</span>
                       <h3>{clientName(s.client)}</h3>
                       <p>{fmtDate(s.createdAt)}</p>
+                      <p>Vendedor: {getSaleSellerLabel(s)}</p>
                     </div>
 
                     <span className={`badge ${badge(s.status)}`}>{s.status}</span>
@@ -1580,6 +1656,10 @@ export default function VentasPage() {
                   <div className="sales-mobile-badges">
                     <span className="badge badge-gray">
                       {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                    </span>
+
+                    <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                      Stock: {getStockLocationLabel(s)}
                     </span>
 
                     <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
@@ -1747,6 +1827,7 @@ export default function VentasPage() {
                   <div>
                     <small>Acciones de venta</small>
                     <b>#{s.id.slice(-8)} · {clientName(s.client)}</b>
+                    <small>Vendedor: {getSaleSellerLabel(s)}</small>
                   </div>
 
                   <button
@@ -1771,6 +1852,18 @@ export default function VentasPage() {
                     </div>
 
                     <div>
+                      <small>Stock</small>
+                      <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                        {getStockLocationLabel(s)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <small>Vendedor</small>
+                      <b>{getSaleSellerLabel(s)}</b>
+                    </div>
+
+                    <div>
                       <small>AFIP</small>
                       <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
                         {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
@@ -1781,6 +1874,10 @@ export default function VentasPage() {
                   <div className="sales-actions-badges">
                     <span className="badge badge-gray">
                       {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
+                    </span>
+
+                    <span className={`badge ${getStockLocationBadgeClass(s)}`}>
+                      Stock: {getStockLocationLabel(s)}
                     </span>
 
                     {saleIsCreditNote ? (
@@ -2083,7 +2180,7 @@ export default function VentasPage() {
                 className="sales-detail-grid"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gridTemplateColumns: 'repeat(5, 1fr)',
                   gap: 12,
                   marginBottom: 18,
                 }}
@@ -2091,6 +2188,11 @@ export default function VentasPage() {
                 <div>
                   <small>Cliente</small>
                   <b style={{ display: 'block' }}>{clientName(detail.client)}</b>
+                </div>
+
+                <div>
+                  <small>Vendedor</small>
+                  <b style={{ display: 'block' }}>{getSaleSellerLabel(detail)}</b>
                 </div>
 
                 <div>
@@ -2109,6 +2211,15 @@ export default function VentasPage() {
                 <div>
                   <small>Estado</small>
                   <b style={{ display: 'block' }}>{detail.status}</b>
+                </div>
+
+                <div>
+                  <small>Stock descontado de</small>
+                  <b style={{ display: 'block' }}>
+                    <span className={`badge ${getStockLocationBadgeClass(detail)}`}>
+                      {getStockLocationLabel(detail)}
+                    </span>
+                  </b>
                 </div>
               </div>
 
@@ -3582,7 +3693,7 @@ export default function VentasPage() {
 
         .sales-actions-summary {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(5, minmax(0, 1fr));
           gap: 8px;
         }
 

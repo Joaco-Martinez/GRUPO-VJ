@@ -10,6 +10,7 @@ import {
   Location,
 } from "@prisma/client";
 import { saleService } from "./sale.service";
+import { whatsappService } from "./whatsapp.service";
 
 type CatalogFilters = {
   userId?: string;
@@ -66,12 +67,36 @@ function normalizeCategory(value?: string | null): CategoryClient {
     return CategoryClient.Mayorista;
   }
 
-  // Compatibilidad: si algún dato/front viejo manda "Cliente",
-  // ahora lo tratamos como minorista.
+  // Compatibilidad: Cliente/Price/Minorista se tratan como minorista.
   return CategoryClient.Price;
 }
 
-function getProductStock(product: any) {
+function getStockLocationByCategory(category: CategoryClient): Location {
+  return category === CategoryClient.Mayorista
+    ? Location.LOCAL
+    : Location.DEPOSITO;
+}
+
+function getUnitStockByLocation(product: any, location: Location) {
+  return Number(
+    location === Location.LOCAL
+      ? product.stockLocal || 0
+      : product.stockDeposito || 0,
+  );
+}
+
+function getKgStockByLocation(product: any, location: Location) {
+  return Number(
+    location === Location.LOCAL
+      ? product.stockLocalKg || 0
+      : product.stockDepositoKg || 0,
+  );
+}
+
+function getProductStock(product: any, category: CategoryClient) {
+  const stockLocation = getStockLocationByCategory(category);
+  const locationLabel = stockLocation === Location.LOCAL ? "local" : "depósito";
+
   if (product.type === ProductType.COMPUESTO) {
     if (!Array.isArray(product.components) || product.components.length === 0) {
       return {
@@ -87,12 +112,18 @@ function getProductStock(product: any) {
       const unitQty = Number(component.quantity || 0);
       const kgQty = Number(component.quantityKg || 0);
 
+      if (!componentProduct) return 0;
+
       if (unitQty > 0) {
-        return Math.floor(Number(componentProduct?.stockLocal || 0) / unitQty);
+        return Math.floor(
+          getUnitStockByLocation(componentProduct, stockLocation) / unitQty,
+        );
       }
 
       if (kgQty > 0) {
-        return Math.floor(Number(componentProduct?.stockLocalKg || 0) / kgQty);
+        return Math.floor(
+          getKgStockByLocation(componentProduct, stockLocation) / kgQty,
+        );
       }
 
       return 0;
@@ -103,28 +134,37 @@ function getProductStock(product: any) {
     return {
       availableQuantity: available,
       availableKg: 0,
-      stockLabel: `${available} disponibles`,
+      stockLabel:
+        available > 0
+          ? `${available} disponibles en ${locationLabel}`
+          : `Sin stock en ${locationLabel}`,
       canSell: available > 0,
     };
   }
 
   if (product.saleUnit === SaleUnit.KG) {
-    const availableKg = Number(product.stockLocalKg || 0);
+    const availableKg = getKgStockByLocation(product, stockLocation);
 
     return {
       availableQuantity: 0,
       availableKg,
-      stockLabel: `${round2(availableKg)} kg disponibles`,
+      stockLabel:
+        availableKg > 0
+          ? `${round2(availableKg)} kg disponibles en ${locationLabel}`
+          : `Sin stock en ${locationLabel}`,
       canSell: availableKg > 0,
     };
   }
 
-  const availableQuantity = Number(product.stockLocal || 0);
+  const availableQuantity = getUnitStockByLocation(product, stockLocation);
 
   return {
     availableQuantity,
     availableKg: 0,
-    stockLabel: `${availableQuantity} disponibles`,
+    stockLabel:
+      availableQuantity > 0
+        ? `${availableQuantity} disponibles en ${locationLabel}`
+        : `Sin stock en ${locationLabel}`,
     canSell: availableQuantity > 0,
   };
 }
@@ -156,24 +196,15 @@ function resolvePrice(product: any, category: CategoryClient) {
   return {
     price: round2(Number.isFinite(price) ? price : 0),
     priceList,
-
-    // Minorista / público
     publicPrice: round2(safePublicPrice),
-
-    // Compatibilidad temporal:
-    // Ya no existe precio Cliente, pero lo dejamos igual al público
-    // para que ningún frontend viejo rompa si todavía lee clientPrice.
     clientPrice: round2(safePublicPrice),
-
-    // Mayorista
     wholesalePrice: round2(safeWholesalePrice),
-
     currency: "ARS",
   };
 }
 
 function mapProduct(product: any, customer: CustomerContext) {
-  const stock = getProductStock(product);
+  const stock = getProductStock(product, customer.category);
   const pricing = resolvePrice(product, customer.category);
 
   return {
@@ -226,12 +257,10 @@ function buildWhatsappUrl(message: string) {
     process.env.STORE_WHATSAPP_NUMBER ||
       process.env.WHATSAPP_PHONE ||
       process.env.BUSINESS_WHATSAPP_NUMBER ||
-      process.env.BUSINESS_WHATSAPP
+      process.env.BUSINESS_WHATSAPP,
   );
 
-  if (!phone) {
-    return null;
-  }
+  if (!phone) return null;
 
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 }
@@ -289,24 +318,16 @@ function buildWhatsappMessage(params: {
 export const catalogService = {
   async getCustomerContext(userId?: string): Promise<CustomerContext> {
     if (!userId) {
-      return {
-        category: CategoryClient.Price,
-      };
+      return { category: CategoryClient.Price };
     }
 
     const user = await prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-      include: {
-        client: true,
-      },
+      where: { id: userId },
+      include: { client: true },
     });
 
     if (!user || user.isActive === false) {
-      return {
-        category: CategoryClient.Price,
-      };
+      return { category: CategoryClient.Price };
     }
 
     if (user.role !== Role.CLIENTE || !user.client) {
@@ -335,20 +356,12 @@ export const catalogService = {
 
   async getCategories() {
     const categories = await prisma.productCategory.findMany({
-      where: {
-        isActive: true,
-      },
-      orderBy: {
-        name: "asc",
-      },
+      where: { isActive: true },
+      orderBy: { name: "asc" },
       include: {
         _count: {
           select: {
-            products: {
-              where: {
-                isActive: true,
-              },
-            },
+            products: { where: { isActive: true } },
           },
         },
       },
@@ -369,9 +382,7 @@ export const catalogService = {
     const page = cleanPage(filters.page);
     const search = normalizeSearch(filters.search);
 
-    const where: any = {
-      isActive: true,
-    };
+    const where: any = { isActive: true };
 
     if (filters.categorySlug) {
       where.category = {
@@ -382,44 +393,43 @@ export const catalogService = {
 
     if (search) {
       where.OR = [
-        {
-          name: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-        {
-          description: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-        {
-          sku: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
+        { name: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+        { sku: { contains: search, mode: "insensitive" } },
       ];
     }
 
-    const [total, products] = await Promise.all([
-      prisma.product.count({ where }),
-      prisma.product.findMany({
-        where,
-        orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
-        skip: (page - 1) * limit,
-        take: limit,
-        include: {
-          category: true,
-          components: {
-            include: {
-              component: true,
-            },
+    const products = await prisma.product.findMany({
+      where,
+      orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
+      include: {
+        category: true,
+        components: { include: { component: true } },
+      },
+    });
+
+    const mappedProducts = products
+      .map((product) => mapProduct(product, customer))
+      .sort((a, b) => {
+        if (a.canSell !== b.canSell) return a.canSell ? -1 : 1;
+
+        return String(a.name || "").localeCompare(
+          String(b.name || ""),
+          "es-AR",
+          {
+            numeric: true,
+            sensitivity: "base",
           },
-        },
-      }),
-    ]);
+        );
+      });
+
+    const total = mappedProducts.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const paginatedProducts = mappedProducts.slice(
+      (safePage - 1) * limit,
+      safePage * limit,
+    );
 
     return {
       customer: {
@@ -428,81 +438,81 @@ export const catalogService = {
         clientId: customer.clientId ?? null,
       },
       pagination: {
-        page,
+        page: safePage,
         limit,
         total,
-        pages: Math.ceil(total / limit),
+        pages: totalPages,
+        totalPages,
       },
-      products: products.map((product) => mapProduct(product, customer)),
+      products: paginatedProducts,
     };
   },
 
-async checkoutWhatsapp(data: CheckoutInput) {
-  if (!data.userId) {
-    throw new Error("Para finalizar el pedido tenés que iniciar sesión");
-  }
-
-  const customer = await this.getCustomerContext(data.userId);
-
-  if (!customer.clientId) {
-    throw new Error(
-      "Solo los usuarios cliente pueden finalizar pedidos desde la tienda"
-    );
-  }
-
-  if (!Array.isArray(data.items) || data.items.length === 0) {
-    throw new Error("El carrito está vacío");
-  }
-
-  const normalizedItems = data.items.map((item) => ({
-    productId: String(item.productId || ""),
-    quantity:
-      item.quantity !== undefined ? Number(item.quantity) : undefined,
-    quantityKg:
-      item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
-  }));
-
-  for (const item of normalizedItems) {
-    if (!item.productId) {
-      throw new Error("Hay un producto inválido en el carrito");
+  async checkoutWhatsapp(data: CheckoutInput) {
+    if (!data.userId) {
+      throw new Error("Para finalizar el pedido tenés que iniciar sesión");
     }
-  }
 
-  // Price = Minorista => descuenta de DEPÓSITO
-  // Mayorista => descuenta de LOCAL
-  const stockLocation =
-    customer.category === CategoryClient.Mayorista
-      ? Location.LOCAL
-      : Location.DEPOSITO;
+    const customer = await this.getCustomerContext(data.userId);
 
-  const saleResult = await saleService.create({
-    userId: data.userId,
-    clientId: customer.clientId,
-    paymentMethod: data.paymentMethod || PaymentMethod.TRANSFERENCIA,
-    receiptType: ReceiptType.TICKET,
-    status: SaleStatus.PENDING,
-    stockLocation,
-    items: normalizedItems,
-  });
+    if (!customer.clientId) {
+      throw new Error(
+        "Solo los usuarios cliente pueden finalizar pedidos desde la tienda",
+      );
+    }
 
-  const sale = (saleResult as any).sale;
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("El carrito está vacío");
+    }
 
-  const whatsappMessage = buildWhatsappMessage({
-    sale,
-    customer,
-    customerNotes: data.customerNotes,
-  });
+    const normalizedItems = data.items.map((item) => ({
+      productId: String(item.productId || ""),
+      quantity: item.quantity !== undefined ? Number(item.quantity) : undefined,
+      quantityKg:
+        item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
+    }));
 
-  const whatsappUrl = buildWhatsappUrl(whatsappMessage);
+    for (const item of normalizedItems) {
+      if (!item.productId) {
+        throw new Error("Hay un producto inválido en el carrito");
+      }
+    }
 
-  return {
-    saleId: sale.id,
-    status: sale.status,
-    total: sale.total,
-    whatsappMessage,
-    whatsappUrl,
-    missingWhatsappConfig: !whatsappUrl,
-    sale,
-  };
-}
+    // Mayorista descuenta LOCAL. Minorista/Price descuenta DEPÓSITO.
+    const stockLocation = getStockLocationByCategory(customer.category);
+
+    const saleResult = await saleService.create({
+      userId: data.userId,
+      clientId: customer.clientId,
+      paymentMethod: data.paymentMethod || PaymentMethod.TRANSFERENCIA,
+      receiptType: ReceiptType.TICKET,
+      status: SaleStatus.PENDING,
+      stockLocation,
+      items: normalizedItems,
+    });
+
+    const sale = (saleResult as any).sale;
+
+    const whatsappMessage = buildWhatsappMessage({
+      sale,
+      customer,
+      customerNotes: data.customerNotes,
+    });
+
+    const whatsappApi = await whatsappService.sendTextMessage({
+      to: customer.phone || "",
+      message: whatsappMessage,
+    });
+
+    return {
+      saleId: sale.id,
+      status: sale.status,
+      total: sale.total,
+      whatsappMessage,
+      whatsappUrl: null,
+      missingWhatsappConfig: Boolean(whatsappApi.missingConfig),
+      whatsappApi,
+      sale,
+    };
+  },
 };

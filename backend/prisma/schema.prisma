@@ -24,6 +24,7 @@ model User {
   remitos              Remito[]
   Sale                 Sale[]
   StockMovements       StockMovement[]
+  purchases            Purchase[]
 
   @@index([role])
   @@index([isActive])
@@ -141,6 +142,7 @@ model Product {
   remitoItems         RemitoItem[]
   SaleItem            SaleItem[]
   StockMovement       StockMovement[]
+  purchaseItems       PurchaseItem[]
 
   @@index([sku])
   @@index([categoryId])
@@ -561,6 +563,7 @@ model Finance {
   date          DateTime
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+  purchase      Purchase?
 
   @@index([type])
   @@index([category])
@@ -571,6 +574,7 @@ model StockMovement {
   id         String       @id @default(uuid())
   productId  String
   userId     String?
+  purchaseId String?
   type       MovementType
   from       Location?
   to         Location?
@@ -581,11 +585,58 @@ model StockMovement {
   createdAt  DateTime     @default(now())
   product    Product      @relation(fields: [productId], references: [id])
   user       User?        @relation(fields: [userId], references: [id])
+  purchase   Purchase?    @relation(fields: [purchaseId], references: [id])
 
   @@index([productId])
   @@index([userId])
+  @@index([purchaseId])
   @@index([type])
   @@index([createdAt])
+}
+
+model Purchase {
+  id            String         @id @default(uuid())
+  providerName  String?
+  invoiceNumber String?
+  description   String?
+  totalAmount   Float          @default(0)
+  paymentMethod PaymentMethod?
+  to            Location       @default(DEPOSITO)
+  date          DateTime       @default(now())
+  status        PurchaseStatus @default(COMPLETED)
+  userId        String?
+  financeId     String?        @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  user           User?           @relation(fields: [userId], references: [id])
+  finance        Finance?        @relation(fields: [financeId], references: [id])
+  items          PurchaseItem[]
+  stockMovements StockMovement[]
+
+  @@index([userId])
+  @@index([financeId])
+  @@index([status])
+  @@index([date])
+}
+
+model PurchaseItem {
+  id                  String   @id @default(uuid())
+  purchaseId          String
+  productId           String
+  quantity            Int?
+  quantityKg          Float?
+  unitCost            Float
+  subtotal            Float
+  productNameSnapshot String?
+  productSkuSnapshot  String?
+  createdAt           DateTime @default(now())
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
 }
 
 model Invoice {
@@ -686,6 +737,11 @@ enum SaleStatus {
   CANCELLED
 }
 
+enum PurchaseStatus {
+  COMPLETED
+  CANCELLED
+}
+
 enum AccountMovementType {
   DEBT
   PAYMENT
@@ -697,6 +753,7 @@ enum AccountMovementType {
 enum CategoryFinance {
   VENTA
   COBRANZA
+  CompraMercaderia
   AlquilerL1
   AlquilerF1
   Alarma

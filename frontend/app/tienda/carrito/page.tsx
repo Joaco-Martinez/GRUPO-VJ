@@ -16,11 +16,13 @@ import {
   AlertTriangle,
   X,
 } from "lucide-react";
-import { formatMoney, shopApi } from "@/lib/shop";
+import { CatalogProduct, formatMoney, shopApi } from "@/lib/shop";
 import { useCartStore } from "@/store/cart";
 import toast from "react-hot-toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const STORE_WHATSAPP_NUMBER =
+  process.env.NEXT_PUBLIC_STORE_WHATSAPP_NUMBER || "";
 
 type ShopAuthUser = {
   id: string;
@@ -49,6 +51,147 @@ async function getCurrentUser(): Promise<ShopAuthUser | null> {
   } catch {
     return null;
   }
+}
+
+function isWholesaleCategory(category: string | null | undefined) {
+  return (
+    String(category ?? "")
+      .trim()
+      .toLowerCase() === "mayorista"
+  );
+}
+
+function numValue(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pickFirstPositive(...values: unknown[]) {
+  for (const value of values) {
+    const n = numValue(value);
+    if (n > 0) return n;
+  }
+
+  return 0;
+}
+
+function getProductPriceForCustomer(
+  product: CatalogProduct,
+  customerCategory: string | null | undefined,
+) {
+  const p = product as CatalogProduct & Record<string, unknown>;
+  const isKg = product.saleUnit === "KG";
+
+  if (isWholesaleCategory(customerCategory)) {
+    return pickFirstPositive(
+      isKg ? p.wholesalePricePerKg : p.wholesalePrice,
+      p.wholesalePrice,
+      p.mayoristaPrice,
+      p.price,
+    );
+  }
+
+  return pickFirstPositive(
+    isKg ? p.pricePerKg : p.price,
+    p.price,
+    p.minoristaPrice,
+    p.retailPrice,
+  );
+}
+
+function getProductStockForCustomer(
+  product: CatalogProduct,
+  _customerCategory: string | null | undefined,
+) {
+  // El backend ya devuelve availableQuantity / availableKg calculado según la categoría:
+  // Mayorista => LOCAL, Minorista/Price => DEPÓSITO.
+  if (product.saleUnit === "KG") {
+    return numValue(product.availableKg);
+  }
+
+  return numValue(product.availableQuantity);
+}
+
+function getStockLabelForCustomer(
+  product: CatalogProduct,
+  customerCategory: string | null | undefined,
+) {
+  const stock = getProductStockForCustomer(product, customerCategory);
+  const storeName = isWholesaleCategory(customerCategory)
+    ? "local"
+    : "depósito";
+
+  if (stock <= 0) return `Sin stock en ${storeName}`;
+
+  if (product.saleUnit === "KG") {
+    return `${stock.toLocaleString("es-AR")} kg en ${storeName}`;
+  }
+
+  return `${stock.toLocaleString("es-AR")} en ${storeName}`;
+}
+
+function adaptCartItemForCustomer<
+  T extends { product: CatalogProduct; quantity: number },
+>(item: T, customerCategory: string | null | undefined) {
+  const price = getProductPriceForCustomer(item.product, customerCategory);
+  const stock = getProductStockForCustomer(item.product, customerCategory);
+
+  return {
+    ...item,
+    product: {
+      ...item.product,
+      price,
+      canSell: stock > 0 && price > 0,
+      stockLabel: getStockLabelForCustomer(item.product, customerCategory),
+    },
+    availableStock: stock,
+    subtotal: price * item.quantity,
+  };
+}
+
+function normalizeWhatsappNumber(value: string) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function buildFrontendWhatsappUrl(message: string) {
+  const phone = normalizeWhatsappNumber(STORE_WHATSAPP_NUMBER);
+
+  if (!phone) return "";
+
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
+function buildFrontendCartMessage(params: {
+  items: Array<{
+    product: CatalogProduct;
+    quantity: number;
+    subtotal: number;
+  }>;
+  total: number;
+  notes: string;
+  storeSuffix: string;
+}) {
+  const lines = params.items.map((item) => {
+    const qty =
+      item.product.saleUnit === "KG"
+        ? `${item.quantity.toLocaleString("es-AR")} kg`
+        : `x${item.quantity.toLocaleString("es-AR")}`;
+
+    return `- ${item.product.name} ${qty} — ${formatMoney(item.subtotal)}`;
+  });
+
+  return [
+    "Hola! Quiero hacer este pedido:",
+    "",
+    `Lista: ${params.storeSuffix}`,
+    ...lines,
+    "",
+    `Total: ${formatMoney(params.total)}`,
+    params.notes.trim() ? "" : null,
+    params.notes.trim() ? `Notas: ${params.notes.trim()}` : null,
+  ]
+    .filter((line) => line !== null && line !== undefined)
+    .join("\n");
 }
 
 type ConfirmState = {
@@ -82,7 +225,7 @@ export default function TiendaCarritoPage() {
   const router = useRouter();
 
   const items = useCartStore((state) => state.items);
-  const total = useCartStore((state) => state.total());
+  const storeTotal = useCartStore((state) => state.total());
   const setQuantity = useCartStore((state) => state.setQuantity);
   const remove = useCartStore((state) => state.remove);
   const clear = useCartStore((state) => state.clear);
@@ -97,16 +240,34 @@ export default function TiendaCarritoPage() {
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   const storeSuffix = useMemo(() => {
-    if (customerCategory === "Mayorista") return "Mayorista";
-    if (customerCategory === "Cliente") return "Clientes";
-    return "Minorista";
+    return isWholesaleCategory(customerCategory)
+      ? "Mayorista / Local"
+      : "Minorista / Depósito";
   }, [customerCategory]);
 
   const priceLabel = useMemo(() => {
-    if (customerCategory === "Mayorista") return "Precio mayorista";
-    if (customerCategory === "Cliente") return "Precio cliente";
-    return "Precio público";
+    return isWholesaleCategory(customerCategory)
+      ? "Precio mayorista"
+      : "Precio minorista";
   }, [customerCategory]);
+
+  const cartItems = useMemo(() => {
+    return items.map((item) =>
+      adaptCartItemForCustomer(item, customerCategory),
+    );
+  }, [items, customerCategory]);
+
+  const total = useMemo(() => {
+    if (!authChecked) return storeTotal;
+    return cartItems.reduce((acc, item) => acc + item.subtotal, 0);
+  }, [authChecked, cartItems, storeTotal]);
+
+  const unavailableItems = useMemo(() => {
+    return cartItems.filter((item) => {
+      if (!item.product.canSell) return true;
+      return item.quantity > item.availableStock;
+    });
+  }, [cartItems]);
 
   useEffect(() => {
     let alive = true;
@@ -140,16 +301,49 @@ export default function TiendaCarritoPage() {
       return;
     }
 
+    if (unavailableItems.length > 0) {
+      const locationName = isWholesaleCategory(customerCategory)
+        ? "local mayorista"
+        : "depósito minorista";
+      toast.error(`Hay productos sin stock suficiente en ${locationName}`);
+      setError(
+        `Revisá el carrito: hay productos sin stock suficiente en ${locationName}.`,
+      );
+      return;
+    }
+
+    const whatsappMessage = buildFrontendCartMessage({
+      items: cartItems,
+      total,
+      notes,
+      storeSuffix,
+    });
+    const whatsappUrl = buildFrontendWhatsappUrl(whatsappMessage);
+
+    if (!whatsappUrl) {
+      const message =
+        "Falta configurar NEXT_PUBLIC_STORE_WHATSAPP_NUMBER en el frontend.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
+
+    // Primero abrimos WhatsApp, sin esperar al backend.
+    const whatsappWindow = window.open(whatsappUrl, "_blank");
+    if (!whatsappWindow) {
+      window.location.href = whatsappUrl;
+    }
+
     setSaving(true);
     setError("");
 
-    const toastId = toast.loading("Creando pedido...");
+    const toastId = toast.loading("Registrando pedido...");
 
     try {
-      const result = await shopApi.checkoutWhatsapp({
+      await shopApi.checkoutWhatsapp({
         paymentMethod: "TRANSFERENCIA",
         customerNotes: notes.trim(),
-        items: items.map((item) => ({
+        items: cartItems.map((item) => ({
           productId: item.product.id,
           quantity: item.product.saleUnit === "KG" ? undefined : item.quantity,
           quantityKg:
@@ -158,19 +352,10 @@ export default function TiendaCarritoPage() {
       });
 
       clear();
-
-      if (result.whatsappUrl) {
-        toast.success("Pedido creado. Abriendo WhatsApp...", { id: toastId });
-        window.location.href = result.whatsappUrl;
-        return;
-      }
-
-      const message =
-        "Pedido creado, pero falta configurar STORE_WHATSAPP_NUMBER en el backend.";
-      setError(message);
-      toast.error(message, { id: toastId });
+      toast.success("Pedido registrado en el sistema", { id: toastId });
+      return;
     } catch (err: unknown) {
-      const message = getErrorMessage(err, "No se pudo finalizar el pedido");
+      const message = getErrorMessage(err, "No se pudo registrar el pedido");
 
       if (
         message.toLowerCase().includes("token") ||
@@ -196,9 +381,20 @@ export default function TiendaCarritoPage() {
       return;
     }
 
+    if (unavailableItems.length > 0) {
+      const locationName = isWholesaleCategory(customerCategory)
+        ? "local mayorista"
+        : "depósito minorista";
+      toast.error(`Hay productos sin stock suficiente en ${locationName}`);
+      setError(
+        `Revisá el carrito: hay productos sin stock suficiente en ${locationName}.`,
+      );
+      return;
+    }
+
     setConfirmModal({
       title: "Finalizar pedido",
-      message: `¿Confirmás crear el pedido por ${formatMoney(total)} y abrir WhatsApp con el detalle?`,
+      message: `¿Confirmás abrir WhatsApp ahora con el pedido por ${formatMoney(total)}? El sistema lo registrará en segundo plano.`,
       confirmText: "Finalizar por WhatsApp",
       danger: false,
       onConfirm: checkout,
@@ -237,7 +433,20 @@ export default function TiendaCarritoPage() {
     isKg: boolean,
   ) {
     const step = isKg ? 0.1 : 1;
+    const item = cartItems.find(
+      (cartItem) => cartItem.product.id === productId,
+    );
+    const maxStock = item?.availableStock ?? 0;
     const nextQuantity = Number((currentQuantity + step).toFixed(2));
+
+    if (maxStock > 0 && nextQuantity > maxStock) {
+      toast.error(
+        `No hay más stock disponible (${item?.product.stockLabel ?? "sin stock"})`,
+      );
+      setQuantity(productId, maxStock);
+      return;
+    }
+
     setQuantity(productId, nextQuantity);
   }
 
@@ -254,7 +463,21 @@ export default function TiendaCarritoPage() {
       return;
     }
 
-    setQuantity(productId, parsed);
+    const item = cartItems.find(
+      (cartItem) => cartItem.product.id === productId,
+    );
+    const maxStock = item?.availableStock ?? 0;
+    const nextQuantity = isKg ? Number(parsed.toFixed(2)) : Math.trunc(parsed);
+
+    if (maxStock > 0 && nextQuantity > maxStock) {
+      toast.error(
+        `No hay más stock disponible (${item?.product.stockLabel ?? "sin stock"})`,
+      );
+      setQuantity(productId, maxStock);
+      return;
+    }
+
+    setQuantity(productId, nextQuantity);
   }
 
   function handleRemove(productId: string) {
@@ -591,6 +814,14 @@ export default function TiendaCarritoPage() {
         .row-unit-price strong {
           color: var(--text);
           font-weight: 900;
+        }
+
+        .row-stock-warning {
+          margin-top: 6px;
+          color: var(--red);
+          font-size: 12px;
+          line-height: 1.35;
+          font-weight: 850;
         }
 
         .qty-control {
@@ -1551,7 +1782,13 @@ export default function TiendaCarritoPage() {
               <MapPin size={14} />
               <span>
                 Retiro y atención en{" "}
-                <strong>Paso de los Andes 893, Córdoba</strong>
+                <strong>
+                  San Luis 1481, Barrio Observatorio, Córdoba Capital
+                </strong>{" "}
+                y{" "}
+                <strong>
+                  Paso de los Andes 893, Barrio Observatorio, Córdoba Capital
+                </strong>
               </span>
             </div>
           </div>
@@ -1607,7 +1844,7 @@ export default function TiendaCarritoPage() {
                   <span></span>
                 </div>
 
-                {items.map((item) => {
+                {cartItems.map((item) => {
                   const isKg = item.product.saleUnit === "KG";
 
                   return (
@@ -1671,7 +1908,7 @@ export default function TiendaCarritoPage() {
                         </div>
 
                         <div className="row-subtotal">
-                          {formatMoney(item.product.price * item.quantity)}
+                          {formatMoney(item.subtotal)}
                         </div>
 
                         <button
@@ -1694,14 +1931,14 @@ export default function TiendaCarritoPage() {
                 </div>
 
                 <div className="summary-list">
-                  {items.map((item) => (
+                  {cartItems.map((item) => (
                     <div className="summary-row" key={item.product.id}>
                       <span className="summary-name">
                         {item.product.name} × {item.quantity}
                       </span>
 
                       <span className="summary-price">
-                        {formatMoney(item.product.price * item.quantity)}
+                        {formatMoney(item.subtotal)}
                       </span>
                     </div>
                   ))}
@@ -1731,7 +1968,7 @@ export default function TiendaCarritoPage() {
 
                 <button
                   className="btn-checkout"
-                  disabled={saving}
+                  disabled={saving || unavailableItems.length > 0}
                   onClick={openCheckoutConfirm}
                 >
                   <MessageCircle size={18} />

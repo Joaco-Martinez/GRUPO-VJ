@@ -1,10 +1,14 @@
 import axios from "axios";
 import prisma from "../prisma";
 
-
 function numberOrZero(value: unknown) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function stringOrEmpty(value: unknown) {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
 }
 
 function formatFechaTicket(date: Date) {
@@ -42,16 +46,198 @@ function getMetodoPago(sale: any) {
   return sale.paymentMethod || "EFECTIVO";
 }
 
+function getSellerName(sale: any) {
+  return (
+    sale.user?.name ||
+    sale.seller?.name ||
+    sale.employee?.name ||
+    sale.createdBy?.name ||
+    sale.userName ||
+    ""
+  );
+}
+
+function getSellerEmail(sale: any) {
+  return (
+    sale.user?.email ||
+    sale.seller?.email ||
+    sale.employee?.email ||
+    sale.createdBy?.email ||
+    ""
+  );
+}
+
+function getClientPhone(client: any) {
+  return (
+    client?.telefono ||
+    client?.phone ||
+    client?.celular ||
+    client?.mobile ||
+    ""
+  );
+}
+
+function getShippingPayload(sale: any) {
+  const client = sale.client || {};
+
+  const addressStreet =
+    client.addressStreet ||
+    client.street ||
+    client.calle ||
+    sale.addressStreet ||
+    "";
+
+  const addressNumber =
+    client.addressNumber ||
+    client.number ||
+    client.numero ||
+    sale.addressNumber ||
+    "";
+
+  const addressFloor =
+    client.addressFloor ||
+    client.floor ||
+    client.piso ||
+    sale.addressFloor ||
+    "";
+
+  const addressApartment =
+    client.addressApartment ||
+    client.apartment ||
+    client.depto ||
+    sale.addressApartment ||
+    "";
+
+  const city =
+    client.city ||
+    client.locality ||
+    client.localidad ||
+    sale.city ||
+    sale.locality ||
+    "";
+
+  const province =
+    client.province ||
+    client.state ||
+    client.provincia ||
+    sale.province ||
+    sale.state ||
+    "";
+
+  const postalCode =
+    client.postalCode ||
+    client.zipCode ||
+    client.cp ||
+    sale.postalCode ||
+    sale.zipCode ||
+    "";
+
+  const fullAddress =
+    client.fullAddress ||
+    client.address ||
+    sale.fullAddress ||
+    sale.address ||
+    "";
+
+  const method =
+    sale.deliveryMethod ||
+    sale.shippingMethod ||
+    sale.delivery?.method ||
+    sale.shipping?.method ||
+    "";
+
+  const status =
+    sale.deliveryStatus ||
+    sale.shippingStatus ||
+    sale.delivery?.status ||
+    sale.shipping?.status ||
+    "";
+
+  const notes =
+    sale.deliveryNotes ||
+    sale.shippingNotes ||
+    sale.notes ||
+    sale.delivery?.notes ||
+    sale.shipping?.notes ||
+    "";
+
+  const receiverName =
+    sale.receiverName ||
+    sale.recipientName ||
+    sale.delivery?.receiverName ||
+    sale.shipping?.receiverName ||
+    getNombreCliente(client);
+
+  const receiverPhone =
+    sale.receiverPhone ||
+    sale.recipientPhone ||
+    sale.delivery?.receiverPhone ||
+    sale.shipping?.receiverPhone ||
+    getClientPhone(client);
+
+  const hasShippingData =
+    method ||
+    status ||
+    fullAddress ||
+    addressStreet ||
+    addressNumber ||
+    addressFloor ||
+    addressApartment ||
+    city ||
+    province ||
+    postalCode ||
+    notes ||
+    receiverName ||
+    receiverPhone;
+
+  if (!hasShippingData) return undefined;
+
+  return {
+    method: stringOrEmpty(method),
+    status: stringOrEmpty(status),
+    receiverName: stringOrEmpty(receiverName),
+    receiverPhone: stringOrEmpty(receiverPhone),
+    fullAddress: stringOrEmpty(fullAddress),
+    street: stringOrEmpty(addressStreet),
+    number: stringOrEmpty(addressNumber),
+    floor: stringOrEmpty(addressFloor),
+    apartment: stringOrEmpty(addressApartment),
+    city: stringOrEmpty(city),
+    province: stringOrEmpty(province),
+    postalCode: stringOrEmpty(postalCode),
+    notes: stringOrEmpty(notes),
+  };
+}
+
 function buildTicketPayload(sale: any) {
   const subtotal = numberOrZero(sale.subtotal);
   const total = numberOrZero(sale.total);
   const discount = subtotal > total ? subtotal - total : 0;
+
+  const sellerName = getSellerName(sale);
+  const sellerEmail = getSellerEmail(sale);
+  const shipping = getShippingPayload(sale);
 
   return {
     saleId: `TICKET-${String(sale.id).slice(0, 8).toUpperCase()}`,
     receiptType: "TICKET NO FISCAL",
     paymentMethod: getMetodoPago(sale),
     createdAt: formatFechaTicket(sale.createdAt ?? new Date()),
+
+    sellerName,
+    userName: sellerName,
+
+    seller: {
+      id: sale.user?.id || sale.userId || "",
+      name: sellerName,
+      email: sellerEmail,
+    },
+
+    user: {
+      id: sale.user?.id || sale.userId || "",
+      name: sellerName,
+      email: sellerEmail,
+    },
 
     business: {
       name: process.env.BUSINESS_NAME ?? "GRUPO VJ",
@@ -64,8 +250,21 @@ function buildTicketPayload(sale: any) {
     client: {
       name: getNombreCliente(sale.client),
       dni: sale.client?.dni ? String(sale.client.dni) : "",
-      phone: sale.client?.telefono ? String(sale.client.telefono) : "",
+      phone: getClientPhone(sale.client) ? String(getClientPhone(sale.client)) : "",
+
+      addressStreet: stringOrEmpty(sale.client?.addressStreet),
+      addressNumber: stringOrEmpty(sale.client?.addressNumber),
+      addressFloor: stringOrEmpty(sale.client?.addressFloor),
+      addressApartment: stringOrEmpty(sale.client?.addressApartment),
+      city: stringOrEmpty(sale.client?.city || sale.client?.locality),
+      province: stringOrEmpty(sale.client?.province || sale.client?.state),
+      postalCode: stringOrEmpty(sale.client?.postalCode || sale.client?.zipCode),
+      fullAddress: stringOrEmpty(sale.client?.fullAddress || sale.client?.address),
     },
+
+    shipping,
+
+    delivery: shipping,
 
     items: sale.items.map((item: any) => {
       const quantity = numberOrZero(item.quantity);
@@ -130,6 +329,13 @@ export const ticketService = {
     const sale = await prisma.sale.findUnique({
       where: { id: saleId },
       include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
         client: true,
         items: {
           include: {

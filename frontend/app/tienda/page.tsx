@@ -95,6 +95,99 @@ function isVisibleCatalogProduct(product: CatalogProduct) {
   );
 }
 
+function isWholesaleCategory(category: string | null | undefined) {
+  return (
+    String(category ?? "")
+      .trim()
+      .toLowerCase() === "mayorista"
+  );
+}
+
+function numValue(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pickFirstPositive(...values: unknown[]) {
+  for (const value of values) {
+    const n = numValue(value);
+    if (n > 0) return n;
+  }
+
+  return 0;
+}
+
+function getProductPriceForCustomer(
+  product: CatalogProduct,
+  customerCategory: string | null | undefined,
+) {
+  const p = product as CatalogProduct & Record<string, unknown>;
+  const isKg = product.saleUnit === "KG";
+
+  if (isWholesaleCategory(customerCategory)) {
+    return pickFirstPositive(
+      isKg ? p.wholesalePricePerKg : p.wholesalePrice,
+      p.wholesalePrice,
+      p.mayoristaPrice,
+      p.price,
+    );
+  }
+
+  return pickFirstPositive(
+    isKg ? p.pricePerKg : p.price,
+    p.price,
+    p.minoristaPrice,
+    p.retailPrice,
+  );
+}
+
+function getProductStockForCustomer(
+  product: CatalogProduct,
+  _customerCategory: string | null | undefined,
+) {
+  // El backend ya devuelve availableQuantity / availableKg calculado según la categoría:
+  // Mayorista => LOCAL, Minorista/Price => DEPÓSITO.
+  if (product.saleUnit === "KG") {
+    return numValue(product.availableKg);
+  }
+
+  return numValue(product.availableQuantity);
+}
+
+function getStockLabelForCustomer(
+  product: CatalogProduct,
+  customerCategory: string | null | undefined,
+) {
+  const stock = getProductStockForCustomer(product, customerCategory);
+  const storeName = isWholesaleCategory(customerCategory)
+    ? "local"
+    : "depósito";
+
+  if (stock <= 0) return `Sin stock en ${storeName}`;
+
+  if (product.saleUnit === "KG") {
+    return `${stock.toLocaleString("es-AR")} kg en ${storeName}`;
+  }
+
+  return `${stock.toLocaleString("es-AR")} en ${storeName}`;
+}
+
+function adaptProductForCustomer(
+  product: CatalogProduct,
+  customerCategory: string | null | undefined,
+): CatalogProduct {
+  const stock = getProductStockForCustomer(product, customerCategory);
+  const price = getProductPriceForCustomer(product, customerCategory);
+  const canSell = stock > 0 && price > 0;
+
+  return {
+    ...product,
+    price,
+    canSell,
+    stockLabel: getStockLabelForCustomer(product, customerCategory),
+  };
+}
+
 function normalizeSortText(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -104,8 +197,13 @@ function normalizeSortText(value: unknown) {
 function sortCatalogProducts(
   list: CatalogProduct[],
   sortMode: CatalogSortMode,
+  customerCategory?: string | null,
 ) {
   return [...list].sort((a, b) => {
+    if (a.canSell !== b.canSell) {
+      return a.canSell ? -1 : 1;
+    }
+
     if (sortMode === "name-asc") {
       return normalizeSortText(a.name).localeCompare(
         normalizeSortText(b.name),
@@ -123,11 +221,17 @@ function sortCatalogProducts(
     }
 
     if (sortMode === "price-asc") {
-      return Number(a.price ?? 0) - Number(b.price ?? 0);
+      return (
+        getProductPriceForCustomer(a, customerCategory) -
+        getProductPriceForCustomer(b, customerCategory)
+      );
     }
 
     if (sortMode === "price-desc") {
-      return Number(b.price ?? 0) - Number(a.price ?? 0);
+      return (
+        getProductPriceForCustomer(b, customerCategory) -
+        getProductPriceForCustomer(a, customerCategory)
+      );
     }
 
     if (sortMode === "category-asc") {
@@ -209,15 +313,15 @@ export default function TiendaPage() {
   const add = useCartStore((state) => state.add);
 
   const storeSuffix = useMemo(() => {
-    if (customerCategory === "Mayorista") return "Mayorista";
-    if (customerCategory === "Cliente") return "Cliente";
-    return "Minorista";
+    return isWholesaleCategory(customerCategory)
+      ? "Mayorista / Local"
+      : "Minorista / Depósito";
   }, [customerCategory]);
 
   const priceLabel = useMemo(() => {
-    if (customerCategory === "Mayorista") return "Precio mayorista";
-    if (customerCategory === "Cliente") return "Precio cliente";
-    return "Precio minorista";
+    return isWholesaleCategory(customerCategory)
+      ? "Precio mayorista"
+      : "Precio minorista";
   }, [customerCategory]);
 
   const isLoggedIn = authChecked && Boolean(authUser);
@@ -285,11 +389,17 @@ export default function TiendaPage() {
       .then((result) => {
         if (!alive) return;
 
+        const resultCustomerCategory =
+          result.customer?.category ?? authUser?.client?.category ?? null;
+
         const visibleProducts = sortCatalogProducts(
-          (result.products ?? result.data ?? []).filter(
-            isVisibleCatalogProduct,
-          ),
+          (result.products ?? result.data ?? [])
+            .filter(isVisibleCatalogProduct)
+            .map((product) =>
+              adaptProductForCustomer(product, resultCustomerCategory),
+            ),
           sortMode,
+          resultCustomerCategory,
         );
 
         const responseTotal =
@@ -303,9 +413,7 @@ export default function TiendaPage() {
         setProducts(visibleProducts);
         setTotalProducts(Number(responseTotal ?? visibleProducts.length));
         setTotalPages(Math.max(1, Number(responseTotalPages || 1)));
-        setCustomerCategory(
-          result.customer?.category ?? authUser?.client?.category ?? null,
-        );
+        setCustomerCategory(resultCustomerCategory);
         setError("");
       })
       .catch((err: unknown) => {
@@ -373,12 +481,20 @@ export default function TiendaPage() {
       return;
     }
 
-    if (!product.canSell) {
-      toast.error("Este producto no tiene disponibilidad");
+    const productForCustomer = adaptProductForCustomer(
+      product,
+      customerCategory,
+    );
+
+    if (!productForCustomer.canSell) {
+      const locationName = isWholesaleCategory(customerCategory)
+        ? "local mayorista"
+        : "depósito minorista";
+      toast.error(`Este producto no tiene stock disponible en ${locationName}`);
       return;
     }
 
-    add(product, 1);
+    add(productForCustomer, 1);
     toast.success("Producto agregado al carrito");
   };
 
@@ -1633,12 +1749,18 @@ export default function TiendaPage() {
         <div className="location-bar">
           <div className="location-inner">
             <div className="location-left">
-              <MapPin size={14} />
-              <span>
-                Retiro y atención en{" "}
-                <strong>Paso de los Andes 893, Córdoba</strong>
-              </span>
-            </div>
+  <MapPin size={14} />
+  <span>
+    Retiro y atención en{" "}
+    <strong>
+      San Luis 1481, Barrio Observatorio, Córdoba Capital
+    </strong>{" "}
+    y{" "}
+    <strong>
+      Paso de los Andes 893, Barrio Observatorio, Córdoba Capital
+    </strong>
+  </span>
+</div>
 
             <div className="location-right">
               <Store size={14} />

@@ -190,6 +190,29 @@ type AfipInvoiceResponse = {
   };
 };
 
+type PendingAfipSaleNotification = {
+  id: string;
+  total?: number | string | null;
+  status?: string | null;
+  invoiceStatus?: string | null;
+  afipLastError?: string | null;
+  nextRetryAt?: string | null;
+  retryCount?: number | null;
+  createdAt?: string | null;
+  client?: {
+    nombre?: string | null;
+    apellido?: string | null;
+  } | null;
+};
+
+type PendingAfipNotification = {
+  ok?: boolean;
+  hasPendingAfip: boolean;
+  count: number;
+  message?: string;
+  sales?: PendingAfipSaleNotification[];
+};
+
 type CreditNoteResponse = {
   message?: string;
   notaCredito?: {
@@ -735,6 +758,10 @@ export default function VentasPage() {
   const [remitoLoadingId, setRemitoLoadingId] = useState<string | null>(null);
   const [openingRemitoId, setOpeningRemitoId] = useState<string | null>(null);
 
+  const [pendingAfipNotification, setPendingAfipNotification] =
+    useState<PendingAfipNotification | null>(null);
+  const [checkingPendingAfip, setCheckingPendingAfip] = useState(false);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -796,10 +823,151 @@ export default function VentasPage() {
     }
   };
 
+  const openFirstPendingAfipSale = async (saleId?: string | null) => {
+    toast.dismiss('pending-afip-notification');
+
+    if (!saleId) {
+      toast.error('No encontré la venta pendiente de AFIP');
+      return;
+    }
+
+    setStatus('');
+    setSearch(saleId.slice(-8));
+    setCurrentPage(1);
+
+    try {
+      const response = await api.get(`/sales/${saleId}`);
+      const sale = response.data?.sale ?? response.data?.content ?? response.data;
+
+      if (sale?.id) {
+        setDetail(sale as Sale);
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('No pude abrir el detalle. Te dejé filtrada la venta pendiente.');
+    } finally {
+      void load();
+    }
+  };
+
+  const loadPendingAfipNotification = async (showToast = false) => {
+    try {
+      setCheckingPendingAfip(true);
+
+      const response = await api.get('/afip/pending-afip');
+      const data = response.data as PendingAfipNotification;
+
+      setPendingAfipNotification(data);
+
+      if (data?.hasPendingAfip && data.count > 0) {
+        const firstSale = data.sales?.[0] ?? null;
+
+        toast.custom(
+          () => (
+            <div
+              style={{
+                width: 'min(420px, calc(100vw - 28px))',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                borderRadius: 18,
+                background: 'var(--surface)',
+                boxShadow: '0 18px 45px rgba(15, 23, 42, 0.18)',
+                padding: 14,
+                display: 'grid',
+                gap: 10,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 12,
+                    background: 'rgba(245, 158, 11, 0.14)',
+                    color: 'var(--warn)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle size={18} />
+                </span>
+
+                <div style={{ minWidth: 0, display: 'grid', gap: 3 }}>
+                  <b style={{ color: 'var(--text)', fontSize: 14 }}>
+                    Ventas pendientes de AFIP
+                  </b>
+
+                  <small style={{ color: 'var(--text2)', lineHeight: 1.4 }}>
+                    {data.message ||
+                      `Hay ${data.count} venta${data.count === 1 ? '' : 's'} pendiente${data.count === 1 ? '' : 's'} de facturar.`}
+                  </small>
+
+                  {firstSale && (
+                    <small style={{ color: 'var(--text3)', fontFamily: 'var(--mono)' }}>
+                      Primera: #{firstSale.id.slice(-8)}
+                    </small>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => toast.dismiss('pending-afip-notification')}
+                >
+                  Cerrar
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => void openFirstPendingAfipSale(firstSale?.id)}
+                >
+                  Ver para facturar
+                </button>
+              </div>
+            </div>
+          ),
+          {
+            id: 'pending-afip-notification',
+            duration: 12000,
+          }
+        );
+      } else {
+        toast.dismiss('pending-afip-notification');
+
+        if (showToast) {
+          toast.success('No hay ventas pendientes de AFIP');
+        }
+      }
+    } catch (error) {
+      console.error(error);
+
+      if (showToast) {
+        toast.error(getErrorMessage(error, 'No se pudo consultar ventas pendientes de AFIP'));
+      }
+    } finally {
+      setCheckingPendingAfip(false);
+    }
+  };
+
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, debouncedSearch, status]);
+
+
+  useEffect(() => {
+    void loadPendingAfipNotification();
+
+    const interval = window.setInterval(() => {
+      void loadPendingAfipNotification();
+    }, 60000);
+
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     if (serverPaginated) return sales;
@@ -867,6 +1035,13 @@ export default function VentasPage() {
     serverStats?.cancelledCount,
     sales.filter((s) => s.status === 'CANCELLED').length
   );
+
+  const firstPendingAfipSale = pendingAfipNotification?.sales?.[0] ?? null;
+  const firstPendingAfipClient = firstPendingAfipSale?.client
+    ? [firstPendingAfipSale.client.nombre, firstPendingAfipSale.client.apellido]
+        .filter(Boolean)
+        .join(' ')
+    : '';
 
   const confirmAction = async () => {
     if (!confirmModal) return;
@@ -1801,7 +1976,14 @@ export default function VentasPage() {
       title="Ventas"
       subtitle="Historial, pagos y comprobantes"
       actions={
-        <button className="btn btn-secondary btn-sm" onClick={() => load(true)} disabled={loading}>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => {
+            void load(true);
+            void loadPendingAfipNotification(true);
+          }}
+          disabled={loading || checkingPendingAfip}
+        >
           Actualizar
         </button>
       }
@@ -1811,7 +1993,7 @@ export default function VentasPage() {
           className="sales-stats-grid"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
             gap: 12,
             marginBottom: 18,
           }}
@@ -1853,6 +2035,59 @@ export default function VentasPage() {
               {fmtMoney(debt)}
             </div>
             <div className="stat-label">Deuda real</div>
+          </div>
+        </div>
+      )}
+
+      {pendingAfipNotification?.hasPendingAfip && (
+        <div className="pending-afip-alert">
+          <div className="pending-afip-alert-icon">
+            <AlertTriangle size={22} />
+          </div>
+
+          <div className="pending-afip-alert-main">
+            <div className="pending-afip-alert-title-row">
+              <div>
+                <small>Atención fiscal</small>
+                <b>Ventas pendientes de AFIP</b>
+              </div>
+
+              <span className="pending-afip-alert-count">
+                {pendingAfipNotification.count}
+              </span>
+            </div>
+
+            <p>
+              {pendingAfipNotification.message ||
+                `Hay ${pendingAfipNotification.count} venta${pendingAfipNotification.count === 1 ? '' : 's'} pendiente${pendingAfipNotification.count === 1 ? '' : 's'} de facturar.`}
+            </p>
+
+            {firstPendingAfipSale?.id && (
+              <div className="pending-afip-alert-meta">
+                <span>#{firstPendingAfipSale.id.slice(-8)}</span>
+                <span>{firstPendingAfipClient || 'Sin cliente'}</span>
+                <span>{fmtMoney(num(firstPendingAfipSale.total))}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="pending-afip-alert-actions">
+            <button
+              className="btn btn-primary btn-sm pending-afip-review-button"
+              onClick={() => void openFirstPendingAfipSale(firstPendingAfipSale?.id)}
+            >
+              <ReceiptText size={14} />
+              Revisar venta
+            </button>
+
+            <button
+              className="btn btn-secondary btn-sm"
+              disabled={checkingPendingAfip}
+              onClick={() => loadPendingAfipNotification(true)}
+            >
+              {checkingPendingAfip ? <Loader2 size={14} className="animate-spin" /> : null}
+              Actualizar aviso
+            </button>
           </div>
         </div>
       )}
@@ -3600,6 +3835,401 @@ export default function VentasPage() {
           overflow-y: auto;
         }
 
+        :global(html),
+        :global(body) {
+          overflow-x: hidden;
+        }
+
+        .sales-stats-grid {
+          width: 100% !important;
+          max-width: 100% !important;
+          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+          box-sizing: border-box;
+        }
+
+        .sales-stats-grid .stat-card {
+          min-width: 0 !important;
+          width: auto !important;
+          max-width: 100% !important;
+          box-sizing: border-box;
+          padding: 16px 18px !important;
+        }
+
+        .sales-stats-grid .stat-value {
+          font-size: clamp(20px, 2.3vw, 30px) !important;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .sales-card,
+        .sales-filters,
+        .pending-afip-alert {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
+        }
+
+        .sales-desktop-table {
+          width: 100%;
+          max-width: 100%;
+          overflow-x: auto;
+          overflow-y: hidden;
+        }
+
+        .sales-desktop-table table {
+          width: 100%;
+          min-width: 0;
+          table-layout: fixed;
+          border-collapse: collapse;
+        }
+
+        .sales-desktop-table th,
+        .sales-desktop-table td {
+          padding: 10px 8px;
+          font-size: 12px;
+          vertical-align: middle;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .sales-desktop-table th {
+          font-size: 10px;
+          letter-spacing: 0.12em;
+          white-space: nowrap;
+        }
+
+        .sales-desktop-table th:nth-child(1),
+        .sales-desktop-table td:nth-child(1) {
+          width: 8%;
+        }
+
+        .sales-desktop-table th:nth-child(2),
+        .sales-desktop-table td:nth-child(2) {
+          width: 9%;
+        }
+
+        .sales-desktop-table th:nth-child(3),
+        .sales-desktop-table td:nth-child(3) {
+          width: 13%;
+        }
+
+        .sales-desktop-table th:nth-child(4),
+        .sales-desktop-table td:nth-child(4) {
+          width: 7%;
+        }
+
+        .sales-desktop-table th:nth-child(5),
+        .sales-desktop-table td:nth-child(5) {
+          width: 10%;
+        }
+
+        .sales-desktop-table th:nth-child(6),
+        .sales-desktop-table td:nth-child(6) {
+          width: 9%;
+        }
+
+        .sales-desktop-table th:nth-child(7),
+        .sales-desktop-table td:nth-child(7) {
+          width: 9%;
+        }
+
+        .sales-desktop-table th:nth-child(8),
+        .sales-desktop-table td:nth-child(8) {
+          width: 6%;
+        }
+
+        .sales-desktop-table th:nth-child(9),
+        .sales-desktop-table td:nth-child(9) {
+          width: 11%;
+        }
+
+        .sales-desktop-table th:nth-child(10),
+        .sales-desktop-table td:nth-child(10) {
+          width: 9%;
+        }
+
+        .sales-desktop-table th:nth-child(11),
+        .sales-desktop-table td:nth-child(11) {
+          width: 9%;
+        }
+
+        .sales-desktop-table td:nth-child(3) {
+          white-space: normal;
+          line-height: 1.35;
+          overflow: hidden;
+        }
+
+        .sales-desktop-table td:nth-child(4),
+        .sales-desktop-table td:nth-child(5),
+        .sales-desktop-table td:nth-child(6),
+        .sales-desktop-table td:nth-child(7),
+        .sales-desktop-table td:nth-child(8),
+        .sales-desktop-table td:nth-child(10) {
+          white-space: nowrap;
+        }
+
+        .sales-desktop-table td:nth-child(9) small {
+          display: block;
+          white-space: normal;
+          line-height: 1.25;
+        }
+
+        .sales-desktop-table .badge {
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .sales-row-actions-button {
+          width: 100%;
+          min-width: 0 !important;
+          justify-content: center;
+          gap: 5px;
+          padding-inline: 8px !important;
+          font-size: 12px;
+        }
+
+        @media (max-width: 1280px) {
+          .sales-desktop-table th,
+          .sales-desktop-table td {
+            padding-left: 6px;
+            padding-right: 6px;
+            font-size: 11.5px;
+          }
+
+          .sales-desktop-table th {
+            font-size: 9px;
+            letter-spacing: 0.1em;
+          }
+
+          .sales-desktop-table th:nth-child(1),
+          .sales-desktop-table td:nth-child(1) {
+            width: 8%;
+          }
+
+          .sales-desktop-table th:nth-child(2),
+          .sales-desktop-table td:nth-child(2) {
+            width: 9%;
+          }
+
+          .sales-desktop-table th:nth-child(3),
+          .sales-desktop-table td:nth-child(3) {
+            width: 14%;
+          }
+
+          .sales-desktop-table th:nth-child(4),
+          .sales-desktop-table td:nth-child(4) {
+            width: 7%;
+          }
+
+          .sales-desktop-table th:nth-child(5),
+          .sales-desktop-table td:nth-child(5) {
+            width: 10%;
+          }
+
+          .sales-desktop-table th:nth-child(6),
+          .sales-desktop-table td:nth-child(6) {
+            width: 9%;
+          }
+
+          .sales-desktop-table th:nth-child(7),
+          .sales-desktop-table td:nth-child(7) {
+            width: 9%;
+          }
+
+          .sales-desktop-table th:nth-child(8),
+          .sales-desktop-table td:nth-child(8) {
+            width: 5%;
+          }
+
+          .sales-desktop-table th:nth-child(9),
+          .sales-desktop-table td:nth-child(9) {
+            width: 11%;
+          }
+
+          .sales-desktop-table th:nth-child(10),
+          .sales-desktop-table td:nth-child(10) {
+            width: 9%;
+          }
+
+          .sales-desktop-table th:nth-child(11),
+          .sales-desktop-table td:nth-child(11) {
+            width: 9%;
+          }
+
+          .sales-row-actions-button {
+            font-size: 11px;
+            padding-inline: 6px !important;
+          }
+        }
+
+        @media (min-width: 1600px) {
+          .sales-stats-grid {
+            grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 1280px) {
+          .sales-stats-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+          }
+
+          .sales-stats-grid .stat-card {
+            padding: 14px 16px !important;
+          }
+
+          .sales-stats-grid .stat-value {
+            font-size: 24px !important;
+          }
+        }
+
+        @media (max-width: 980px) {
+          .sales-stats-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
+        }
+
+        .pending-afip-alert {
+          position: relative;
+          overflow: hidden;
+          border: 1px solid rgba(245, 158, 11, 0.28);
+          background:
+            linear-gradient(135deg, rgba(245, 158, 11, 0.14), rgba(245, 158, 11, 0.04) 42%, var(--surface) 100%);
+          border-radius: 22px;
+          padding: 16px;
+          margin-bottom: 18px;
+          display: grid;
+          grid-template-columns: 52px minmax(0, 1fr);
+          gap: 14px;
+          align-items: center;
+          width: 100%;
+          max-width: 100%;
+          box-sizing: border-box;
+          box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+        }
+
+        .pending-afip-alert::before {
+          content: '';
+          position: absolute;
+          inset: 0 auto 0 0;
+          width: 5px;
+          background: var(--warn);
+        }
+
+        .pending-afip-alert-icon {
+          width: 52px;
+          height: 52px;
+          border-radius: 17px;
+          background: rgba(245, 158, 11, 0.16);
+          color: var(--warn);
+          display: grid;
+          place-items: center;
+          box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.22);
+        }
+
+        .pending-afip-alert-main {
+          min-width: 0;
+          display: grid;
+          gap: 8px;
+        }
+
+        .pending-afip-alert-title-row {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .pending-afip-alert-title-row > div {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
+        }
+
+        .pending-afip-alert-title-row small {
+          color: var(--warn);
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+
+        .pending-afip-alert-title-row b {
+          color: var(--text);
+          font-size: 17px;
+          line-height: 1.15;
+        }
+
+        .pending-afip-alert-count {
+          min-width: 32px;
+          height: 32px;
+          border-radius: 999px;
+          background: var(--warn);
+          color: white;
+          display: grid;
+          place-items: center;
+          font-family: var(--mono);
+          font-size: 14px;
+          font-weight: 950;
+          box-shadow: 0 10px 22px rgba(245, 158, 11, 0.22);
+        }
+
+        .pending-afip-alert-main p {
+          margin: 0;
+          color: var(--text2);
+          font-size: 13px;
+          line-height: 1.45;
+          max-width: 760px;
+        }
+
+        .pending-afip-alert-meta {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .pending-afip-alert-meta span {
+          border: 1px solid rgba(245, 158, 11, 0.22);
+          background: rgba(255, 255, 255, 0.48);
+          color: var(--text2);
+          border-radius: 999px;
+          padding: 6px 9px;
+          font-size: 11px;
+          font-weight: 850;
+          line-height: 1;
+        }
+
+        .pending-afip-alert-meta span:first-child {
+          color: var(--text);
+          font-family: var(--mono);
+          font-weight: 950;
+        }
+
+        .pending-afip-alert-actions {
+          grid-column: 2;
+          display: flex;
+          gap: 8px;
+          min-width: 0;
+          justify-items: stretch;
+          flex-wrap: wrap;
+          justify-content: flex-start;
+        }
+
+        .pending-afip-alert-actions button {
+          width: auto;
+          min-width: 138px;
+          justify-content: center;
+          white-space: nowrap;
+        }
+
+        .pending-afip-review-button {
+          box-shadow: 0 12px 24px rgba(16, 185, 129, 0.18);
+        }
+
         .sales-pagination {
           border-top: 1px solid var(--border);
           padding: 14px;
@@ -4010,6 +4640,37 @@ export default function VentasPage() {
           gap: 3px;
         }
 
+        @media (max-width: 1180px) {
+          .pending-afip-alert {
+            grid-template-columns: 44px minmax(0, 1fr);
+            padding: 13px 14px;
+          }
+
+          .pending-afip-alert-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 15px;
+          }
+
+          .pending-afip-alert-actions {
+            grid-column: 1 / -1;
+            width: 100%;
+          }
+
+          .pending-afip-alert-actions button {
+            flex: 1 1 180px;
+            min-width: 0;
+          }
+
+          .pending-afip-alert-title-row b {
+            font-size: 15px;
+          }
+
+          .pending-afip-alert-main p {
+            max-width: none;
+          }
+        }
+
         @media (max-width: 1100px) {
           .sales-edit-items-body {
             display: flex;
@@ -4047,6 +4708,62 @@ export default function VentasPage() {
           .modal {
             margin-top: 0;
             max-height: calc(100dvh - 24px);
+          }
+
+          .pending-afip-alert {
+            grid-template-columns: 42px minmax(0, 1fr);
+            align-items: flex-start;
+            padding: 12px;
+            margin-bottom: 14px;
+            border-radius: 17px;
+            gap: 10px;
+          }
+
+          .pending-afip-alert-icon {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+          }
+
+          .pending-afip-alert-title-row {
+            gap: 8px;
+          }
+
+          .pending-afip-alert-title-row b {
+            font-size: 14px;
+          }
+
+          .pending-afip-alert-count {
+            width: 28px;
+            min-width: 28px;
+            height: 28px;
+            font-size: 12px;
+          }
+
+          .pending-afip-alert-main p {
+            font-size: 12px;
+          }
+
+          .pending-afip-alert-meta {
+            gap: 6px;
+          }
+
+          .pending-afip-alert-meta span {
+            padding: 5px 7px;
+            font-size: 10px;
+          }
+
+          .pending-afip-alert-actions {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            min-width: 0;
+            width: 100%;
+          }
+
+          .pending-afip-alert-actions button {
+            width: 100%;
+            justify-content: center;
           }
 
           .sales-pagination {

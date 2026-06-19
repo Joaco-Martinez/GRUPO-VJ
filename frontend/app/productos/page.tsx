@@ -92,6 +92,9 @@ const EMPTY_PROFIT_CALC = {
 
 const PROFIT_CALCULATOR_STORAGE_KEY = 'grupo-vj-products-profit-calculator';
 const SKU_SCANNER_ELEMENT_ID = 'grupo-vj-sku-scanner';
+const MAX_PRODUCT_IMAGE_SIZE_MB = 5;
+const MAX_PRODUCT_IMAGE_SIZE_BYTES = MAX_PRODUCT_IMAGE_SIZE_MB * 1024 * 1024;
+const PRODUCT_IMAGE_ACCEPT = 'image/*,.heic,.heif';
 
 function num(value: unknown, fallback = 0): number {
   if (value === null || value === undefined || value === '') return fallback;
@@ -298,6 +301,16 @@ function stockLabel(product: Product, stock: number) {
   return `${stock}${product.saleUnit === 'KG' ? ' kg' : ''}`;
 }
 
+function isValidImageFile(file: File): boolean {
+  const mime = file.type?.toLowerCase() ?? '';
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+
+  return (
+    mime.startsWith('image/') ||
+    ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(extension)
+  );
+}
+
 
 export default function ProductosPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -322,6 +335,8 @@ export default function ProductosPage() {
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
   const productModalBeforeScannerRef = useRef<Modal>(null);
+  const galleryImageInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraImageInputRef = useRef<HTMLInputElement | null>(null);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
@@ -411,6 +426,14 @@ export default function ProductosPage() {
   }, [profitCalc]);
 
   useEffect(() => {
+    return () => {
+      if (imagePreview?.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+
+  useEffect(() => {
     if (productFormStep === 'componentes' && (form.isService === 'true' || form.type !== 'COMPUESTO')) {
       setProductFormStep('basico');
     }
@@ -468,8 +491,15 @@ export default function ProductosPage() {
   const formWholesalePercent = getPriceProfitPercent(formWholesalePrice, formCost);
 
   const resetImage = () => {
+    if (imagePreview?.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreview);
+    }
+
     setImageFile(null);
     setImagePreview('');
+
+    if (galleryImageInputRef.current) galleryImageInputRef.current.value = '';
+    if (cameraImageInputRef.current) cameraImageInputRef.current.value = '';
   };
 
   const openCreate = () => {
@@ -529,14 +559,28 @@ export default function ProductosPage() {
   };
 
   const handleImageChange = (file?: File | null) => {
-    if (!file) {
-      resetImage();
+    if (!file) return;
+
+    if (file.size <= 0) {
+      showToast(
+        'error',
+        'No se pudo leer la imagen. Si viene de Google Fotos, abrila primero para que se descargue y volvé a seleccionarla.'
+      );
       return;
     }
 
-    if (!file.type.startsWith('image/')) {
-      showToast('error', 'El archivo debe ser una imagen');
+    if (!isValidImageFile(file)) {
+      showToast('error', 'El archivo debe ser una imagen JPG, PNG, WEBP, HEIC o HEIF.');
       return;
+    }
+
+    if (file.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
+      showToast('error', `La imagen no puede pesar más de ${MAX_PRODUCT_IMAGE_SIZE_MB}MB.`);
+      return;
+    }
+
+    if (imagePreview?.startsWith('blob:')) {
+      URL.revokeObjectURL(imagePreview);
     }
 
     setImageFile(file);
@@ -620,11 +664,7 @@ export default function ProductosPage() {
       if (modal === 'product-create') {
         const fd = buildProductFormData();
 
-        await api.post('/products', fd, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
+        await api.post('/products', fd);
       }
 
       if (modal === 'product-edit' && editing) {
@@ -640,11 +680,7 @@ export default function ProductosPage() {
           const fd = new FormData();
           fd.append('image', imageFile);
 
-          await api.patch(`/products/${editing.id}/image`, fd, {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-          });
+          await api.patch(`/products/${editing.id}/image`, fd);
         }
       }
 
@@ -1769,36 +1805,61 @@ export default function ProductosPage() {
               <div className="form-group">
                 <label className="form-label">Imagen del producto</label>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 12,
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <label
-                    className="btn btn-secondary btn-sm"
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <ImagePlus size={14} />
-                    Seleccionar imagen
+                <div className="products-image-uploader">
+                  <div className="products-image-actions">
+                    <label className="btn btn-secondary btn-sm products-image-btn">
+                      <ImagePlus size={14} />
+                      Subir desde galería
 
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp"
-                      hidden
-                      onChange={(e) => handleImageChange(e.target.files?.[0])}
-                    />
-                  </label>
+                      <input
+                        ref={galleryImageInputRef}
+                        type="file"
+                        accept={PRODUCT_IMAGE_ACCEPT}
+                        hidden
+                        onChange={(e) => {
+                          handleImageChange(e.currentTarget.files?.[0]);
+                          e.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <label className="btn btn-secondary btn-sm products-image-btn">
+                      <ImagePlus size={14} />
+                      Sacar foto
+
+                      <input
+                        ref={cameraImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        hidden
+                        onChange={(e) => {
+                          handleImageChange(e.currentTarget.files?.[0]);
+                          e.currentTarget.value = '';
+                        }}
+                      />
+                    </label>
+
+                    {(imageFile || imagePreview) && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm products-image-clear"
+                        onClick={resetImage}
+                      >
+                        <X size={14} />
+                        Quitar
+                      </button>
+                    )}
+                  </div>
 
                   {imageFile ? (
-                    <span style={{ color: 'var(--text2)', fontSize: 12 }}>
+                    <span className="products-image-helper products-image-filename">
                       {imageFile.name}
                     </span>
                   ) : (
-                    <span style={{ color: 'var(--text3)', fontSize: 12 }}>
-                      JPG, PNG o WEBP. Máximo 5MB.
+                    <span className="products-image-helper">
+                      JPG, PNG, WEBP, HEIC o HEIF. Máximo {MAX_PRODUCT_IMAGE_SIZE_MB}MB.
+                      Si usás Google Fotos, abrí la imagen primero para que se descargue.
                     </span>
                   )}
                 </div>
@@ -2524,6 +2585,38 @@ export default function ProductosPage() {
           color: var(--text3);
           font-size: 11px;
           line-height: 1.35;
+        }
+
+        .products-image-uploader {
+          display: grid;
+          gap: 8px;
+          min-width: 0;
+        }
+
+        .products-image-actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .products-image-btn,
+        .products-image-clear {
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .products-image-helper {
+          display: block;
+          color: var(--text3);
+          font-size: 12px;
+          line-height: 1.4;
+        }
+
+        .products-image-filename {
+          color: var(--text2);
+          font-weight: 800;
+          overflow-wrap: anywhere;
         }
 
         .products-product-modal-body {
@@ -3617,6 +3710,18 @@ export default function ProductosPage() {
 
           .products-form-section textarea {
             min-height: 78px !important;
+          }
+
+          .products-image-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .products-image-btn,
+          .products-image-clear {
+            width: 100%;
+            justify-content: center;
+            min-height: 38px;
           }
 
           .products-product-modal-footer {

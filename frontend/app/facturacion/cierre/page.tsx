@@ -3,12 +3,13 @@ import { useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { Printer } from 'lucide-react';
+import { firstDayOfCurrentMonthAR, todayInputAR } from '@/lib/dateAR';
 
 export default function CierreCajaPage() {
   const [mode, setMode] = useState<'day' | 'range'>('day');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayInputAR());
+  const [from, setFrom] = useState(firstDayOfCurrentMonthAR);
+  const [to, setTo] = useState(todayInputAR());
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 

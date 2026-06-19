@@ -1,3 +1,4 @@
+import "../config/timezone";
 // src/scripts/renovarTokenAfip.ts
 import "dotenv/config";
 import prisma from "../prisma";

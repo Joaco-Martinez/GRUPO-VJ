@@ -3,6 +3,7 @@ import { productService } from "../services/product.service";
 import multer from "multer";
 import path from "path";
 import { getParamAsString } from "../utils/params";
+import { optionalRangeAR } from "../utils/dateAR";
 
 const upload = multer({
   dest: "uploads/",
@@ -413,15 +414,16 @@ export const productController = {
 
   async getMovements(req: Request, res: Response, next: NextFunction) {
     try {
+      const { start: fromDate, end: toDate } = optionalRangeAR(
+        req.query.fromDate as string | undefined,
+        req.query.toDate as string | undefined
+      );
+
       const movements = await productService.getMovements({
         productId: req.query.productId as string | undefined,
         userId: req.query.userId as string | undefined,
-        fromDate: req.query.fromDate
-          ? new Date(req.query.fromDate as string)
-          : undefined,
-        toDate: req.query.toDate
-          ? new Date(req.query.toDate as string)
-          : undefined,
+        fromDate,
+        toDate,
       });
 
       res.json(movements);

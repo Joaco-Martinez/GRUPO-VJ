@@ -4,15 +4,13 @@ import ExcelJS from "exceljs";
 import PDFDocument from "pdfkit";
 import { Response } from "express";
 import {
-  startOfMonth,
-  endOfMonth,
-  startOfWeek,
-  endOfWeek,
-  startOfYear,
-  endOfYear,
-  startOfDay,
-  endOfDay,
-} from "date-fns";
+  formatDateAR,
+  startOfDayAR,
+  endOfDayAR,
+  monthRangeAR,
+  yearRangeAR,
+  weekRangeAR,
+} from "../utils/dateAR";
 function fmtKgAR(n: number) {
   return n.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
@@ -165,8 +163,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
 },
   // --- ESTADÍSTICAS ---
   async getIncomeByMonth(year: number, month: number) {
-    const start = startOfMonth(new Date(year, month - 1));
-    const end = endOfMonth(new Date(year, month - 1));
+    const { start, end } = monthRangeAR(year, month);
     return prisma.finance.aggregate({
       where: { type: "INGRESO", date: { gte: start, lte: end } },
       _sum: { amount: true },
@@ -174,8 +171,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
   },
 
   async getIncomeByYear(year: number) {
-    const start = startOfYear(new Date(year, 0));
-    const end = endOfYear(new Date(year, 0));
+    const { start, end } = yearRangeAR(year);
     return prisma.finance.aggregate({
       where: { type: "INGRESO", date: { gte: start, lte: end } },
       _sum: { amount: true },
@@ -183,10 +179,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
   },
 
   async getIncomeByWeek(year: number, month: number, day: number) {
-    const start = startOfWeek(new Date(year, month - 1, day), {
-      weekStartsOn: 1,
-    });
-    const end = endOfWeek(new Date(year, month - 1, day), { weekStartsOn: 1 });
+    const { start, end } = weekRangeAR(year, month, day);
     return prisma.finance.aggregate({
       where: { type: "INGRESO", date: { gte: start, lte: end } },
       _sum: { amount: true },
@@ -288,7 +281,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
       by: ["category"],
       where: {
         type: "INGRESO",
-        date: { gte: startOfDay(from), lte: endOfDay(to) },
+        date: { gte: startOfDayAR(from), lte: endOfDayAR(to) },
       },
       _sum: { amount: true },
     });
@@ -299,8 +292,8 @@ async registerCreditNote(amount: number, description: string, userId: string) {
 
     if (from || to) {
       where.sale.createdAt = {};
-      if (from) where.sale.createdAt.gte = startOfDay(from);
-      if (to) where.sale.createdAt.lte = endOfDay(to);
+      if (from) where.sale.createdAt.gte = startOfDayAR(from);
+      if (to) where.sale.createdAt.lte = endOfDayAR(to);
     }
 
     const items = await prisma.saleItem.findMany({
@@ -339,7 +332,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
   // --- EXPORTACIÓN EXCEL ---
   async exportFinanceReport(from: Date, to: Date) {
     const finances = await prisma.finance.findMany({
-      where: { date: { gte: startOfDay(from), lte: endOfDay(to) } },
+      where: { date: { gte: startOfDayAR(from), lte: endOfDayAR(to) } },
     });
 
     const workbook = new ExcelJS.Workbook();
@@ -348,7 +341,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
     sheet.addRow(["Fecha", "Tipo", "Categoría", "Descripción", "Monto"]);
     finances.forEach((f) => {
       sheet.addRow([
-        f.date.toISOString().split("T")[0],
+        formatDateAR(f.date),
         f.type,
         f.category,
         f.description ?? "",
@@ -362,7 +355,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
   // --- EXPORTACIÓN PDF ---
   async exportFinanceReportPDF(res: Response, from: Date, to: Date) {
     const finances = await prisma.finance.findMany({
-      where: { date: { gte: startOfDay(from), lte: endOfDay(to) } },
+      where: { date: { gte: startOfDayAR(from), lte: endOfDayAR(to) } },
     });
 
     const doc = new PDFDocument();
@@ -377,7 +370,7 @@ async registerCreditNote(amount: number, description: string, userId: string) {
       doc
         .fontSize(12)
         .text(
-          `${f.date.toISOString().split("T")[0]} - ${f.type} - ${f.category} - $${f.amount} - ${f.description ?? ""}`
+          `${formatDateAR(f.date)} - ${f.type} - ${f.category} - $${f.amount} - ${f.description ?? ""}`
         );
     });
 

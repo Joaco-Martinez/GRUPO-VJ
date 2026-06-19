@@ -1,1 +1,0 @@
-{"version":3,"file":"upload-certificate.dto.d.ts","sourceRoot":"","sources":["../../src/dtos/upload-certificate.dto.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,oBAAoB,GAAG;IACjC,cAAc,EAAE,MAAM,CAAC;IACvB,SAAS,CAAC,EAAE,MAAM,CAAC;IACnB,aAAa,CAAC,EAAE,MAAM,CAAC;CACxB,CAAC;AAGF,MAAM,MAAM,kCAAkC,GAAG,oBAAoB,GAAG;IACtE,aAAa,CAAC,EAAE,MAAM,CAAC;CACxB,CAAC"}

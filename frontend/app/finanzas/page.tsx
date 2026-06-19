@@ -36,6 +36,16 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import {
+  compareDateInputsAR,
+  endOfDayAR,
+  firstDayOfCurrentMonthAR,
+  formatDateAR,
+  formatDateTimeAR,
+  formatShortDateAR,
+  startOfDayAR,
+  todayInputAR,
+} from "@/lib/dateAR";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-AR", {
@@ -77,14 +87,9 @@ const categoryLabel = (value?: string | null) => {
   return FINANCE_CATEGORIES.find((c) => c.value === value)?.label ?? value;
 };
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
+const today = todayInputAR;
 
-const today = () => new Date().toISOString().slice(0, 10);
-
-const firstDayOfCurrentMonth = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
-};
+const firstDayOfCurrentMonth = firstDayOfCurrentMonthAR;
 
 const getPartsFromDate = (date: string) => {
   const [year, month, day] = date.split("-").map(Number);
@@ -96,8 +101,8 @@ const getPartsFromDate = (date: string) => {
   };
 };
 
-const startOfDay = (date: string) => new Date(`${date}T00:00:00.000`);
-const endOfDay = (date: string) => new Date(`${date}T23:59:59.999`);
+const startOfDay = startOfDayAR;
+const endOfDay = endOfDayAR;
 
 type StatsState = {
   week: number;
@@ -271,27 +276,11 @@ const fmtOptional = (value: number | null) => {
 };
 
 const formatDateTime = (value?: string | Date | null) => {
-  if (!value) return "—";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return date.toLocaleString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeAR(value);
 };
 
 const formatDateOnly = (value?: string | Date | null) => {
-  if (!value) return "—";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return date.toLocaleDateString("es-AR");
+  return formatDateAR(value);
 };
 
 type MovementLinkedRef = {
@@ -838,17 +827,17 @@ export default function FinanzasPage() {
           year: selected.year,
         }),
         safeGet<any>("/finance/income/category", [], {
-          startDate: dateFrom,
-          endDate: dateTo,
+          from: dateFrom,
+          to: dateTo,
         }),
         safeGet<any>("/finance/products/top-range", [], {
-          startDate: dateFrom,
-          endDate: dateTo,
+          from: dateFrom,
+          to: dateTo,
           limit: 5,
         }),
         safeGet<any>("/finance/products/worst-range", [], {
-          startDate: dateFrom,
-          endDate: dateTo,
+          from: dateFrom,
+          to: dateTo,
           limit: 5,
         }),
       ]);
@@ -1072,10 +1061,7 @@ export default function FinanzasPage() {
     > = {};
 
     filteredEntries.forEach((e) => {
-      const d = new Date(e.date).toLocaleDateString("es-AR", {
-        day: "2-digit",
-        month: "2-digit",
-      });
+      const d = formatShortDateAR(e.date);
 
       if (!map[d]) {
         map[d] = {
@@ -1094,10 +1080,7 @@ export default function FinanzasPage() {
     });
 
     filteredSales.forEach((sale) => {
-      const d = getSaleDate(sale).toLocaleDateString("es-AR", {
-        day: "2-digit",
-        month: "2-digit",
-      });
+      const d = formatShortDateAR(sale.createdAt);
 
       if (!map[d]) {
         map[d] = {
@@ -1159,7 +1142,7 @@ export default function FinanzasPage() {
       return;
     }
 
-    if (new Date(dateFrom) > new Date(dateTo)) {
+    if (compareDateInputsAR(dateFrom, dateTo) > 0) {
       alert("La fecha desde no puede ser mayor a la fecha hasta");
       return;
     }
@@ -1188,7 +1171,7 @@ export default function FinanzasPage() {
         amount,
         description: form.description.trim(),
         category: form.category || "Otro",
-        date: `${form.date}T12:00:00.000Z`,
+        date: form.date,
       });
 
       setModal(false);
@@ -2313,7 +2296,7 @@ export default function FinanzasPage() {
                             fontFamily: "var(--mono)",
                           }}
                         >
-                          {new Date(e.date).toLocaleDateString("es-AR")}
+                          {formatDateOnly(e.date)}
                         </td>
 
                         <td style={{ fontSize: 13, fontWeight: 600 }}>
@@ -2401,7 +2384,7 @@ export default function FinanzasPage() {
                         <h4>
                           {getCleanMovementDescription(e as AnyObj) || "—"}
                         </h4>
-                        <p>{new Date(e.date).toLocaleDateString("es-AR")}</p>
+                        <p>{formatDateOnly(e.date)}</p>
                       </div>
 
                       <strong className="finance-positive">
@@ -2523,7 +2506,7 @@ export default function FinanzasPage() {
                             fontFamily: "var(--mono)",
                           }}
                         >
-                          {new Date(e.date).toLocaleDateString("es-AR")}
+                          {formatDateOnly(e.date)}
                         </td>
 
                         <td style={{ fontSize: 13, fontWeight: 600 }}>
@@ -2611,7 +2594,7 @@ export default function FinanzasPage() {
                         <h4>
                           {getCleanMovementDescription(e as AnyObj) || "—"}
                         </h4>
-                        <p>{new Date(e.date).toLocaleDateString("es-AR")}</p>
+                        <p>{formatDateOnly(e.date)}</p>
                       </div>
 
                       <strong className="finance-negative">

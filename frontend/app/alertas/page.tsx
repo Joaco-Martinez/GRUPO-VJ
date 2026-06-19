@@ -7,6 +7,7 @@ import type { Alert, Product } from '@/types';
 import { AlertTriangle, Bell, RefreshCcw, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { num } from '@/lib/helpers';
+import { formatDateAR } from '@/lib/dateAR';
 
 type ProductWithMinStock = Product & {
   minStockDeposito?: number | string | null;
@@ -73,16 +74,8 @@ function normalizeAlerts(data: unknown): AlertExtra[] {
 }
 
 function formatAlertDate(value: unknown) {
-  if (!value) return 'Sin fecha';
-
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return 'Sin fecha';
-
-  return date.toLocaleDateString('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
+  const formatted = formatDateAR(value ? String(value) : null);
+  return formatted === '—' ? 'Sin fecha' : formatted;
 }
 
 function getAlertProductName(alert: AlertExtra) {

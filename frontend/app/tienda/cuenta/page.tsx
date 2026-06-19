@@ -19,6 +19,7 @@ import toast from "react-hot-toast";
 import { formatMoney } from "@/lib/shop";
 import { useCartStore } from "@/store/cart";
 import { useShopAuth } from "@/context/ShopAuthContext";
+import { formatDateTimeAR } from '@/lib/dateAR';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -104,13 +105,7 @@ function saleTotal(sale: Sale) {
 function saleDate(sale: Sale) {
   if (!sale.createdAt) return "Sin fecha";
 
-  return new Intl.DateTimeFormat("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(sale.createdAt));
+  return formatDateTimeAR(sale.createdAt);
 }
 
 function statusLabel(status?: string | null) {

@@ -5,6 +5,7 @@ import type { ElementType, ReactNode } from 'react';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import toast from 'react-hot-toast';
+import { formatDateTimeAR } from '@/lib/dateAR';
 import {
   AlertCircle,
   Building2,
@@ -170,15 +171,7 @@ function buildAddress(location: BusinessLocation) {
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return '—';
-
-  return new Intl.DateTimeFormat('es-AR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
+  return formatDateTimeAR(value);
 }
 
 function cleanPayload(form: LocationForm) {

@@ -1,3 +1,4 @@
+import "./config/timezone";
 import { processAfipPendingInvoices } from "./cron/afipRetry.worker";
 
 console.log("🚀 Worker AFIP iniciado");

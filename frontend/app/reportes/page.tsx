@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { TrendingUp, Award, DollarSign, Clock } from "lucide-react";
 import toast from "react-hot-toast";
+import { firstDayOfCurrentMonthAR, todayInputAR } from "@/lib/dateAR";
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("es-AR", {
@@ -261,13 +262,9 @@ export default function ReportesPage() {
   const [rangeLoading, setRangeLoading] = useState(true);
   const [mobileTab, setMobileTab] = useState<MobileReportTab>("resumen");
 
-  const [from, setFrom] = useState(() => {
-    const d = new Date();
-    d.setDate(1);
-    return d.toISOString().slice(0, 10);
-  });
+  const [from, setFrom] = useState(firstDayOfCurrentMonthAR);
 
-  const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
+  const [to, setTo] = useState(todayInputAR);
 
   useEffect(() => {
     let alive = true;

@@ -1,3 +1,4 @@
+import "../config/timezone";
 import "dotenv/config";
 import prisma from "../prisma";
 import { saleService } from "../services/sale.service";

@@ -508,7 +508,7 @@ export async function emitirNotaCreditoAFIP({
     iva21 = +(importe - neto).toFixed(2);
   }
 
-  const fecha = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const fecha = afipFechaAR();
 
   // 6) XML (PtoVta dinámico, no hardcode 7)
   const soapEnvelope = `

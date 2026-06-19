@@ -5,6 +5,12 @@ const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRo
 const GOOGLE_ROUTES_TIMEOUT_MS = Number(process.env.GOOGLE_ROUTES_TIMEOUT_MS ?? 8000);
 const DELIVERY_FALLBACK_MULTIPLIER = Number(process.env.DELIVERY_FALLBACK_MULTIPLIER ?? 1.4);
 
+// Google no tiene una opción directa de "ruta más larga".
+// Entonces pedimos rutas alternativas y elegimos la de mayor distancia.
+const GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE =
+  String(process.env.GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE ?? "true").toLowerCase() !==
+  "false";
+
 type DeliveryRouteSource = "GOOGLE_ROUTES" | "COORDINATES_FALLBACK";
 
 type GoogleRoutesResponse = {
@@ -38,8 +44,10 @@ function isValidCoordinate(lat: unknown, lng: unknown) {
 
 function parseGoogleDurationSeconds(duration?: string | null) {
   if (!duration) return null;
+
   const match = duration.match(/^(\d+(?:\.\d+)?)s$/);
   if (!match) return null;
+
   const seconds = Number(match[1]);
   return Number.isFinite(seconds) ? seconds : null;
 }
@@ -110,6 +118,41 @@ function buildLocationAddress(location: {
   return [street, city, location.addressNotes].filter(Boolean).join(" - ");
 }
 
+function selectGoogleRoute(routes?: GoogleRoutesResponse["routes"]) {
+  const validRoutes = (routes ?? []).filter((route) => {
+    const distanceMeters = Number(route.distanceMeters);
+    return Number.isFinite(distanceMeters) && distanceMeters > 0;
+  });
+
+  if (!validRoutes.length) return null;
+
+  if (!GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE) {
+    return {
+      route: validRoutes[0],
+      routeIndex: 0,
+      alternativesCount: validRoutes.length,
+      routeStrategy: "DEFAULT_ROUTE" as const,
+    };
+  }
+
+  let longestRoute = validRoutes[0];
+  let longestRouteIndex = 0;
+
+  validRoutes.forEach((route, index) => {
+    if (Number(route.distanceMeters) > Number(longestRoute.distanceMeters)) {
+      longestRoute = route;
+      longestRouteIndex = index;
+    }
+  });
+
+  return {
+    route: longestRoute,
+    routeIndex: longestRouteIndex,
+    alternativesCount: validRoutes.length,
+    routeStrategy: "LONGEST_ALTERNATIVE" as const,
+  };
+}
+
 async function getGoogleRoute(params: {
   originLat: number;
   originLng: number;
@@ -150,9 +193,15 @@ async function getGoogleRoute(params: {
           },
         },
         travelMode: "DRIVE",
+
         // Importante: TRAFFIC_UNAWARE evita pedir features Pro de tráfico.
         // Para cobrar envíos por km real, alcanza con la ruta por calles.
         routingPreference: "TRAFFIC_UNAWARE",
+
+        // Esto hace que Google devuelva alternativas.
+        // Después nosotros elegimos la de mayor cantidad de metros.
+        computeAlternativeRoutes: GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE,
+
         units: "METRIC",
         languageCode: "es-AR",
       }),
@@ -165,16 +214,22 @@ async function getGoogleRoute(params: {
     }
 
     const json = (await response.json()) as GoogleRoutesResponse;
-    const route = json.routes?.[0];
-    const distanceMeters = route?.distanceMeters;
+    const selectedRoute = selectGoogleRoute(json.routes);
+
+    if (!selectedRoute) return null;
+
+    const distanceMeters = Number(selectedRoute.route.distanceMeters);
 
     if (!distanceMeters || !Number.isFinite(distanceMeters)) return null;
 
-    const durationSeconds = parseGoogleDurationSeconds(route?.duration);
+    const durationSeconds = parseGoogleDurationSeconds(selectedRoute.route.duration);
 
     return {
       distanceKm: distanceMeters / 1000,
       durationMinutes: durationSeconds !== null ? round2(durationSeconds / 60) : null,
+      routeIndex: selectedRoute.routeIndex,
+      alternativesCount: selectedRoute.alternativesCount,
+      routeStrategy: selectedRoute.routeStrategy,
     };
   } catch (error) {
     console.error("Google Routes API request failed:", error);
@@ -234,7 +289,11 @@ export const deliveryService = {
     ]);
 
     if (!location) throw new Error("Sucursal/depósito no encontrado");
-    if (!location.isActive) throw new Error("La sucursal/depósito seleccionada está inactiva");
+
+    if (!location.isActive) {
+      throw new Error("La sucursal/depósito seleccionada está inactiva");
+    }
+
     if (!client) throw new Error("Cliente no encontrado");
 
     if (!isValidCoordinate(location.latitude, location.longitude)) {
@@ -259,6 +318,9 @@ export const deliveryService = {
 
     let source: DeliveryRouteSource = "COORDINATES_FALLBACK";
     let durationMinutes: number | null = null;
+    let routeIndex: number | null = null;
+    let alternativesCount: number | null = null;
+    let routeStrategy: "LONGEST_ALTERNATIVE" | "DEFAULT_ROUTE" | "FALLBACK" = "FALLBACK";
 
     const googleRoute = await getGoogleRoute({
       originLat,
@@ -273,10 +335,14 @@ export const deliveryService = {
       source = "GOOGLE_ROUTES";
       distanceKm = googleRoute.distanceKm;
       durationMinutes = googleRoute.durationMinutes;
+      routeIndex = googleRoute.routeIndex;
+      alternativesCount = googleRoute.alternativesCount;
+      routeStrategy = googleRoute.routeStrategy;
     } else {
-      const multiplier = Number.isFinite(DELIVERY_FALLBACK_MULTIPLIER) && DELIVERY_FALLBACK_MULTIPLIER > 0
-        ? DELIVERY_FALLBACK_MULTIPLIER
-        : 1.4;
+      const multiplier =
+        Number.isFinite(DELIVERY_FALLBACK_MULTIPLIER) && DELIVERY_FALLBACK_MULTIPLIER > 0
+          ? DELIVERY_FALLBACK_MULTIPLIER
+          : 1.4;
 
       distanceKm = straightDistanceKm * multiplier;
     }
@@ -294,6 +360,12 @@ export const deliveryService = {
       pricePerKm,
       deliveryCost,
       source,
+
+      // Info extra para saber qué hizo el backend.
+      routeStrategy,
+      routeIndex,
+      alternativesCount,
+
       businessLocationId: location.id,
       businessLocationName: location.name,
       clientId: client.id,

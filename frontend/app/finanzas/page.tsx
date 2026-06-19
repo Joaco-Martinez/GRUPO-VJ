@@ -482,6 +482,137 @@ const getPurchaseDestinationLabel = (purchase?: AnyObj | null) => {
   return purchase.to || "—";
 };
 
+const getLinkedMovementItems = (
+  detail?: AnyObj | null,
+  type?: MovementLinkedRef["type"],
+): AnyObj[] => {
+  if (!detail) return [];
+
+  const candidates =
+    type === "purchase"
+      ? [
+          detail.items,
+          detail.purchaseItems,
+          detail.products,
+          detail.purchaseProducts,
+          detail.details,
+          detail.lines,
+          detail.stockMovements,
+        ]
+      : [
+          detail.items,
+          detail.saleItems,
+          detail.products,
+          detail.saleProducts,
+          detail.details,
+          detail.lines,
+        ];
+
+  const items = candidates.find((candidate) => Array.isArray(candidate));
+  return Array.isArray(items) ? items : [];
+};
+
+const getLinkedItemName = (item?: AnyObj | null) => {
+  if (!item) return "Producto";
+
+  return (
+    item.productNameSnapshot ??
+    item.productName ??
+    item.name ??
+    item.title ??
+    item.product?.name ??
+    item.product?.title ??
+    item.component?.name ??
+    item.item?.name ??
+    "Producto"
+  );
+};
+
+const getLinkedItemSku = (item?: AnyObj | null) => {
+  if (!item) return "";
+
+  return String(
+    item.productSkuSnapshot ??
+      item.sku ??
+      item.product?.sku ??
+      item.component?.sku ??
+      "",
+  );
+};
+
+const getLinkedItemQuantityNumber = (item?: AnyObj | null) => {
+  if (!item) return 0;
+
+  const quantityKg = Number(
+    item.quantityKg ?? item.kg ?? item.totalKg ?? item.productQuantityKg ?? 0,
+  );
+
+  if (Number.isFinite(quantityKg) && quantityKg > 0) return quantityKg;
+
+  const quantity = Number(
+    item.quantity ??
+      item.qty ??
+      item.units ??
+      item.totalQuantity ??
+      item.productQuantity ??
+      0,
+  );
+
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+};
+
+const getLinkedItemQuantityLabel = (item?: AnyObj | null) => {
+  if (!item) return "—";
+
+  const quantityKg = Number(
+    item.quantityKg ?? item.kg ?? item.totalKg ?? item.productQuantityKg ?? 0,
+  );
+
+  if (Number.isFinite(quantityKg) && quantityKg > 0) {
+    return `${quantityKg.toLocaleString("es-AR", {
+      maximumFractionDigits: 3,
+    })} kg`;
+  }
+
+  const quantity = getLinkedItemQuantityNumber(item);
+  return quantity.toLocaleString("es-AR", { maximumFractionDigits: 3 });
+};
+
+const getLinkedItemUnitPrice = (item?: AnyObj | null) => {
+  if (!item) return 0;
+
+  const value =
+    item.price ??
+    item.unitPrice ??
+    item.costPrice ??
+    item.purchasePrice ??
+    item.purchasePriceSnapshot ??
+    item.unitCost ??
+    item.cost ??
+    item.product?.purchasePrice ??
+    item.product?.price;
+
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const getLinkedItemSubtotal = (item?: AnyObj | null) => {
+  if (!item) return 0;
+
+  const value =
+    item.subtotal ??
+    item.total ??
+    item.lineTotal ??
+    item.totalPrice ??
+    item.totalCost ??
+    item.amount;
+
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) return n;
+
+  return getLinkedItemUnitPrice(item) * getLinkedItemQuantityNumber(item);
+};
+
 const sortNumber = (value: number | null | undefined) => {
   if (value === null || value === undefined || !Number.isFinite(Number(value)))
     return Number.NEGATIVE_INFINITY;
@@ -574,6 +705,13 @@ export default function FinanzasPage() {
     selectedMovementLink?.type === "purchase"
       ? selectedMovementLinkedDetail
       : null;
+
+  const selectedLinkedItems = useMemo(() => {
+    return getLinkedMovementItems(
+      selectedMovementLinkedDetail,
+      selectedMovementLink?.type,
+    );
+  }, [selectedMovementLinkedDetail, selectedMovementLink?.type]);
 
   useEffect(() => {
     let alive = true;
@@ -2148,6 +2286,7 @@ export default function FinanzasPage() {
                       <th>Descripción</th>
                       <th>Categoría</th>
                       <th>Importe</th>
+                      <th>Detalle</th>
                     </tr>
                   </thead>
 
@@ -2195,6 +2334,19 @@ export default function FinanzasPage() {
                           }}
                         >
                           +{fmt(Number(e.amount || 0))}
+                        </td>
+
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm finance-detail-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMovement(e);
+                            }}
+                          >
+                            <Eye size={13} /> Ver detalle
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -2256,6 +2408,17 @@ export default function FinanzasPage() {
                         +{fmt(Number(e.amount || 0))}
                       </strong>
                     </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm finance-mobile-detail-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedMovement(e);
+                      }}
+                    >
+                      <Eye size={13} /> Ver detalle
+                    </button>
                   </article>
                 ))
               )}
@@ -2333,6 +2496,7 @@ export default function FinanzasPage() {
                       <th>Descripción</th>
                       <th>Categoría</th>
                       <th>Importe</th>
+                      <th>Detalle</th>
                     </tr>
                   </thead>
 
@@ -2380,6 +2544,19 @@ export default function FinanzasPage() {
                           }}
                         >
                           -{fmt(Number(e.amount || 0))}
+                        </td>
+
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm finance-detail-button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMovement(e);
+                            }}
+                          >
+                            <Eye size={13} /> Ver detalle
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -2441,6 +2618,17 @@ export default function FinanzasPage() {
                         -{fmt(Number(e.amount || 0))}
                       </strong>
                     </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm finance-mobile-detail-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedMovement(e);
+                      }}
+                    >
+                      <Eye size={13} /> Ver detalle
+                    </button>
                   </article>
                 ))
               )}
@@ -2790,6 +2978,67 @@ export default function FinanzasPage() {
                   </div>
                 </div>
 
+                {selectedMovementLink && (
+                  <div className="movement-products-card">
+                    <div className="movement-products-head">
+                      <div>
+                        <small>Detalle de productos</small>
+                        <strong>
+                          {selectedMovementLink.type === "purchase"
+                            ? "Productos comprados"
+                            : "Productos vendidos"}
+                        </strong>
+                      </div>
+
+                      <span className="badge badge-gray">
+                        {selectedLinkedItems.length} item
+                        {selectedLinkedItems.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+
+                    {selectedLinkedItems.length ? (
+                      <div className="movement-products-table-wrap">
+                        <table className="movement-products-table">
+                          <thead>
+                            <tr>
+                              <th>Producto</th>
+                              <th>Cant.</th>
+                              <th>
+                                {selectedMovementLink.type === "purchase"
+                                  ? "Costo unit."
+                                  : "Precio unit."}
+                              </th>
+                              <th>Subtotal</th>
+                            </tr>
+                          </thead>
+
+                          <tbody>
+                            {selectedLinkedItems.map((item: AnyObj, index) => (
+                              <tr key={item.id ?? `${getLinkedItemName(item)}-${index}`}>
+                                <td>
+                                  <b>{getLinkedItemName(item)}</b>
+                                  {getLinkedItemSku(item) && (
+                                    <small>SKU {getLinkedItemSku(item)}</small>
+                                  )}
+                                </td>
+                                <td>{getLinkedItemQuantityLabel(item)}</td>
+                                <td>{fmt(getLinkedItemUnitPrice(item))}</td>
+                                <td>{fmt(getLinkedItemSubtotal(item))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="movement-products-empty">
+                        {selectedMovementLinkedDetail?.id
+                          ? "No encontré productos cargados en este detalle."
+                          : "Cargando detalle vinculado..."}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="movement-detail-grid">
                   <div>
                     <small>Fecha del movimiento</small>
@@ -3002,6 +3251,124 @@ export default function FinanzasPage() {
           border-radius: 12px;
           background: var(--surface);
           border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+        }
+
+        .movement-products-card {
+          padding: 14px;
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          background: var(--surface2);
+          margin-bottom: 14px;
+        }
+
+        .movement-products-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          padding-bottom: 12px;
+          border-bottom: 1px solid var(--border);
+          margin-bottom: 12px;
+        }
+
+        .movement-products-head div {
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+        }
+
+        .movement-products-head small {
+          color: var(--text3);
+          font-size: 11px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+
+        .movement-products-head strong {
+          color: var(--text);
+          font-size: 16px;
+          font-weight: 950;
+        }
+
+        .movement-products-table-wrap {
+          width: 100%;
+          overflow-x: auto;
+          border-radius: 14px;
+          border: 1px solid var(--border);
+          background: var(--surface);
+        }
+
+        .movement-products-table {
+          width: 100%;
+          min-width: 560px;
+          border-collapse: collapse;
+        }
+
+        .movement-products-table th,
+        .movement-products-table td {
+          padding: 10px;
+          border-bottom: 1px solid var(--border);
+          text-align: left;
+          font-size: 12px;
+        }
+
+        .movement-products-table th {
+          color: var(--text3);
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+
+        .movement-products-table td:not(:first-child) {
+          font-family: var(--mono);
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .movement-products-table td:first-child {
+          display: grid;
+          gap: 3px;
+          min-width: 220px;
+        }
+
+        .movement-products-table td:first-child b {
+          color: var(--text);
+          font-size: 12px;
+          overflow-wrap: anywhere;
+        }
+
+        .movement-products-table td:first-child small {
+          color: var(--text3);
+          font-size: 10px;
+          font-weight: 800;
+        }
+
+        .movement-products-table tr:last-child td {
+          border-bottom: 0;
+        }
+
+        .movement-products-empty {
+          border: 1px dashed var(--border);
+          border-radius: 14px;
+          padding: 14px;
+          color: var(--text3);
+          text-align: center;
+          font-size: 12px;
+          background: var(--surface);
+        }
+
+        .finance-detail-button,
+        .finance-mobile-detail-button {
+          gap: 6px;
+          white-space: nowrap;
+          justify-content: center;
+        }
+
+        .finance-mobile-detail-button {
+          width: 100%;
+          margin-top: 10px;
         }
 
         .movement-detail-grid {
@@ -3683,6 +4050,20 @@ export default function FinanzasPage() {
           .movement-detail-grid,
           .movement-sale-grid {
             grid-template-columns: 1fr;
+          }
+
+          .movement-products-card {
+            padding: 12px;
+            border-radius: 15px;
+          }
+
+          .movement-products-head {
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          .movement-products-table {
+            min-width: 520px;
           }
 
           .movement-sale-card-head {

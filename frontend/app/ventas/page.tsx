@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/set-state-in-effect */
 'use client';
@@ -6,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
-import type { PaymentMethod, Product, Sale } from '@/types';
+import type { BusinessLocation, PaymentMethod, Product, Sale } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
 import { remitoApi, type Remito } from '@/service/remito.service';
 import toast from 'react-hot-toast';
@@ -30,6 +31,8 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const PAGE_SIZE = 10;
+const DELIVERY_SKU = 'ENVIO-FLETE2';
+const DEFAULT_DELIVERY_PRICE_PER_KM = 8000;
 
 const badge = (s: string) =>
   s === 'COMPLETED' ? 'badge-green' : s === 'PENDING' ? 'badge-yellow' : 'badge-red';
@@ -99,6 +102,7 @@ type SaleItemView = {
   quantity?: number | null;
   quantityKg?: number | null;
   price: number;
+  priceType?: string | null;
   subtotal?: number | null;
 };
 
@@ -131,6 +135,8 @@ type SaleExtra = Sale & {
   isNoteCredit?: boolean | null;
   hasCreditNote?: boolean | null;
   stockLocation?: 'LOCAL' | 'DEPOSITO' | string | null;
+  businessLocationId?: string | null;
+  businessLocation?: BusinessLocation | null;
   receiptType?: 'TICKET' | 'FACTURA' | 'NOTA_CREDITO' | 'NOTA DE CREDITO' | 'NOTA DE CRÉDITO' | string | null;
   invoiceAfip?: InvoiceAfipView | null;
   invoiceAfipId?: string | null;
@@ -146,6 +152,12 @@ type SaleExtra = Sale & {
   packagesCount?: number | null;
   declaredValue?: number | null;
   quotationExpiresAt?: string | null;
+  deliveryMethod?: 'PICKUP' | 'LOCAL_DELIVERY' | string | null;
+  deliveryStatus?: string | null;
+  deliveryAddressSnapshot?: string | null;
+  deliveryDistanceKm?: number | null;
+  deliveryPricePerKm?: number | null;
+  deliveryCost?: number | null;
   payments?: PaymentView[];
   items?: SaleItemView[];
   userId?: string | null;
@@ -203,6 +215,22 @@ type SalesFetchResult = {
   stats?: SalesStats | null;
 };
 
+type DeliveryCalculation = {
+  distanceKm: number;
+  pricePerKm: number;
+  deliveryCost: number;
+  durationMinutes?: number | null;
+  straightDistanceKm?: number | null;
+  source?: 'GOOGLE_ROUTES' | 'COORDINATES_FALLBACK';
+  businessLocationId: string;
+  businessLocationName: string;
+  clientId: string;
+  clientName: string;
+  originAddress?: string;
+  destinationAddress?: string;
+  deliveryAddressSnapshot?: string;
+};
+
 type SaleEditLine = {
   key: string;
   productId: string;
@@ -212,6 +240,8 @@ type SaleEditLine = {
   quantityKg?: number | null;
   price: number;
   priceType?: string | null;
+  sku?: string | null;
+  isDelivery?: boolean;
 };
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -491,18 +521,121 @@ function canEditSaleItems(sale: Sale) {
   return sale.status === 'PENDING' && !isSaleInvoiced(sale);
 }
 
-function getProductEditPrice(product: Product) {
-  const productAny = product as Product & { pricePerKg?: number | null };
+function isDeliveryProduct(product: Product | any) {
+  return String((product as any)?.sku ?? '').trim().toUpperCase() === DELIVERY_SKU;
+}
 
-  if (productAny.saleUnit === 'KG') {
-    return num(productAny.pricePerKg, productAny.price);
+function normalizeEditPriceType(value?: string | null) {
+  const raw = String(value ?? '').trim().toUpperCase();
+
+  if (['WHOLESALE', 'WHOLESALEPRICE', 'WHOLESALE_PRICE', 'MAYORISTA'].includes(raw)) {
+    return 'WHOLESALE_PRICE';
   }
 
-  return num(productAny.price);
+  if (['MANUAL', 'CUSTOM', 'CUSTOM_PRICE'].includes(raw)) {
+    return 'MANUAL';
+  }
+
+  if (['PRICE', 'RETAIL', 'RETAIL_PRICE', 'MINORISTA', 'PUBLICO', 'PÚBLICO'].includes(raw)) {
+    return 'PRICE';
+  }
+
+  return null;
+}
+
+function getEditSaleDefaultPriceType(sale?: Sale | null) {
+  const stockLocation = String((sale as SaleExtra | null)?.stockLocation ?? '').toUpperCase();
+
+  if (stockLocation === 'LOCAL') return 'WHOLESALE_PRICE';
+  if (stockLocation === 'DEPOSITO') return 'PRICE';
+
+  const category = String((sale as SaleExtra | null)?.client?.category ?? '').toLowerCase();
+  return category.includes('mayorista') ? 'WHOLESALE_PRICE' : 'PRICE';
+}
+
+function getProductEditPrice(product: Product, priceType: string | null = 'PRICE') {
+  const productAny = product as Product & {
+    saleUnit?: string | null;
+    price?: number | null;
+    pricePerKg?: number | null;
+    wholesalePrice?: number | null;
+    wholesalePricePerKg?: number | null;
+  };
+
+  if (isDeliveryProduct(productAny)) return 0;
+
+  const isKg = productAny.saleUnit === 'KG';
+
+  if (priceType === 'WHOLESALE_PRICE') {
+    return isKg
+      ? firstNumber(productAny.wholesalePricePerKg, productAny.pricePerKg, productAny.price)
+      : num(productAny.wholesalePrice, productAny.price);
+  }
+
+  return isKg ? num(productAny.pricePerKg, productAny.price) : num(productAny.price);
 }
 
 function productEditName(product: Product) {
   return String((product as Product & { name?: string | null }).name ?? 'Producto');
+}
+
+function getEditPriceLabel(priceType?: string | null) {
+  const normalized = normalizeEditPriceType(priceType);
+
+  if (normalized === 'WHOLESALE_PRICE') return 'Mayorista';
+  if (normalized === 'MANUAL') return 'Manual';
+  return 'Minorista';
+}
+
+function clientHasCoordinates(client?: any | null) {
+  return (
+    client?.latitude !== null &&
+    client?.latitude !== undefined &&
+    client?.longitude !== null &&
+    client?.longitude !== undefined
+  );
+}
+
+function locationHasCoordinates(location?: BusinessLocation | null) {
+  return (
+    location?.latitude !== null &&
+    location?.latitude !== undefined &&
+    location?.longitude !== null &&
+    location?.longitude !== undefined
+  );
+}
+
+function buildClientAddress(client?: any | null) {
+  if (!client) return '';
+
+  const street = [client.addressStreet, client.addressNumber].filter(Boolean).join(' ');
+  const floor = [
+    client.addressFloor ? `Piso ${client.addressFloor}` : '',
+    client.addressApartment ? `Dto ${client.addressApartment}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const city = [client.addressCity, client.addressProvince, client.addressPostalCode]
+    .filter(Boolean)
+    .join(', ');
+
+  return [street, floor, city, client.addressNotes].filter(Boolean).join(' - ');
+}
+
+function deliverySourceLabel(source?: DeliveryCalculation['source'] | null) {
+  if (source === 'GOOGLE_ROUTES') return 'Google Routes';
+  if (source === 'COORDINATES_FALLBACK') return 'Estimado';
+  return 'Calculado';
+}
+
+function formatDurationMinutes(minutes?: number | null) {
+  const value = num(minutes);
+  if (value <= 0) return '';
+  if (value < 60) return `${Math.round(value)} min`;
+
+  const hours = Math.floor(value / 60);
+  const remainingMinutes = Math.round(value % 60);
+  return `${hours} h${remainingMinutes ? ` ${remainingMinutes} min` : ''}`;
 }
 
 function getQuotationExpirationLabel(sale: Sale) {
@@ -573,11 +706,18 @@ export default function VentasPage() {
   const [serverStats, setServerStats] = useState<SalesStats | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [businessLocations, setBusinessLocations] = useState<BusinessLocation[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [editItemsSale, setEditItemsSale] = useState<Sale | null>(null);
   const [editLines, setEditLines] = useState<SaleEditLine[]>([]);
   const [editProductSearch, setEditProductSearch] = useState('');
   const [savingItems, setSavingItems] = useState(false);
+  const [editDeliveryEnabled, setEditDeliveryEnabled] = useState(false);
+  const [editDeliveryDistanceKm, setEditDeliveryDistanceKm] = useState('');
+  const [editDeliveryPricePerKm, setEditDeliveryPricePerKm] = useState(String(DEFAULT_DELIVERY_PRICE_PER_KM));
+  const [editBusinessLocationId, setEditBusinessLocationId] = useState('');
+  const [editDeliveryCalculation, setEditDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
+  const [editCalculatingDelivery, setEditCalculatingDelivery] = useState(false);
 
   const [payments, setPayments] = useState<PaymentView[]>([]);
 
@@ -658,6 +798,7 @@ export default function VentasPage() {
 
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, debouncedSearch, status]);
 
   const filtered = useMemo(() => {
@@ -1024,16 +1165,35 @@ export default function VentasPage() {
 
 
   const loadProductsForSaleEdit = async () => {
-    if (products.length || loadingProducts) return;
+    if ((products.length && businessLocations.length) || loadingProducts) {
+      return { products, businessLocations };
+    }
 
     setLoadingProducts(true);
 
     try {
-      const response = await api.get('/products');
-      setProducts(normalizeArray<Product>(response.data).filter((p: any) => p.isActive !== false));
+      const [productsResponse, locationsResponse] = await Promise.all([
+        products.length ? Promise.resolve({ data: products }) : api.get('/products'),
+        businessLocations.length
+          ? Promise.resolve({ data: businessLocations })
+          : api.get('/business-locations'),
+      ]);
+
+      const nextProducts = normalizeArray<Product>(productsResponse.data).filter(
+        (p: any) => p.isActive !== false
+      );
+      const nextLocations = normalizeArray<BusinessLocation>(locationsResponse.data).filter(
+        (location: any) => location.isActive !== false
+      );
+
+      setProducts(nextProducts);
+      setBusinessLocations(nextLocations);
+
+      return { products: nextProducts, businessLocations: nextLocations };
     } catch (error) {
       console.error(error);
-      toast.error('No se pudieron cargar los productos');
+      toast.error('No se pudieron cargar los datos para editar la venta');
+      return { products, businessLocations };
     } finally {
       setLoadingProducts(false);
     }
@@ -1046,23 +1206,67 @@ export default function VentasPage() {
     }
 
     const saleExtra = sale as SaleExtra;
+    const editData = await loadProductsForSaleEdit();
+    const defaultBusinessLocation =
+      editData.businessLocations.find((location: any) => location.id === saleExtra.businessLocationId) ??
+      editData.businessLocations.find((location: any) => location.isDefault) ??
+      editData.businessLocations[0] ??
+      null;
 
     setEditItemsSale(sale);
     setEditProductSearch('');
-    setEditLines(
-      (saleExtra.items ?? []).map((item, index) => ({
-        key: item.id || `${item.productId || item.product?.id || 'item'}-${index}`,
-        productId: String(item.productId || item.product?.id || ''),
-        name: item.productNameSnapshot || item.product?.name || 'Producto',
-        saleUnit: item.product?.saleUnit || (item.quantityKg ? 'KG' : 'UNIT'),
-        quantity: Math.max(1, num(item.quantity || 1)),
-        quantityKg: item.quantityKg ?? null,
-        price: num(item.price),
-        priceType: null,
-      })).filter((line) => line.productId)
+    const deliveryCost = num(saleExtra.deliveryCost);
+    const hasDeliveryData =
+      String(saleExtra.deliveryMethod ?? '').toUpperCase() === 'LOCAL_DELIVERY' || deliveryCost > 0;
+
+    setEditDeliveryEnabled(hasDeliveryData);
+    setEditDeliveryDistanceKm(
+      saleExtra.deliveryDistanceKm !== null && saleExtra.deliveryDistanceKm !== undefined
+        ? String(saleExtra.deliveryDistanceKm)
+        : ''
+    );
+    setEditDeliveryPricePerKm(
+      saleExtra.deliveryPricePerKm !== null && saleExtra.deliveryPricePerKm !== undefined
+        ? String(saleExtra.deliveryPricePerKm)
+        : String(DEFAULT_DELIVERY_PRICE_PER_KM)
+    );
+    setEditBusinessLocationId(defaultBusinessLocation?.id ?? '');
+    setEditDeliveryCalculation(
+      hasDeliveryData && deliveryCost > 0
+        ? {
+            distanceKm: num(saleExtra.deliveryDistanceKm),
+            pricePerKm: num(saleExtra.deliveryPricePerKm, DEFAULT_DELIVERY_PRICE_PER_KM),
+            deliveryCost,
+            businessLocationId: defaultBusinessLocation?.id ?? saleExtra.businessLocationId ?? '',
+            businessLocationName: defaultBusinessLocation?.name ?? saleExtra.businessLocation?.name ?? 'Ubicación',
+            clientId: saleExtra.client?.id ?? '',
+            clientName: clientName(saleExtra.client),
+            deliveryAddressSnapshot: saleExtra.deliveryAddressSnapshot ?? buildClientAddress(saleExtra.client),
+          }
+        : null
     );
 
-    await loadProductsForSaleEdit();
+    setEditLines(
+      (saleExtra.items ?? [])
+        .map((item, index) => {
+          const productSku = String((item.product as any)?.sku ?? '');
+          const isDelivery = productSku.trim().toUpperCase() === DELIVERY_SKU;
+
+          return {
+            key: item.id || `${item.productId || item.product?.id || 'item'}-${index}`,
+            productId: String(item.productId || item.product?.id || ''),
+            name: item.productNameSnapshot || item.product?.name || 'Producto',
+            saleUnit: item.product?.saleUnit || (item.quantityKg ? 'KG' : 'UNIT'),
+            quantity: Math.max(1, num(item.quantity || 1)),
+            quantityKg: item.quantityKg ?? null,
+            price: num(item.price),
+            priceType: normalizeEditPriceType((item as any).priceType) || 'MANUAL',
+            sku: productSku || null,
+            isDelivery,
+          };
+        })
+        .filter((line) => line.productId)
+    );
   };
 
   const editProductsFiltered = useMemo(() => {
@@ -1082,13 +1286,18 @@ export default function VentasPage() {
   const addProductToEditSale = (product: Product) => {
     const productAny = product as any;
     const productId = String(productAny.id);
+    const isDelivery = isDeliveryProduct(productAny);
+    const defaultPriceType = isDelivery ? 'MANUAL' : getEditSaleDefaultPriceType(editItemsSale);
+    const price = getProductEditPrice(product, defaultPriceType);
 
     setEditLines((prev) => {
       const existing = prev.find((line) => line.productId === productId);
 
       if (existing && existing.saleUnit !== 'KG') {
         return prev.map((line) =>
-          line.productId === productId ? { ...line, quantity: line.quantity + 1 } : line
+          line.productId === productId && !line.isDelivery
+            ? { ...line, quantity: line.quantity + 1 }
+            : line
         );
       }
 
@@ -1099,10 +1308,12 @@ export default function VentasPage() {
           productId,
           name: productEditName(product),
           saleUnit: productAny.saleUnit || 'UNIT',
-          quantity: productAny.saleUnit === 'KG' ? 1 : 1,
+          quantity: 1,
           quantityKg: productAny.saleUnit === 'KG' ? 0.1 : null,
-          price: getProductEditPrice(product),
-          priceType: 'price',
+          price,
+          priceType: defaultPriceType,
+          sku: productAny.sku ?? null,
+          isDelivery,
         },
       ];
     });
@@ -1114,6 +1325,187 @@ export default function VentasPage() {
 
   const removeEditLine = (key: string) => {
     setEditLines((prev) => prev.filter((line) => line.key !== key));
+  };
+
+  const getProductById = (productId: string) =>
+    products.find((product: any) => String(product.id) === String(productId));
+
+  const changeEditLinePriceType = (line: SaleEditLine, nextPriceType: string) => {
+    const normalized = normalizeEditPriceType(nextPriceType) || 'PRICE';
+    const product = getProductById(line.productId);
+
+    updateEditLine(line.key, {
+      priceType: normalized,
+      price: normalized === 'MANUAL' || !product ? line.price : getProductEditPrice(product, normalized),
+    });
+  };
+
+  const deliveryProduct = useMemo(
+    () => products.find((product: any) => isDeliveryProduct(product)),
+    [products]
+  );
+
+  const calculatedDeliveryCost = editDeliveryCalculation?.deliveryCost ?? 0;
+
+  const applyDeliveryToEditLines = (calculation: DeliveryCalculation) => {
+    if (!deliveryProduct) {
+      toast.error(`No encontré el producto de envío con SKU ${DELIVERY_SKU}`);
+      return;
+    }
+
+    const productAny = deliveryProduct as any;
+    const productId = String(productAny.id);
+
+    setEditDeliveryEnabled(true);
+    setEditLines((prev) => {
+      const existing = prev.find(
+        (line) => line.isDelivery || String(line.sku ?? '').toUpperCase() === DELIVERY_SKU
+      );
+
+      if (existing) {
+        return prev.map((line) =>
+          line.key === existing.key
+            ? {
+                ...line,
+                productId,
+                name: productEditName(deliveryProduct),
+                saleUnit: 'UNIT',
+                quantity: 1,
+                quantityKg: null,
+                price: calculation.deliveryCost,
+                priceType: 'MANUAL',
+                sku: DELIVERY_SKU,
+                isDelivery: true,
+              }
+            : line
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          key: `${productId}-delivery-${Date.now()}`,
+          productId,
+          name: productEditName(deliveryProduct),
+          saleUnit: 'UNIT',
+          quantity: 1,
+          quantityKg: null,
+          price: calculation.deliveryCost,
+          priceType: 'MANUAL',
+          sku: DELIVERY_SKU,
+          isDelivery: true,
+        },
+      ];
+    });
+  };
+
+  const calculateEditDelivery = async () => {
+    if (!editItemsSale) return;
+
+    const saleExtra = editItemsSale as SaleExtra;
+    const selectedClient = saleExtra.client ?? null;
+    const selectedBusinessLocation =
+      businessLocations.find((location) => location.id === editBusinessLocationId) ?? null;
+
+    if (!selectedClient?.id) {
+      toast.error('La venta tiene que tener cliente para calcular el envío');
+      return;
+    }
+
+    if (!clientHasCoordinates(selectedClient)) {
+      toast.error('El cliente seleccionado no tiene coordenadas cargadas');
+      return;
+    }
+
+    if (!editBusinessLocationId || !selectedBusinessLocation) {
+      toast.error('Seleccioná la sucursal o ubicación de salida');
+      return;
+    }
+
+    if (!locationHasCoordinates(selectedBusinessLocation)) {
+      toast.error('La ubicación de salida no tiene coordenadas cargadas');
+      return;
+    }
+
+    const pricePerKm = num(editDeliveryPricePerKm);
+    if (pricePerKm <= 0) {
+      toast.error('El precio por km debe ser mayor a 0');
+      return;
+    }
+
+    if (!deliveryProduct) {
+      toast.error(`No encontré el producto de envío con SKU ${DELIVERY_SKU}`);
+      return;
+    }
+
+    setEditCalculatingDelivery(true);
+    const toastId = toast.loading('Calculando envío...');
+
+    try {
+      const response = await api.post('/delivery/calculate', {
+        businessLocationId: editBusinessLocationId,
+        clientId: selectedClient.id,
+        pricePerKm,
+      });
+
+      const calculation: DeliveryCalculation = {
+        distanceKm: num(response.data.distanceKm),
+        pricePerKm: num(response.data.pricePerKm),
+        deliveryCost: num(response.data.deliveryCost),
+        durationMinutes: response.data.durationMinutes ?? null,
+        straightDistanceKm: response.data.straightDistanceKm ?? null,
+        source: response.data.source,
+        businessLocationId: response.data.businessLocationId,
+        businessLocationName: response.data.businessLocationName,
+        clientId: response.data.clientId,
+        clientName: response.data.clientName,
+        originAddress: response.data.originAddress,
+        destinationAddress: response.data.destinationAddress,
+        deliveryAddressSnapshot: response.data.deliveryAddressSnapshot,
+      };
+
+      setEditDeliveryDistanceKm(String(calculation.distanceKm));
+      setEditDeliveryPricePerKm(String(calculation.pricePerKm));
+      setEditDeliveryCalculation(calculation);
+      applyDeliveryToEditLines(calculation);
+
+      toast.success(
+        calculation.source === 'GOOGLE_ROUTES'
+          ? `Envío calculado por ruta real: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`
+          : `Envío estimado: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`,
+        { id: toastId }
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'No se pudo calcular el envío'), { id: toastId });
+    } finally {
+      setEditCalculatingDelivery(false);
+    }
+  };
+
+  const removeDeliveryFromEditSale = () => {
+    setEditDeliveryEnabled(false);
+    setEditDeliveryCalculation(null);
+    setEditDeliveryDistanceKm('');
+    setEditLines((prev) =>
+      prev.filter((line) => !line.isDelivery && String(line.sku ?? '').toUpperCase() !== DELIVERY_SKU)
+    );
+  };
+
+  const getEditProductSelectedLabel = (productId: string) => {
+    const lines = editLines.filter((line) => line.productId === productId && !line.isDelivery);
+
+    if (!lines.length) return null;
+
+    const product = getProductById(productId) as any;
+    const saleUnit = String(product?.saleUnit ?? lines[0]?.saleUnit ?? '').toUpperCase();
+
+    if (saleUnit === 'KG') {
+      const totalKg = lines.reduce((acc, line) => acc + num(line.quantityKg), 0);
+      return `${totalKg.toLocaleString('es-AR', { maximumFractionDigits: 3 })} kg`;
+    }
+
+    const totalQty = lines.reduce((acc, line) => acc + num(line.quantity), 0);
+    return `${totalQty} cargado${totalQty === 1 ? '' : 's'}`;
   };
 
   const editItemsTotal = editLines.reduce((acc, line) => {
@@ -1133,18 +1525,41 @@ export default function VentasPage() {
     const toastId = toast.loading('Actualizando productos de la venta...');
 
     try {
+      const deliveryLine = editLines.find(
+        (line) => line.isDelivery || String(line.sku ?? '').toUpperCase() === DELIVERY_SKU
+      );
+      const deliveryCost = deliveryLine ? num(deliveryLine.price) : 0;
+
       await api.patch(`/sales/${editItemsSale.id}/items`, {
+        businessLocationId: deliveryLine ? editBusinessLocationId || null : editBusinessLocationId || null,
+        deliveryMethod: deliveryLine ? 'LOCAL_DELIVERY' : 'PICKUP',
+        deliveryStatus: deliveryLine ? 'PENDING' : 'NONE',
+        deliveryAddressSnapshot: deliveryLine
+          ? editDeliveryCalculation?.deliveryAddressSnapshot ||
+            editDeliveryCalculation?.destinationAddress ||
+            buildClientAddress((editItemsSale as SaleExtra).client)
+          : null,
+        deliveryDistanceKm: deliveryLine
+          ? num(editDeliveryCalculation?.distanceKm ?? editDeliveryDistanceKm)
+          : null,
+        deliveryPricePerKm: deliveryLine ? num(editDeliveryPricePerKm, DEFAULT_DELIVERY_PRICE_PER_KM) : null,
+        deliveryCost,
         items: editLines.map((line) => ({
           productId: line.productId,
           quantity: line.saleUnit === 'KG' ? undefined : Math.max(1, num(line.quantity)),
           quantityKg: line.saleUnit === 'KG' ? Math.max(0.001, num(line.quantityKg)) : undefined,
           price: num(line.price),
-          priceType: line.priceType || 'price',
+          priceType: normalizeEditPriceType(line.priceType) || 'MANUAL',
         })),
       });
 
       setEditItemsSale(null);
       setEditLines([]);
+      setEditDeliveryEnabled(false);
+      setEditDeliveryDistanceKm('');
+      setEditDeliveryPricePerKm(String(DEFAULT_DELIVERY_PRICE_PER_KM));
+      setEditBusinessLocationId('');
+      setEditDeliveryCalculation(null);
       await load();
       toast.success('Productos de la venta actualizados', { id: toastId });
     } catch (error: unknown) {
@@ -2737,27 +3152,131 @@ export default function VentasPage() {
                   {loadingProducts ? (
                     <div className="sales-edit-empty">Cargando productos...</div>
                   ) : editProductsFiltered.length ? (
-                    editProductsFiltered.map((product: any) => (
-                      <button
-                        key={product.id}
-                        type="button"
-                        className="sales-edit-product-row"
-                        onClick={() => addProductToEditSale(product)}
-                      >
-                        <span>
-                          <Package size={16} />
-                        </span>
-                        <div>
-                          <b>{product.name}</b>
-                          <small>{product.sku || 'SIN-SKU'} · {fmtMoney(getProductEditPrice(product))}</small>
-                        </div>
-                        <Plus size={15} />
-                      </button>
-                    ))
+                    editProductsFiltered.map((product: any) => {
+                      const selectedLabel = getEditProductSelectedLabel(String(product.id));
+
+                      return (
+                        <button
+                          key={product.id}
+                          type="button"
+                          className={`sales-edit-product-row ${selectedLabel ? 'is-selected' : ''}`}
+                          onClick={() => addProductToEditSale(product)}
+                        >
+                          <span>
+                            <Package size={16} />
+                          </span>
+                          <div>
+                            <b>{product.name}</b>
+                            <small>{product.sku || 'SIN-SKU'} · {fmtMoney(getProductEditPrice(product, getEditSaleDefaultPriceType(editItemsSale)))} · {getEditPriceLabel(getEditSaleDefaultPriceType(editItemsSale))}</small>
+                          </div>
+                          {selectedLabel ? (
+                            <strong className="sales-edit-product-count">{selectedLabel}</strong>
+                          ) : (
+                            <Plus size={15} />
+                          )}
+                        </button>
+                      );
+                    })
                   ) : (
                     <div className="sales-edit-empty">No encontré productos</div>
                   )}
                 </div>
+              </div>
+
+              <div className="sales-edit-delivery-card">
+                <div className="sales-edit-lines-head" style={{ position: 'static', margin: 0, padding: 0, borderBottom: 'none' }}>
+                  <b>Envío</b>
+                  <span>{editDeliveryCalculation ? fmtMoney(editDeliveryCalculation.deliveryCost) : 'Opcional'}</span>
+                </div>
+
+                <div className="sales-edit-delivery-grid">
+                  <label>
+                    <span>Sale desde</span>
+                    <select
+                      value={editBusinessLocationId}
+                      onChange={(e) => {
+                        setEditBusinessLocationId(e.target.value);
+                        setEditDeliveryCalculation(null);
+                        removeDeliveryFromEditSale();
+                      }}
+                    >
+                      <option value="">
+                        {businessLocations.length ? 'Seleccionar ubicación' : 'Sin ubicaciones cargadas'}
+                      </option>
+                      {businessLocations.map((location: any) => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}{location.isDefault ? ' · default' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Precio por km</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editDeliveryPricePerKm}
+                      onChange={(e) => {
+                        setEditDeliveryPricePerKm(e.target.value);
+                        setEditDeliveryCalculation(null);
+                        removeDeliveryFromEditSale();
+                      }}
+                      placeholder="Ej: 8000"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm sales-edit-delivery-calc"
+                    onClick={calculateEditDelivery}
+                    disabled={editCalculatingDelivery || !editBusinessLocationId || !(editItemsSale as SaleExtra).client?.id}
+                  >
+                    <Truck size={14} />
+                    {editCalculatingDelivery ? 'Calculando...' : 'Calcular envío'}
+                  </button>
+                </div>
+
+                {editDeliveryCalculation && (
+                  <div className={editDeliveryCalculation.source === 'COORDINATES_FALLBACK' ? 'sales-edit-delivery-ok fallback' : 'sales-edit-delivery-ok'}>
+                    <div className="sales-edit-delivery-ok-head">
+                      <b>Envío: {fmtMoney(editDeliveryCalculation.deliveryCost)}</b>
+                      <span className={editDeliveryCalculation.source === 'GOOGLE_ROUTES' ? 'sales-route-source google' : 'sales-route-source fallback'}>
+                        {deliverySourceLabel(editDeliveryCalculation.source)}
+                      </span>
+                    </div>
+                    <span>Ruta: {editDeliveryCalculation.distanceKm} km x {fmtMoney(editDeliveryCalculation.pricePerKm)}</span>
+                    {formatDurationMinutes(editDeliveryCalculation.durationMinutes) && (
+                      <span>Tiempo estimado: {formatDurationMinutes(editDeliveryCalculation.durationMinutes)}</span>
+                    )}
+                    {editDeliveryCalculation.source === 'COORDINATES_FALLBACK' && (
+                      <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
+                    )}
+                  </div>
+                )}
+
+                <div className="sales-edit-delivery-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={removeDeliveryFromEditSale}
+                    disabled={!editLines.some((line) => line.isDelivery || String(line.sku ?? '').toUpperCase() === DELIVERY_SKU)}
+                  >
+                    Quitar envío
+                  </button>
+                </div>
+
+                {(editItemsSale as SaleExtra).client && !clientHasCoordinates((editItemsSale as SaleExtra).client) && (
+                  <small style={{ color: 'var(--warn)', lineHeight: 1.4 }}>
+                    El cliente no tiene coordenadas cargadas. No se puede calcular ruta automática.
+                  </small>
+                )}
+
+                {!deliveryProduct && (
+                  <small style={{ color: 'var(--warn)', lineHeight: 1.4 }}>
+                    Para usar envío, tiene que existir el producto con SKU {DELIVERY_SKU}.
+                  </small>
+                )}
               </div>
 
               <div className="sales-edit-lines">
@@ -2769,7 +3288,12 @@ export default function VentasPage() {
                 {editLines.map((line) => (
                   <div className="sales-edit-line" key={line.key}>
                     <div className="sales-edit-line-title">
-                      <b>{line.name}</b>
+                      <div>
+                        <b>{line.name}</b>
+                        <small className="sales-edit-line-meta">
+                          {line.sku ? `${line.sku} · ` : ''}{line.isDelivery ? 'Envío' : getEditPriceLabel(line.priceType)}
+                        </small>
+                      </div>
                       <button
                         type="button"
                         className="btn btn-danger btn-sm"
@@ -2803,11 +3327,24 @@ export default function VentasPage() {
                       )}
 
                       <label>
+                        <span>Tipo precio</span>
+                        <select
+                          value={normalizeEditPriceType(line.priceType) || 'MANUAL'}
+                          disabled={line.isDelivery}
+                          onChange={(e) => changeEditLinePriceType(line, e.target.value)}
+                        >
+                          <option value="PRICE">Minorista</option>
+                          <option value="WHOLESALE_PRICE">Mayorista</option>
+                          <option value="MANUAL">Manual / mantener actual</option>
+                        </select>
+                      </label>
+
+                      <label>
                         <span>Precio</span>
                         <input
                           type="number"
                           value={line.price}
-                          onChange={(e) => updateEditLine(line.key, { price: num(e.target.value) })}
+                          onChange={(e) => updateEditLine(line.key, { price: num(e.target.value), priceType: 'MANUAL' })}
                         />
                       </label>
 
@@ -3109,9 +3646,10 @@ export default function VentasPage() {
         }
 
         .sales-edit-items-modal {
-          width: min(980px, calc(100vw - 32px));
-          height: min(88dvh, 820px);
-          max-height: calc(100dvh - 32px);
+          width: min(1280px, calc(100vw - 36px)) !important;
+          max-width: min(1280px, calc(100vw - 36px)) !important;
+          height: min(94dvh, 900px);
+          max-height: calc(100dvh - 24px);
           overflow: hidden;
         }
 
@@ -3124,17 +3662,18 @@ export default function VentasPage() {
         .sales-edit-items-body {
           flex: 1 1 auto;
           min-height: 0;
-          display: flex;
-          flex-direction: column;
+          display: grid;
+          grid-template-columns: minmax(340px, 430px) minmax(560px, 1fr);
+          grid-template-rows: auto minmax(0, 1fr);
           gap: 16px;
           padding: 16px !important;
-          overflow-y: auto !important;
-          overflow-x: hidden !important;
+          overflow: hidden !important;
           background: var(--bg);
         }
 
         .sales-edit-products-picker,
-        .sales-edit-lines {
+        .sales-edit-lines,
+        .sales-edit-delivery-card {
           min-width: 0;
           display: flex;
           flex-direction: column;
@@ -3146,20 +3685,27 @@ export default function VentasPage() {
         }
 
         .sales-edit-products-picker {
-          flex: 0 0 auto;
-          max-height: 390px;
+          grid-row: 1 / span 2;
+          min-height: 0;
+          max-height: none;
           overflow: hidden;
         }
 
+        .sales-edit-delivery-card {
+          min-height: 0;
+        }
+
         .sales-edit-lines {
-          flex: 0 0 auto;
-          overflow: visible;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
+          padding-right: 10px;
         }
 
         .sales-edit-products-list {
           flex: 1 1 auto;
           min-height: 0;
-          max-height: 270px;
+          max-height: none;
           display: grid;
           align-content: start;
           gap: 8px;
@@ -3175,10 +3721,10 @@ export default function VentasPage() {
           border-radius: 15px;
           background: var(--surface2);
           color: var(--text);
-          padding: 11px;
+          padding: 9px 10px;
           display: grid;
-          grid-template-columns: 36px minmax(0, 1fr) 28px;
-          gap: 10px;
+          grid-template-columns: 32px minmax(0, 1fr) auto;
+          gap: 9px;
           align-items: center;
           text-align: left;
           cursor: pointer;
@@ -3197,10 +3743,29 @@ export default function VentasPage() {
           transform: scale(0.99);
         }
 
+        .sales-edit-product-row.is-selected {
+          border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+          background: color-mix(in srgb, var(--accent) 7%, var(--surface2));
+        }
+
+        .sales-edit-product-count {
+          border-radius: 999px;
+          background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+          border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+          color: var(--accent);
+          font-family: var(--mono);
+          font-size: 11px;
+          font-weight: 900;
+          line-height: 1;
+          padding: 7px 9px;
+          white-space: nowrap;
+          justify-self: end;
+        }
+
         .sales-edit-product-row > span {
-          width: 36px;
-          height: 36px;
-          border-radius: 13px;
+          width: 32px;
+          height: 32px;
+          border-radius: 12px;
           background: var(--bg);
           display: grid;
           place-items: center;
@@ -3270,26 +3835,44 @@ export default function VentasPage() {
           min-width: 0;
         }
 
+        .sales-edit-line-title > div {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+
         .sales-edit-line-title b {
           min-width: 0;
           overflow-wrap: anywhere;
+          white-space: normal;
         }
 
-        .sales-edit-line-controls {
+        .sales-edit-line-meta {
+          color: var(--text3);
+          font-size: 11px;
+          font-weight: 800;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-edit-line-controls,
+        .sales-edit-delivery-grid {
           display: grid;
-          grid-template-columns: minmax(120px, 1fr) minmax(140px, 1fr) minmax(150px, 0.8fr);
+          grid-template-columns: minmax(90px, 0.75fr) minmax(125px, 1fr) minmax(130px, 1fr) minmax(140px, 0.8fr);
           gap: 10px;
           align-items: stretch;
         }
 
         .sales-edit-line-controls label,
-        .sales-edit-line-controls > div {
+        .sales-edit-line-controls > div,
+        .sales-edit-delivery-grid label,
+        .sales-edit-delivery-grid > div {
           min-width: 0;
           display: grid;
           gap: 6px;
         }
 
-        .sales-edit-line-controls > div {
+        .sales-edit-line-controls > div,
+        .sales-edit-delivery-grid > div {
           border: 1px solid var(--border);
           border-radius: 12px;
           background: var(--bg);
@@ -3298,6 +3881,7 @@ export default function VentasPage() {
         }
 
         .sales-edit-line-controls span,
+        .sales-edit-delivery-grid span,
         .sales-edit-items-footer small {
           color: var(--text3);
           font-size: 10px;
@@ -3306,13 +3890,92 @@ export default function VentasPage() {
           letter-spacing: 0.04em;
         }
 
-        .sales-edit-line-controls input {
+        .sales-edit-line-controls input,
+        .sales-edit-line-controls select,
+        .sales-edit-delivery-grid input,
+        .sales-edit-delivery-grid select {
           width: 100%;
           min-width: 0;
           height: 42px;
         }
 
+        .sales-edit-delivery-grid {
+          grid-template-columns: minmax(210px, 1.4fr) minmax(140px, 0.8fr) auto;
+          align-items: end;
+        }
+
+        .sales-edit-delivery-calc {
+          min-height: 42px;
+          white-space: nowrap;
+        }
+
+        .sales-edit-delivery-ok {
+          display: grid;
+          gap: 5px;
+          border: 1px solid rgba(34, 197, 94, 0.25);
+          background: rgba(34, 197, 94, 0.08);
+          color: var(--text2);
+          border-radius: 14px;
+          padding: 10px;
+          font-size: 12px;
+        }
+
+        .sales-edit-delivery-ok.fallback {
+          border-color: rgba(245, 158, 11, 0.32);
+          background: rgba(245, 158, 11, 0.09);
+        }
+
+        .sales-edit-delivery-ok b {
+          color: var(--accent);
+        }
+
+        .sales-edit-delivery-ok small {
+          color: var(--text3);
+          font-size: 11px;
+          line-height: 1.35;
+        }
+
+        .sales-edit-delivery-ok-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .sales-route-source {
+          flex-shrink: 0;
+          border-radius: 999px;
+          padding: 4px 7px;
+          font-size: 10px;
+          font-weight: 950;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        .sales-route-source.google {
+          background: rgba(34, 197, 94, 0.13);
+          color: var(--accent);
+          border: 1px solid rgba(34, 197, 94, 0.25);
+        }
+
+        .sales-route-source.fallback {
+          background: rgba(245, 158, 11, 0.13);
+          color: var(--warn);
+          border: 1px solid rgba(245, 158, 11, 0.25);
+        }
+
+        .sales-edit-delivery-card {
+          overflow: visible;
+        }
+
+        .sales-edit-delivery-actions {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
         .sales-edit-line-controls b,
+        .sales-edit-delivery-grid b,
         .sales-edit-items-footer b {
           color: var(--accent);
           font-family: var(--mono);
@@ -3339,11 +4002,34 @@ export default function VentasPage() {
           padding: 14px 24px !important;
           border-top: 1px solid var(--border);
           background: var(--surface);
+          box-shadow: 0 -10px 30px rgba(15, 23, 42, 0.06);
         }
 
         .sales-edit-items-footer > div {
           display: grid;
           gap: 3px;
+        }
+
+        @media (max-width: 1100px) {
+          .sales-edit-items-body {
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto !important;
+          }
+
+          .sales-edit-products-picker {
+            grid-row: auto;
+            max-height: 330px;
+          }
+
+          .sales-edit-products-list {
+            max-height: 230px;
+          }
+
+          .sales-edit-lines {
+            overflow: visible;
+            padding-right: 0;
+          }
         }
 
         @media (max-width: 1024px) {
@@ -3537,15 +4223,33 @@ export default function VentasPage() {
           }
 
           .sales-edit-items-body {
-            grid-template-columns: 1fr;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto !important;
+          }
+
+          .sales-edit-products-picker {
+            grid-row: auto;
+            max-height: 290px;
           }
 
           .sales-edit-products-list {
-            max-height: 220px;
+            max-height: 210px;
           }
 
-          .sales-edit-line-controls {
+          .sales-edit-line-controls,
+          .sales-edit-delivery-grid {
             grid-template-columns: 1fr;
+          }
+
+          .sales-edit-delivery-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .sales-edit-delivery-actions button {
+            width: 100%;
+            justify-content: center;
           }
 
           .sales-edit-items-footer {
@@ -4071,6 +4775,306 @@ export default function VentasPage() {
           to {
             transform: translateY(0);
             opacity: 1;
+          }
+        }
+
+
+        /* ===== EDITAR PRODUCTOS: MOBILE PRO ===== */
+        @media (max-width: 768px) {
+          .sales-edit-items-modal {
+            width: calc(100vw - 12px) !important;
+            max-width: calc(100vw - 12px) !important;
+            height: calc(100dvh - 12px) !important;
+            max-height: calc(100dvh - 12px) !important;
+            margin: 6px auto !important;
+            border-radius: 18px !important;
+            overflow: hidden !important;
+          }
+
+          .sales-edit-items-modal .modal-header {
+            padding: 10px 12px !important;
+            min-height: 58px;
+            position: relative;
+            z-index: 4;
+            background: var(--surface);
+          }
+
+          .sales-edit-items-modal .modal-header > div {
+            min-width: 0;
+          }
+
+          .sales-edit-items-modal .modal-header b {
+            display: block;
+            max-width: calc(100vw - 90px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 14px !important;
+          }
+
+          .sales-edit-items-modal .modal-header small {
+            font-size: 10.5px;
+            line-height: 1.2;
+          }
+
+          .sales-edit-items-body {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px !important;
+            padding: 10px !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            background: var(--bg) !important;
+          }
+
+          .sales-edit-products-picker,
+          .sales-edit-delivery-card,
+          .sales-edit-lines {
+            border-radius: 16px !important;
+            padding: 10px !important;
+            gap: 9px !important;
+          }
+
+          .sales-edit-products-picker {
+            flex: 0 0 auto !important;
+            max-height: 42dvh !important;
+            overflow: hidden !important;
+          }
+
+          .sales-edit-products-list {
+            max-height: calc(42dvh - 98px) !important;
+            gap: 7px !important;
+            padding-right: 2px !important;
+          }
+
+          .sales-edit-lines-head {
+            margin: -10px -10px 0 !important;
+            padding: 10px !important;
+            min-height: 42px;
+          }
+
+          .sales-edit-lines-head b {
+            font-size: 13px;
+          }
+
+          .sales-edit-lines-head span {
+            font-size: 11px !important;
+          }
+
+          .sales-edit-product-row {
+            min-height: 52px;
+            padding: 8px !important;
+            border-radius: 14px !important;
+            grid-template-columns: 30px minmax(0, 1fr) auto !important;
+            gap: 8px !important;
+          }
+
+          .sales-edit-product-row > span {
+            width: 30px !important;
+            height: 30px !important;
+            border-radius: 11px !important;
+          }
+
+          .sales-edit-product-row b {
+            font-size: 12px !important;
+            line-height: 1.15 !important;
+          }
+
+          .sales-edit-product-row small {
+            font-size: 10px !important;
+            line-height: 1.15 !important;
+          }
+
+          .sales-edit-product-count {
+            max-width: 82px;
+            padding: 6px 7px !important;
+            font-size: 10px !important;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .sales-edit-delivery-grid {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
+          }
+
+          .sales-edit-delivery-grid label,
+          .sales-edit-delivery-grid > div {
+            gap: 5px !important;
+          }
+
+          .sales-edit-delivery-grid input,
+          .sales-edit-delivery-grid select {
+            height: 40px !important;
+            font-size: 12px !important;
+          }
+
+          .sales-edit-delivery-calc,
+          .sales-edit-delivery-actions button {
+            width: 100% !important;
+            min-height: 40px !important;
+            justify-content: center !important;
+            font-size: 12px !important;
+          }
+
+          .sales-edit-delivery-ok {
+            padding: 9px !important;
+            border-radius: 13px !important;
+            font-size: 11px !important;
+          }
+
+          .sales-edit-delivery-ok-head {
+            align-items: flex-start !important;
+          }
+
+          .sales-route-source {
+            font-size: 9px !important;
+            padding: 4px 6px !important;
+          }
+
+          .sales-edit-lines {
+            flex: 0 0 auto !important;
+            overflow: visible !important;
+            padding-right: 10px !important;
+          }
+
+          .sales-edit-line {
+            padding: 10px !important;
+            border-radius: 15px !important;
+            gap: 10px !important;
+          }
+
+          .sales-edit-line-title {
+            gap: 8px !important;
+          }
+
+          .sales-edit-line-title b {
+            font-size: 12.5px !important;
+            line-height: 1.2 !important;
+          }
+
+          .sales-edit-line-meta {
+            font-size: 10px !important;
+          }
+
+          .sales-edit-line-controls {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+          }
+
+          .sales-edit-line-controls label,
+          .sales-edit-line-controls > div {
+            gap: 5px !important;
+          }
+
+          .sales-edit-line-controls span,
+          .sales-edit-delivery-grid span,
+          .sales-edit-items-footer small {
+            font-size: 9px !important;
+          }
+
+          .sales-edit-line-controls input,
+          .sales-edit-line-controls select {
+            height: 39px !important;
+            font-size: 12px !important;
+          }
+
+          .sales-edit-line-controls > div {
+            grid-column: 1 / -1;
+            min-height: 42px;
+            padding: 8px 9px !important;
+          }
+
+          .sales-edit-items-footer {
+            flex-shrink: 0 !important;
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+            padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) !important;
+            background: var(--surface) !important;
+            box-shadow: 0 -14px 34px rgba(0, 0, 0, 0.18) !important;
+          }
+
+          .sales-edit-items-footer > div {
+            grid-column: 1 / -1;
+            display: flex !important;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            border-radius: 13px;
+            padding: 8px 10px;
+          }
+
+          .sales-edit-items-footer b {
+            font-size: 15px !important;
+          }
+
+          .sales-edit-items-footer button {
+            width: 100% !important;
+            min-height: 42px !important;
+            justify-content: center !important;
+            font-size: 13px !important;
+            border-radius: 13px !important;
+          }
+        }
+
+        @media (max-width: 390px) {
+          .sales-edit-product-count {
+            max-width: 64px;
+          }
+
+          .sales-edit-line-controls {
+            grid-template-columns: 1fr !important;
+          }
+
+          .sales-edit-items-footer {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+
+        /* ===== FIX MOBILE: envío visible arriba ===== */
+        @media (max-width: 768px) {
+          .sales-edit-delivery-card {
+            order: 1 !important;
+            flex: 0 0 auto !important;
+            overflow: visible !important;
+          }
+
+          .sales-edit-products-picker {
+            order: 2 !important;
+            max-height: 30dvh !important;
+          }
+
+          .sales-edit-products-list {
+            max-height: calc(30dvh - 98px) !important;
+          }
+
+          .sales-edit-lines {
+            order: 3 !important;
+          }
+
+          .sales-edit-items-body {
+            padding-bottom: 14px !important;
+          }
+
+          .sales-edit-delivery-card .sales-edit-lines-head {
+            position: static !important;
+          }
+
+          .sales-edit-delivery-grid {
+            display: grid !important;
+            grid-template-columns: 1fr !important;
+          }
+
+          .sales-edit-delivery-grid label,
+          .sales-edit-delivery-calc,
+          .sales-edit-delivery-actions button {
+            width: 100% !important;
           }
         }
 

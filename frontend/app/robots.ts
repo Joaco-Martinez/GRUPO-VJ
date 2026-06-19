@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-const siteUrl = 'https://tudominio.com.ar';
+const siteUrl = 'https://www.grupovj.com.ar';
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -9,14 +9,28 @@ export default function robots(): MetadataRoute.Robots {
       allow: ['/', '/tienda'],
       disallow: [
         '/api/',
-        '/admin/',
-        '/dashboard/',
-        '/configuracion/',
-        '/ventas/',
-        '/productos/',
+        '/alertas/',
+        '/categorias/',
         '/clientes/',
+        '/compras/',
+        '/configuracion/',
+        '/cuentas-corrientes/',
+        '/dashboard/',
+        '/facturacion/',
         '/finanzas/',
         '/login',
+        '/pos/',
+        '/productos/',
+        '/reportes/',
+        '/stock/',
+        '/tienda/carrito/',
+        '/tienda/cuenta/',
+        '/tienda/login/',
+        '/tienda/register/',
+        '/tienda/reset-password/',
+        '/usuarios/',
+        '/vendedores/',
+        '/ventas/',
       ],
     },
     sitemap: `${siteUrl}/sitemap.xml`,

@@ -1,20 +1,6 @@
 import type { Metadata, Viewport } from 'next';
-import { Geist, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 
-const geist = Geist({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700', '800', '900'],
-  variable: '--font-geist',
-  display: 'swap',
-});
-
-const jetBrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['300', '400', '600'],
-  variable: '--font-jetbrains-mono',
-  display: 'swap',
-});
 
 const siteUrl = 'https://www.grupovj.com.ar';
 
@@ -203,8 +189,8 @@ export default function RootLayout({
         '@type': 'Offer',
         name: 'Venta mayorista de bebidas',
         itemOffered: {
-          '@type': 'Product',
-          name: 'Bebidas para comercios',
+          '@type': 'Service',
+          name: 'Venta de bebidas para comercios',
           category: 'Bebidas',
         },
       },
@@ -212,8 +198,8 @@ export default function RootLayout({
         '@type': 'Offer',
         name: 'Venta minorista de bebidas',
         itemOffered: {
-          '@type': 'Product',
-          name: 'Bebidas para clientes particulares',
+          '@type': 'Service',
+          name: 'Venta de bebidas para clientes particulares',
           category: 'Bebidas',
         },
       },
@@ -223,7 +209,7 @@ export default function RootLayout({
   };
 
   return (
-    <html lang="es-AR" className={`${geist.variable} ${jetBrainsMono.variable}`}>
+    <html lang="es-AR">
       <body>
         <script
           type="application/ld+json"

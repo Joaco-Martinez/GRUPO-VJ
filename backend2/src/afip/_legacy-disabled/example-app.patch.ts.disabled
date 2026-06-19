@@ -1,5 +1,0 @@
-// En src/app.ts agregar:
-import arcaConfigRoutes from "./afip/configuracion/arca-config.routes";
-
-// Junto a las rutas AFIP existentes:
-app.use("/afip/configuracion", arcaConfigRoutes);

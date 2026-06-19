@@ -1,4 +1,3 @@
-import type { Metadata } from 'next';
 import { ShopAuthProvider } from '../../context/ShopAuthContext';
 
 const siteUrl = 'https://www.grupovj.com.ar';
@@ -36,92 +35,6 @@ const storeAddresses = [
   },
 ];
 
-export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-
-  title: {
-    default: 'Grupo VJ | Bebidas mayoristas y minoristas en Córdoba',
-    template: '%s | Grupo VJ',
-  },
-
-  description:
-    'Grupo VJ es una tienda y distribuidora de bebidas en Córdoba. Venta mayorista y minorista de fernet, cervezas, vinos, gaseosas, energizantes, combos y más productos para comercios y clientes particulares.',
-
-  applicationName: 'Grupo VJ',
-
-  keywords: [
-    'Grupo VJ',
-    'Grupo VJ Córdoba',
-    'Grupo VJ bebidas',
-    'tienda Grupo VJ',
-    'tienda de bebidas en Córdoba',
-    'bebidas Córdoba',
-    'bebidas mayoristas',
-    'bebidas minoristas',
-    'mayorista de bebidas',
-    'minorista de bebidas',
-    'distribuidora de bebidas',
-    'venta de bebidas',
-    'bebidas para comercios',
-    'bebidas para eventos',
-    'fernet',
-    'cervezas',
-    'vinos',
-    'gaseosas',
-    'energizantes',
-    'combos de bebidas',
-    'bebidas en Argentina',
-  ],
-
-  authors: [{ name: 'Grupo VJ' }],
-  creator: 'Grupo VJ',
-  publisher: 'Grupo VJ',
-
-  category: 'Tienda de bebidas',
-
-  alternates: {
-    canonical: '/tienda',
-  },
-
-  openGraph: {
-    type: 'website',
-    locale: 'es_AR',
-    url: '/tienda',
-    siteName: 'Grupo VJ',
-    title: 'Grupo VJ | Bebidas mayoristas y minoristas en Córdoba',
-    description:
-      'Tienda y distribuidora de bebidas en Córdoba. Venta mayorista y minorista para comercios, eventos y clientes particulares.',
-    images: [
-      {
-        url: '/logo-vj-white-transparent.png',
-        width: 512,
-        height: 512,
-        alt: 'Logo de Grupo VJ',
-      },
-    ],
-  },
-
-  twitter: {
-    card: 'summary',
-    title: 'Grupo VJ | Bebidas mayoristas y minoristas en Córdoba',
-    description:
-      'Venta mayorista y minorista de bebidas en Córdoba para comercios, eventos y clientes particulares.',
-    images: ['/logo-vj-white-transparent.png'],
-  },
-
-  robots: {
-    index: false,
-    follow: false,
-    googleBot: {
-      index: false,
-      follow: false,
-      'max-image-preview': 'large',
-      'max-snippet': 0,
-      'max-video-preview': -1,
-    },
-  },
-};
-
 function WhatsappIcon() {
   return (
     <svg
@@ -139,7 +52,7 @@ function WhatsappIcon() {
   );
 }
 
-export default function TiendaLayout({
+export default function ShopPublicShell({
   children,
 }: {
   children: React.ReactNode;
@@ -147,10 +60,10 @@ export default function TiendaLayout({
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Store',
-    '@id': `${siteUrl}/tienda#store`,
+    '@id': `${siteUrl}/#store`,
     name: 'Grupo VJ',
     alternateName: 'Grupo VJ Bebidas',
-    url: `${siteUrl}/tienda`,
+    url: siteUrl,
     description:
       'Tienda y distribuidora de bebidas en Córdoba con venta mayorista y minorista para comercios, eventos y clientes particulares.',
     image: `${siteUrl}/logo-vj-white-transparent.png`,

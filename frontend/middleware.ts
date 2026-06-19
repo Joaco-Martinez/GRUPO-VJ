@@ -58,12 +58,13 @@ export function middleware(req: NextRequest) {
   const isAdminOrEmployee = role === 'ADMIN' || role === 'EMPLEADO';
   const isClient = role === 'CLIENTE';
 
+  const isHomeRoute = pathname === '/';
   const isTiendaRoute = pathname === '/tienda' || pathname.startsWith('/tienda/');
   const isLoginRoute = pathname === '/login';
 
   // La tienda es pública.
   // Cualquier persona puede entrar, esté logueada o no.
-  if (isTiendaRoute) {
+  if (isHomeRoute || isTiendaRoute) {
     return NextResponse.next();
   }
 
@@ -80,7 +81,7 @@ export function middleware(req: NextRequest) {
 
     if (isClient) {
       const tiendaUrl = req.nextUrl.clone();
-      tiendaUrl.pathname = '/tienda';
+      tiendaUrl.pathname = '/';
       return NextResponse.redirect(tiendaUrl);
     }
 
@@ -91,7 +92,7 @@ export function middleware(req: NextRequest) {
   // lo mandamos directo a tienda.
   if (!isLogged) {
     const tiendaUrl = req.nextUrl.clone();
-    tiendaUrl.pathname = '/tienda';
+    tiendaUrl.pathname = '/';
     return NextResponse.redirect(tiendaUrl);
   }
 
@@ -99,14 +100,14 @@ export function middleware(req: NextRequest) {
   // lo mandamos a tienda.
   if (isClient) {
     const tiendaUrl = req.nextUrl.clone();
-    tiendaUrl.pathname = '/tienda';
+    tiendaUrl.pathname = '/';
     return NextResponse.redirect(tiendaUrl);
   }
 
   // Solo ADMIN o EMPLEADO pueden entrar al sistema.
   if (!isAdminOrEmployee) {
     const tiendaUrl = req.nextUrl.clone();
-    tiendaUrl.pathname = '/tienda';
+    tiendaUrl.pathname = '/';
     return NextResponse.redirect(tiendaUrl);
   }
 

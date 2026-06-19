@@ -5,6 +5,7 @@ import { authMiddleware, requireRole } from "../middleware/auth";
 const router = Router();
 
 router.get("/", authMiddleware, requireRole("ADMIN"), userController.getAll);
+router.get("/:id/activity", authMiddleware, requireRole("ADMIN"), userController.getActivityById);
 router.get("/:id", authMiddleware, requireRole("ADMIN"), userController.getById);
 router.post("/", authMiddleware, requireRole("ADMIN"), userController.create);
 router.put("/:id", authMiddleware, requireRole("ADMIN"), userController.update);

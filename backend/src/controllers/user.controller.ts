@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import { userService } from "../services/user.service";
 import { getParamAsString } from "../utils/params";
+
 function toNumberOrNull(value: any) {
   if (value === undefined || value === null || value === "") return undefined;
+
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
 }
@@ -15,11 +17,19 @@ function toBoolean(value: any) {
   return Boolean(value);
 }
 
+function safeJson(data: any) {
+  return JSON.parse(
+    JSON.stringify(data, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    )
+  );
+}
+
 export const userController = {
-  async getAll(req: Request, res: Response, next: NextFunction) {
+  async getAll(_req: Request, res: Response, next: NextFunction) {
     try {
       const users = await userService.getAll();
-      res.json(users);
+      res.json(safeJson(users));
     } catch (err) {
       next(err);
     }
@@ -27,7 +37,9 @@ export const userController = {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const user = await userService.getById(getParamAsString(req.params.id, "id"));
+      const user = await userService.getById(
+        getParamAsString(req.params.id, "id")
+      );
 
       if (!user) {
         return res.status(404).json({
@@ -35,7 +47,35 @@ export const userController = {
         });
       }
 
-      res.json(user);
+      res.json(safeJson(user));
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getActivityById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const activity = await userService.getActivityById(
+        getParamAsString(req.params.id, "id"),
+        {
+          fromDate:
+            typeof req.query.fromDate === "string"
+              ? req.query.fromDate
+              : undefined,
+          toDate:
+            typeof req.query.toDate === "string"
+              ? req.query.toDate
+              : undefined,
+        }
+      );
+
+      if (!activity) {
+        return res.status(404).json({
+          message: "Usuario no encontrado",
+        });
+      }
+
+      res.json(safeJson(activity));
     } catch (err) {
       next(err);
     }
@@ -50,7 +90,7 @@ export const userController = {
         isActive: toBoolean(req.body.isActive),
       });
 
-      res.status(201).json(newUser);
+      res.status(201).json(safeJson(newUser));
     } catch (err) {
       next(err);
     }
@@ -64,9 +104,12 @@ export const userController = {
         body.isActive = toBoolean(body.isActive);
       }
 
-      const updated = await userService.update(getParamAsString(req.params.id, "id"), body);
+      const updated = await userService.update(
+        getParamAsString(req.params.id, "id"),
+        body
+      );
 
-      res.json(updated);
+      res.json(safeJson(updated));
     } catch (err) {
       next(err);
     }

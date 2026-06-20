@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export type CatalogCategory = {
   id: string;
@@ -13,8 +13,8 @@ export type CatalogProduct = {
   sku?: string | null;
   name: string;
   description?: string | null;
-  type: 'SIMPLE' | 'COMPUESTO';
-  saleUnit: 'UNIT' | 'KG';
+  type: "SIMPLE" | "COMPUESTO";
+  saleUnit: "UNIT" | "KG";
   imageUrl?: string | null;
   category?: {
     id: string;
@@ -22,11 +22,11 @@ export type CatalogProduct = {
     slug: string;
   } | null;
   price: number;
-  priceList: 'PUBLIC' | 'CLIENT' | 'WHOLESALE';
+  priceList: "PUBLIC" | "CLIENT" | "WHOLESALE";
   publicPrice: number;
   clientPrice: number;
   wholesalePrice: number;
-  currency: 'ARS';
+  currency: "ARS";
   availableQuantity: number;
   availableKg: number;
   stockLabel: string;
@@ -39,27 +39,57 @@ export type CheckoutItem = {
   quantityKg?: number;
 };
 
+export type CartValidationItem = {
+  productId: string;
+  name?: string | null;
+  saleUnit?: "UNIT" | "KG" | null;
+  requested: number;
+  available: number;
+  ok: boolean;
+  message?: string | null;
+  stockLabel?: string | null;
+  product?: CatalogProduct | null;
+};
+
+export type CartValidationResult = {
+  ok: boolean;
+  customer: {
+    category: "Price" | "Cliente" | "Mayorista";
+    clientId: string | null;
+  };
+  items: CartValidationItem[];
+};
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_URL}${path}`;
 
-  console.log('[SHOP API] Request:', {
+  let debugBody: unknown = null;
+
+  try {
+    debugBody =
+      typeof options.body === "string" ? JSON.parse(options.body) : null;
+  } catch {
+    debugBody = options.body ?? null;
+  }
+
+  console.log("[SHOP API] Request:", {
     url,
-    method: options.method || 'GET',
-    body: options.body ? JSON.parse(options.body as string) : null,
+    method: options.method || "GET",
+    body: debugBody,
   });
 
   const res = await fetch(url, {
     ...options,
-    credentials: 'include',
+    credentials: "include",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...(options.headers || {}),
     },
   });
 
   const json = await res.json().catch(() => null);
 
-  console.log('[SHOP API] Response:', {
+  console.log("[SHOP API] Response:", {
     url,
     status: res.status,
     ok: res.ok,
@@ -67,13 +97,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    console.error('[SHOP API] Error:', {
+    console.error("[SHOP API] Error:", {
       url,
       status: res.status,
       error: json,
     });
 
-    throw new Error(json?.message || json?.error || 'Error de solicitud');
+    throw new Error(json?.message || json?.error || "Error de solicitud");
   }
 
   return json?.content ?? json;
@@ -81,21 +111,29 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const shopApi = {
   getCategories() {
-    return request<CatalogCategory[]>('/catalog/categories');
+    return request<CatalogCategory[]>("/catalog/categories");
   },
 
-  getProducts(params?: { category?: string; search?: string; page?: number; limit?: number }) {
+  getProducts(params?: {
+    category?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+    sort?: string;
+  }) {
     const query = new URLSearchParams();
 
-    if (params?.category) query.set('category', params.category);
-    if (params?.search) query.set('search', params.search);
-    if (params?.page) query.set('page', String(params.page));
-    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.category) query.set("category", params.category);
+    if (params?.search) query.set("search", params.search);
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    if (params?.sort) query.set("sort", params.sort);
 
     const qs = query.toString();
+
     return request<{
       customer: {
-        category: 'Price' | 'Cliente' | 'Mayorista';
+        category: "Price" | "Cliente" | "Mayorista";
         isLoggedIn: boolean;
         clientId: string | null;
       };
@@ -104,28 +142,41 @@ export const shopApi = {
         limit: number;
         total: number;
         pages: number;
+        totalPages?: number;
       };
       products: CatalogProduct[];
-    }>(`/catalog/products${qs ? `?${qs}` : ''}`);
+    }>(`/catalog/products${qs ? `?${qs}` : ""}`);
   },
 
-  checkoutWhatsapp(payload: { items: CheckoutItem[]; paymentMethod?: string; customerNotes?: string }) {
+  validateCart(payload: { items: CheckoutItem[] }) {
+    return request<CartValidationResult>("/catalog/validate-cart", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  checkoutWhatsapp(payload: {
+    items: CheckoutItem[];
+    paymentMethod?: string;
+    customerNotes?: string;
+  }) {
     return request<{
       saleId: string;
-      status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
+      status: "PENDING" | "COMPLETED" | "CANCELLED";
       total: number;
       whatsappUrl: string | null;
       whatsappMessage: string;
       missingWhatsappConfig: boolean;
-    }>('/catalog/checkout-whatsapp', {
-      method: 'POST',
+      whatsappApi?: unknown;
+    }>("/catalog/checkout-whatsapp", {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
   login(payload: { email: string; password: string }) {
-    return request('/auth/login', {
-      method: 'POST',
+    return request("/auth/login", {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   },
@@ -138,21 +189,21 @@ export const shopApi = {
     dni: string;
     telefono?: string;
   }) {
-    return request('/auth/register', {
-      method: 'POST',
+    return request("/auth/register", {
+      method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
   me() {
-    return request('/auth/me');
+    return request("/auth/me");
   },
 };
 
 export function formatMoney(value: number) {
-  return new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
     maximumFractionDigits: 0,
   }).format(value || 0);
 }

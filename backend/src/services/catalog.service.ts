@@ -77,6 +77,12 @@ function getStockLocationByCategory(category: CategoryClient): Location {
     : Location.DEPOSITO;
 }
 
+function getLocationLabelByCategory(category: CategoryClient) {
+  return category === CategoryClient.Mayorista
+    ? "local mayorista"
+    : "depósito minorista";
+}
+
 function getUnitStockByLocation(product: any, location: Location) {
   return Number(
     location === Location.LOCAL
@@ -95,7 +101,7 @@ function getKgStockByLocation(product: any, location: Location) {
 
 function getProductStock(product: any, category: CategoryClient) {
   const stockLocation = getStockLocationByCategory(category);
-  const locationLabel = stockLocation === Location.LOCAL ? "local" : "depósito";
+  const locationLabel = getLocationLabelByCategory(category);
 
   if (product.type === ProductType.COMPUESTO) {
     if (!Array.isArray(product.components) || product.components.length === 0) {
@@ -167,6 +173,34 @@ function getProductStock(product: any, category: CategoryClient) {
         : `Sin stock en ${locationLabel}`,
     canSell: availableQuantity > 0,
   };
+}
+
+function getRequestedQuantityForProduct(product: any, item: CheckoutItemInput) {
+  if (product.saleUnit === SaleUnit.KG) {
+    return Number(item.quantityKg ?? item.quantity ?? 0);
+  }
+
+  return Number(item.quantity ?? item.quantityKg ?? 0);
+}
+
+function getAvailableQuantityForProduct(
+  product: any,
+  stock: ReturnType<typeof getProductStock>,
+) {
+  if (product.saleUnit === SaleUnit.KG) {
+    return Number(stock.availableKg || 0);
+  }
+
+  return Number(stock.availableQuantity || 0);
+}
+
+function formatStockAmountForProduct(product: any, value: number) {
+  if (product.saleUnit === SaleUnit.KG) {
+    return `${round2(value)} kg`;
+  }
+
+  const units = Math.trunc(value);
+  return `${units} unidad${units === 1 ? "" : "es"}`;
 }
 
 function resolvePrice(product: any, category: CategoryClient) {
@@ -367,7 +401,7 @@ export const catalogService = {
       },
     });
 
-    return categories.map((category) => ({
+    return categories.map((category: any) => ({
       id: category.id,
       name: category.name,
       slug: category.slug,
@@ -399,7 +433,7 @@ export const catalogService = {
       ];
     }
 
-    const products = await prisma.product.findMany({
+    const products: any[] = await prisma.product.findMany({
       where,
       orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
       include: {
@@ -409,7 +443,7 @@ export const catalogService = {
     });
 
     const mappedProducts = products
-      .map((product) => mapProduct(product, customer))
+      .map((product: any) => mapProduct(product, customer))
       .sort((a, b) => {
         if (a.canSell !== b.canSell) return a.canSell ? -1 : 1;
 
@@ -448,6 +482,135 @@ export const catalogService = {
     };
   },
 
+  async validateCart(data: CheckoutInput) {
+    if (!data.userId) {
+      throw new Error("Para validar el carrito tenés que iniciar sesión");
+    }
+
+    const customer = await this.getCustomerContext(data.userId);
+
+    if (!customer.clientId) {
+      throw new Error(
+        "Solo los usuarios cliente pueden validar carritos desde la tienda",
+      );
+    }
+
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      return {
+        ok: true,
+        customer: {
+          category: customer.category,
+          clientId: customer.clientId ?? null,
+        },
+        items: [],
+      };
+    }
+
+    const normalizedItems = data.items.map((item) => ({
+      productId: String(item.productId || ""),
+      quantity: item.quantity !== undefined ? Number(item.quantity) : undefined,
+      quantityKg:
+        item.quantityKg !== undefined ? Number(item.quantityKg) : undefined,
+    }));
+
+    for (const item of normalizedItems) {
+      if (!item.productId) {
+        throw new Error("Hay un producto inválido en el carrito");
+      }
+    }
+
+    const productIds = [
+      ...new Set(normalizedItems.map((item) => item.productId)),
+    ];
+
+    const products: any[] = await prisma.product.findMany({
+      where: {
+        id: {
+          in: productIds,
+        },
+        isActive: true,
+      },
+      include: {
+        category: true,
+        components: {
+          include: {
+            component: true,
+          },
+        },
+      },
+    });
+
+    const productMap = new Map<string, any>(
+      products.map((product: any) => [product.id, product]),
+    );
+
+    const validatedItems = normalizedItems.map((item) => {
+      const product = productMap.get(item.productId);
+
+      if (!product) {
+        return {
+          productId: item.productId,
+          name: "Producto no disponible",
+          saleUnit: null,
+          requested: 0,
+          available: 0,
+          ok: false,
+          message: "Este producto ya no está disponible en la tienda.",
+          stockLabel: "Producto no disponible",
+          product: null,
+        };
+      }
+
+      const stock = getProductStock(product, customer.category);
+      const pricing = resolvePrice(product, customer.category);
+      const requested = getRequestedQuantityForProduct(product, item);
+      const available = getAvailableQuantityForProduct(product, stock);
+
+      let ok = true;
+      let message = "";
+
+      if (!Number.isFinite(requested) || requested <= 0) {
+        ok = false;
+        message = `La cantidad de ${product.name} no es válida.`;
+      } else if (pricing.price <= 0) {
+        ok = false;
+        message = `${product.name} no tiene precio configurado para tu lista.`;
+      } else if (!stock.canSell || available <= 0) {
+        ok = false;
+        message = `${product.name} no tiene stock disponible en ${getLocationLabelByCategory(
+          customer.category,
+        )}.`;
+      } else if (requested > available) {
+        ok = false;
+        message = `De ${product.name} solo hay ${formatStockAmountForProduct(
+          product,
+          available,
+        )} disponible${available === 1 && product.saleUnit !== SaleUnit.KG ? "" : "s"}.`;
+      }
+
+      return {
+        productId: product.id,
+        name: product.name,
+        saleUnit: product.saleUnit,
+        requested: round2(requested),
+        available: round2(available),
+        ok,
+        message,
+        stockLabel: stock.stockLabel,
+        product: mapProduct(product, customer),
+      };
+    });
+
+    return {
+      ok: validatedItems.every((item) => item.ok),
+      customer: {
+        category: customer.category,
+        clientId: customer.clientId ?? null,
+      },
+      items: validatedItems,
+    };
+  },
+
   async checkoutWhatsapp(data: CheckoutInput) {
     if (!data.userId) {
       throw new Error("Para finalizar el pedido tenés que iniciar sesión");
@@ -478,6 +641,20 @@ export const catalogService = {
       }
     }
 
+    const cartValidation = await this.validateCart({
+      userId: data.userId,
+      items: normalizedItems,
+    });
+
+    if (!cartValidation.ok) {
+      const firstInvalidItem = cartValidation.items.find((item) => !item.ok);
+
+      throw new Error(
+        firstInvalidItem?.message ||
+          "Hay productos sin stock suficiente en el carrito",
+      );
+    }
+
     // Mayorista descuenta LOCAL. Minorista/Price descuenta DEPÓSITO.
     const stockLocation = getStockLocationByCategory(customer.category);
 
@@ -499,6 +676,8 @@ export const catalogService = {
       customerNotes: data.customerNotes,
     });
 
+    const whatsappUrl = buildWhatsappUrl(whatsappMessage);
+
     const whatsappApi = await whatsappService.sendTextMessage({
       to: customer.phone || "",
       message: whatsappMessage,
@@ -509,8 +688,8 @@ export const catalogService = {
       status: sale.status,
       total: sale.total,
       whatsappMessage,
-      whatsappUrl: null,
-      missingWhatsappConfig: Boolean(whatsappApi.missingConfig),
+      whatsappUrl,
+      missingWhatsappConfig: Boolean(whatsappApi.missingConfig) && !whatsappUrl,
       whatsappApi,
       sale,
     };

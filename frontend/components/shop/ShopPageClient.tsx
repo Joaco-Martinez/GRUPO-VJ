@@ -309,8 +309,11 @@ export default function TiendaPage() {
   const [totalProducts, setTotalProducts] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
+  const cartItems = useCartStore((state) => state.items);
   const cartCount = useCartStore((state) => state.count());
   const add = useCartStore((state) => state.add);
+
+  const [addingProductId, setAddingProductId] = useState<string | null>(null);
 
   const storeSuffix = useMemo(() => {
     return isWholesaleCategory(customerCategory)
@@ -474,7 +477,42 @@ export default function TiendaPage() {
     totalProducts,
   );
 
-  const handleAddToCart = (product: CatalogProduct) => {
+  function getCartQuantity(productId: string) {
+    return (
+      cartItems.find((item) => item.product.id === productId)?.quantity ?? 0
+    );
+  }
+
+  function getAvailableStock(product: CatalogProduct) {
+    if (product.saleUnit === "KG") {
+      return numValue(product.availableKg);
+    }
+
+    return numValue(product.availableQuantity);
+  }
+
+  function formatStockAmount(product: CatalogProduct, value: number) {
+    if (product.saleUnit === "KG") {
+      return `${value.toLocaleString("es-AR", {
+        maximumFractionDigits: 2,
+      })} kg`;
+    }
+
+    const units = Math.trunc(value);
+    return `${units.toLocaleString("es-AR")} unidad${units === 1 ? "" : "es"}`;
+  }
+
+  function updateProductInList(product: CatalogProduct) {
+    setProducts((current) =>
+      current.map((item) =>
+        item.id === product.id
+          ? adaptProductForCustomer(product, customerCategory)
+          : item,
+      ),
+    );
+  }
+
+  const handleAddToCart = async (product: CatalogProduct) => {
     if (!isLoggedIn) {
       toast.error("Para agregar productos al carrito tenés que iniciar sesión");
       router.push("/tienda/login");
@@ -486,16 +524,80 @@ export default function TiendaPage() {
       customerCategory,
     );
 
-    if (!productForCustomer.canSell) {
+    const currentCartQuantity = getCartQuantity(product.id);
+    const nextQuantity = Number((currentCartQuantity + 1).toFixed(2));
+    const availableStock = getAvailableStock(productForCustomer);
+
+    if (!productForCustomer.canSell || availableStock <= 0) {
       const locationName = isWholesaleCategory(customerCategory)
         ? "local mayorista"
         : "depósito minorista";
+
       toast.error(`Este producto no tiene stock disponible en ${locationName}`);
       return;
     }
 
-    add(productForCustomer, 1);
-    toast.success("Producto agregado al carrito");
+    if (nextQuantity > availableStock) {
+      toast.error(
+        `De ${productForCustomer.name} solo hay ${formatStockAmount(
+          productForCustomer,
+          availableStock,
+        )} disponibles.`,
+      );
+      return;
+    }
+
+    setAddingProductId(product.id);
+
+    try {
+      const validation = await shopApi.validateCart({
+        items: [
+          {
+            productId: product.id,
+            quantity:
+              productForCustomer.saleUnit === "KG" ? undefined : nextQuantity,
+            quantityKg:
+              productForCustomer.saleUnit === "KG" ? nextQuantity : undefined,
+          },
+        ],
+      });
+
+      const validatedItem = validation.items[0];
+
+      if (validatedItem?.product) {
+        updateProductInList(validatedItem.product);
+      }
+
+      if (!validation.ok || !validatedItem?.ok) {
+        toast.error(
+          validatedItem?.message ||
+            `No hay stock suficiente para ${productForCustomer.name}`,
+        );
+        return;
+      }
+
+      const freshProduct = validatedItem.product
+        ? adaptProductForCustomer(validatedItem.product, customerCategory)
+        : productForCustomer;
+
+      const result = add(freshProduct, 1);
+
+      if (!result.ok) {
+        toast.error(result.message || "No hay stock suficiente");
+        return;
+      }
+
+      toast.success("Producto agregado al carrito");
+    } catch (err: unknown) {
+      const message = getErrorMessage(
+        err,
+        "No se pudo validar el stock del producto",
+      );
+
+      toast.error(message);
+    } finally {
+      setAddingProductId(null);
+    }
   };
 
   return (
@@ -1991,12 +2093,15 @@ export default function TiendaPage() {
                               </Link>
                             ) : (
                               <button
-                                disabled={!product.canSell}
+                                disabled={
+                                  !product.canSell ||
+                                  addingProductId === product.id
+                                }
                                 onClick={() => handleAddToCart(product)}
                                 className="add-btn"
                                 title="Agregar al carrito"
                               >
-                                +
+                                {addingProductId === product.id ? "…" : "+"}
                               </button>
                             )}
                           </div>

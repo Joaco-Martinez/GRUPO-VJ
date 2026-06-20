@@ -17,6 +17,13 @@ router.get(
 );
 
 router.post(
+  "/validate-cart",
+  authMiddleware,
+  requireRole("CLIENTE"),
+  catalogController.validateCart
+);
+
+router.post(
   "/checkout-whatsapp",
   authMiddleware,
   requireRole("CLIENTE"),

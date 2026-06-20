@@ -69,6 +69,23 @@ const C = {
 
 const imageCache = new Map<string, Buffer | null>();
 
+function getPdfSafeImageUrl(src?: string | null) {
+  if (!src) return null;
+
+  const trimmed = src.trim();
+
+  // PDFKit no renderiza bien WEBP/HEIC.
+  // Si la imagen viene de Cloudinary, forzamos una entrega compatible con PDFKit.
+  if (
+    trimmed.includes("res.cloudinary.com") &&
+    trimmed.includes("/image/upload/")
+  ) {
+    return trimmed.replace("/image/upload/", "/image/upload/f_png,q_auto/");
+  }
+
+  return trimmed;
+}
+
 function money(value: number) {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
@@ -173,46 +190,66 @@ function findLogoPath() {
 }
 
 async function getImageBuffer(src?: string | null) {
-  if (!src) return null;
+  const safeSrc = getPdfSafeImageUrl(src);
 
-  if (imageCache.has(src)) {
-    return imageCache.get(src) ?? null;
+  if (!safeSrc) return null;
+
+  if (imageCache.has(safeSrc)) {
+    return imageCache.get(safeSrc) ?? null;
   }
 
   try {
-    if (src.startsWith("data:image/")) {
-      const base64 = src.split(",")[1];
+    if (safeSrc.startsWith("data:image/")) {
+      const base64 = safeSrc.split(",")[1];
       const buffer = Buffer.from(base64, "base64");
-      imageCache.set(src, buffer);
+      imageCache.set(safeSrc, buffer);
       return buffer;
     }
 
-    if (src.startsWith("http://") || src.startsWith("https://")) {
-      const response = await fetch(src);
+    if (safeSrc.startsWith("http://") || safeSrc.startsWith("https://")) {
+      const response = await fetch(safeSrc);
 
       if (!response.ok) {
-        imageCache.set(src, null);
+        console.warn("[COTIZACION PDF] Imagen no accesible", {
+          imageUrl: safeSrc,
+          status: response.status,
+          statusText: response.statusText,
+        });
+
+        imageCache.set(safeSrc, null);
         return null;
       }
 
       const arr = await response.arrayBuffer();
       const buffer = Buffer.from(arr);
-      imageCache.set(src, buffer);
+      imageCache.set(safeSrc, buffer);
       return buffer;
     }
 
-    const absolute = path.isAbsolute(src) ? src : path.join(process.cwd(), src);
+    const absolute = path.isAbsolute(safeSrc)
+      ? safeSrc
+      : path.join(process.cwd(), safeSrc);
 
     if (!fs.existsSync(absolute)) {
-      imageCache.set(src, null);
+      console.warn("[COTIZACION PDF] Imagen local inexistente", {
+        imageUrl: safeSrc,
+        absolute,
+      });
+
+      imageCache.set(safeSrc, null);
       return null;
     }
 
     const buffer = fs.readFileSync(absolute);
-    imageCache.set(src, buffer);
+    imageCache.set(safeSrc, buffer);
     return buffer;
-  } catch {
-    imageCache.set(src, null);
+  } catch (error) {
+    console.warn("[COTIZACION PDF] Error al obtener imagen", {
+      imageUrl: safeSrc,
+      error,
+    });
+
+    imageCache.set(safeSrc, null);
     return null;
   }
 }
@@ -435,7 +472,14 @@ async function drawProductRow(
         align: "center",
         valign: "center",
       });
-    } catch {
+    } catch (error) {
+      console.warn("[COTIZACION PDF] No se pudo renderizar imagen", {
+        sku: getProductSku(item),
+        name: getProductName(item),
+        imageUrl: item.product?.imageUrl,
+        error,
+      });
+
       drawNoImage(doc, imgX, imgY);
     }
   } else {

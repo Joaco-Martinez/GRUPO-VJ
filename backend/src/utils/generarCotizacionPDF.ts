@@ -14,6 +14,8 @@ type CotizacionPDFSale = {
   stockLocation?: string | null;
   createdAt: Date;
   quotationExpiresAt?: Date | null;
+  deliveryAddressSnapshot?: string | null;
+  deliveryMethod?: string | null;
 
   user?: {
     name?: string | null;
@@ -155,11 +157,37 @@ function getClientName(client?: CotizacionPDFSale["client"]) {
 function getClientDetails(client?: CotizacionPDFSale["client"]) {
   if (!client) return "";
 
-  const address = client.address?.trim() || client.direccion?.trim() || "";
   const phone = client.telefono ? `Tel: ${client.telefono}` : "";
   const dni = client.dni ? `DNI/CUIT: ${client.dni}` : "";
 
-  return [address, phone, dni].filter(Boolean).join(" - ");
+  return [phone, dni].filter(Boolean).join(" - ");
+}
+
+function getClientAddress(client?: CotizacionPDFSale["client"]) {
+  return client?.address?.trim() || client?.direccion?.trim() || "";
+}
+
+function getDeliveryAddress(sale: CotizacionPDFSale) {
+  const deliveryAddress = sale.deliveryAddressSnapshot?.trim();
+  const clientAddress = getClientAddress(sale.client);
+  const method = sale.deliveryMethod?.toUpperCase();
+
+  if (deliveryAddress) return deliveryAddress;
+  if (clientAddress) return clientAddress;
+  if (method === "PICKUP") return "Retiro en local";
+
+  return "No especificada";
+}
+
+function getDeliveryMethodLabel(method?: string | null) {
+  if (!method) return "";
+
+  const normalized = method.toUpperCase();
+
+  if (normalized === "LOCAL_DELIVERY") return "Envío a domicilio";
+  if (normalized === "PICKUP") return "Retiro en local";
+
+  return method;
 }
 
 function getProductName(item: CotizacionPDFSale["items"][number]) {
@@ -337,14 +365,26 @@ function drawHeader(doc: PDFKit.PDFDocument, sale: CotizacionPDFSale) {
 function drawInfo(doc: PDFKit.PDFDocument, sale: CotizacionPDFSale) {
   const x = PAGE.marginX;
   const y = 162;
+  const rightX = 292;
+  const rightW = 216;
 
   const clientDetails = getClientDetails(sale.client);
+  const deliveryAddress = getDeliveryAddress(sale);
+  const deliveryMethod = getDeliveryMethodLabel(sale.deliveryMethod);
 
   const rows = [
     {
       label: "Nombre del cliente",
       value: getClientName(sale.client),
       detail: clientDetails,
+    },
+    {
+      label: "Dirección de envío",
+      value: deliveryAddress,
+      detail:
+        deliveryMethod && deliveryMethod !== deliveryAddress
+          ? deliveryMethod
+          : "",
     },
     {
       label: "Fecha de expiración",
@@ -358,22 +398,48 @@ function drawInfo(doc: PDFKit.PDFDocument, sale: CotizacionPDFSale) {
     },
   ];
 
-  rows.forEach((row, index) => {
-    const rowY = y + index * 34;
+  let currentY = y;
+
+  rows.forEach((row) => {
+    doc.font("Helvetica-Bold").fontSize(11);
+
+    const valueHeight = doc.heightOfString(row.value, {
+      width: rightW,
+      align: "right",
+      lineGap: 1,
+    });
+
+    let detailHeight = 0;
+
+    if (row.detail) {
+      doc.font("Helvetica").fontSize(9.2);
+
+      detailHeight = doc.heightOfString(row.detail, {
+        width: rightW,
+        align: "right",
+        lineGap: 1,
+      });
+    }
+
+    const rowHeight = Math.max(
+      34,
+      valueHeight + (row.detail ? detailHeight + 5 : 0) + 12
+    );
 
     doc
       .fillColor(C.text)
       .font("Helvetica")
       .fontSize(11)
-      .text(row.label, x, rowY);
+      .text(row.label, x, currentY);
 
     doc
       .fillColor(C.black)
       .font("Helvetica-Bold")
       .fontSize(11)
-      .text(row.value, 292, rowY, {
-        width: 216,
+      .text(row.value, rightX, currentY, {
+        width: rightW,
         align: "right",
+        lineGap: 1,
       });
 
     if (row.detail) {
@@ -381,20 +447,26 @@ function drawInfo(doc: PDFKit.PDFDocument, sale: CotizacionPDFSale) {
         .fillColor(C.muted)
         .font("Helvetica")
         .fontSize(9.2)
-        .text(row.detail, 292, rowY + 14, {
-          width: 216,
+        .text(row.detail, rightX, currentY + valueHeight + 3, {
+          width: rightW,
           align: "right",
           lineGap: 1,
         });
     }
+
+    currentY += rowHeight;
   });
 
+  const lineY = currentY + 3;
+
   doc
-    .moveTo(x, y + 105)
-    .lineTo(PAGE.width - x, y + 105)
+    .moveTo(x, lineY)
+    .lineTo(PAGE.width - x, lineY)
     .strokeColor(C.line)
     .lineWidth(1)
     .stroke();
+
+  return lineY + 22;
 }
 
 function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
@@ -463,9 +535,7 @@ async function drawProductRow(
 
   if (imageBuffer) {
     try {
-      doc
-        .roundedRect(imgX, imgY, 58, 58, 8)
-        .fill(C.white);
+      doc.roundedRect(imgX, imgY, 58, 58, 8).fill(C.white);
 
       doc.image(imageBuffer, imgX + 3, imgY + 3, {
         fit: [52, 52],
@@ -571,7 +641,27 @@ function drawTotals(doc: PDFKit.PDFDocument, sale: CotizacionPDFSale, y: number)
   if (y + 120 > PAGE.bottom) {
     doc.addPage({ size: "A4", margin: 0 });
     drawPageBackground(doc);
-    y = 620;
+
+    doc
+      .fillColor(C.black)
+      .font("Helvetica-Bold")
+      .fontSize(13)
+      .text(`Grupo VJ - ${getQuotationCategoryLabel(sale.client)}`, PAGE.marginX, 42);
+
+    doc
+      .fillColor(C.muted)
+      .font("Helvetica")
+      .fontSize(9)
+      .text("Totales de la cotización", PAGE.marginX, 61);
+
+    doc
+      .moveTo(PAGE.marginX, 84)
+      .lineTo(PAGE.width - PAGE.marginX, 84)
+      .strokeColor(C.line)
+      .lineWidth(1)
+      .stroke();
+
+    y = 116;
   }
 
   doc
@@ -654,7 +744,26 @@ function drawTotals(doc: PDFKit.PDFDocument, sale: CotizacionPDFSale, y: number)
 }
 
 function drawFooter(doc: PDFKit.PDFDocument, page: number, totalPages: number) {
+  if (totalPages > 1 && page < totalPages) {
+    const message =
+      "Esta cotización tiene más páginas. Continúa en la siguiente hoja.";
 
+    const boxW = 330;
+    const boxH = 24;
+    const boxX = (PAGE.width - boxW) / 2;
+    const boxY = 788;
+
+    doc.roundedRect(boxX, boxY, boxW, boxH, 12).fill(C.black);
+
+    doc
+      .fillColor(C.white)
+      .font("Helvetica-Bold")
+      .fontSize(8.8)
+      .text(message, boxX + 14, boxY + 7, {
+        width: boxW - 28,
+        align: "center",
+      });
+  }
 
   doc
     .fillColor(C.lightMuted)
@@ -684,14 +793,14 @@ export async function generarCotizacionPDF(
         },
       });
 
-      doc.on("data", (chunk) => chunks.push(chunk));
+      doc.on("data", (chunk: Buffer) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
       drawHeader(doc, sale);
-      drawInfo(doc, sale);
+      const tableStartY = drawInfo(doc, sale);
 
-      let y = drawTableHeader(doc, 292);
+      let y = drawTableHeader(doc, tableStartY);
 
       for (let i = 0; i < sale.items.length; i++) {
         y = await drawProductRow(doc, sale, sale.items[i], y, i);

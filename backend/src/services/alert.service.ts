@@ -4,6 +4,8 @@ import { Product, SaleUnit } from "@prisma/client";
 
 type StockLocationLabel = "LOCAL" | "DEPÓSITO";
 
+const STOCK_ALERT_USER_ID = "f6993644-8467-47c5-9a4a-bd0f38db31a4";
+
 class AlertService {
   async createAlert(
     productId: string,
@@ -32,7 +34,13 @@ class AlertService {
     });
 
     try {
-      await this.sendEmailToAllUsers(productName, stock, minStock, unit, location);
+      await this.sendEmailToStockAlertUser(
+        productName,
+        stock,
+        minStock,
+        unit,
+        location
+      );
     } catch (error) {
       console.error("Error enviando alerta por email:", error);
     }
@@ -63,7 +71,6 @@ class AlertService {
     if (!product.isActive) return alerts;
 
     if (product.saleUnit === SaleUnit.KG) {
-      // minStockKg queda como mínimo del LOCAL para no romper compatibilidad.
       const minStockLocalKg = Number(product.minStockKg ?? 0);
       const minStockDepositoKg = Number(product.minStockDepositoKg ?? 0);
 
@@ -99,7 +106,6 @@ class AlertService {
       return alerts;
     }
 
-    // minStock queda como mínimo del LOCAL para no romper compatibilidad.
     const minStockLocal = Number(product.minStock ?? 0);
     const minStockDeposito = Number(product.minStockDeposito ?? 0);
 
@@ -160,79 +166,70 @@ class AlertService {
     });
   }
 
-private async sendEmailToAllUsers(
-  productName: string,
-  stock: number,
-  minStock: number,
-  unit: string,
-  location?: StockLocationLabel
-) {
-  const users = await prisma.user.findMany({
-    where: {
-      role: {
-        in: ["ADMIN", "EMPLEADO"],
+  private async sendEmailToStockAlertUser(
+    productName: string,
+    stock: number,
+    minStock: number,
+    unit: string,
+    location?: StockLocationLabel
+  ) {
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) return;
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: STOCK_ALERT_USER_ID,
       },
-      isActive: true,
-    },
-    select: {
-      email: true,
-    },
-  });
+      select: {
+        email: true,
+      },
+    });
 
-  if (users.length === 0) return;
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) return;
+    if (!user?.email) return;
 
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_PASS,
-    },
-  });
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_PASS,
+      },
+    });
 
-  const emails = users
-    .map((u) => u.email)
-    .filter(Boolean)
-    .join(",");
+    const locationText = location ? ` en ${location}` : "";
 
-  if (!emails) return;
+    const html = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #111; color: #D4AF37;">
+        <h2 style="color: #D4AF37; text-align: center;">⚠️ Alerta de Bajo Stock</h2>
 
-  const locationText = location ? ` en ${location}` : "";
+        <div style="background: #1c1c1c; padding: 15px; border-radius: 8px; margin-top: 15px;">
+          <p style="font-size: 16px; margin: 0; color: #fff;">
+            El producto <strong style="color: #D4AF37;">"${productName}"</strong> tiene bajo stock${locationText}.
+          </p>
 
-  const html = `
-    <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #111; color: #D4AF37;">
-      <h2 style="color: #D4AF37; text-align: center;">⚠️ Alerta de Bajo Stock</h2>
+          <p style="font-size: 18px; margin: 10px 0; text-align: center; color: #fff;">
+            📦 <strong>${stock}</strong> ${unit} disponibles
+            <span style="color: #aaa;">(mínimo ${minStock})</span>
+          </p>
 
-      <div style="background: #1c1c1c; padding: 15px; border-radius: 8px; margin-top: 15px;">
-        <p style="font-size: 16px; margin: 0; color: #fff;">
-          El producto <strong style="color: #D4AF37;">"${productName}"</strong> tiene bajo stock${locationText}.
-        </p>
-
-        <p style="font-size: 18px; margin: 10px 0; text-align: center; color: #fff;">
-          📦 <strong>${stock}</strong> ${unit} disponibles
-          <span style="color: #aaa;">(mínimo ${minStock})</span>
-        </p>
-
-        ${
-          location
-            ? `
-              <p style="font-size: 15px; margin: 10px 0 0; text-align: center; color: #D4AF37;">
-                Ubicación: <strong>${location}</strong>
-              </p>
-            `
-            : ""
-        }
+          ${
+            location
+              ? `
+                <p style="font-size: 15px; margin: 10px 0 0; text-align: center; color: #D4AF37;">
+                  Ubicación: <strong>${location}</strong>
+                </p>
+              `
+              : ""
+          }
+        </div>
       </div>
-    </div>
-  `;
+    `;
 
-  await transporter.sendMail({
-    from: `"ERP" <${process.env.GMAIL_USER}>`,
-    to: emails,
-    subject: `⚠️ Alerta de bajo stock${locationText}`,
-    html,
-  });
-}
+    await transporter.sendMail({
+      from: `"ERP" <${process.env.GMAIL_USER}>`,
+      to: user.email,
+      subject: `⚠️ Alerta de bajo stock${locationText}`,
+      html,
+    });
+  }
 }
 
 export default new AlertService();

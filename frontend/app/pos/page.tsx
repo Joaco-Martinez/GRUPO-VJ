@@ -82,6 +82,13 @@ type ConfirmState = {
   onConfirm: () => Promise<void> | void;
 } | null;
 
+type PendingProductAdd = {
+  product: Product;
+  priceType: CartItem["priceType"];
+} | null;
+
+type ClientGateMode = "question" | "picker" | null;
+
 const DELIVERY_SKU = "ENVIO-FLETE2";
 const POS_SKU_SCANNER_ELEMENT_ID = "grupo-vj-pos-sku-scanner";
 const RETAIL_PRICE_TYPE = "price" as CartItem["priceType"];
@@ -408,6 +415,9 @@ export default function POSPage() {
   const [submitting, setSubmitting] = useState(false);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [pendingProductAdd, setPendingProductAdd] = useState<PendingProductAdd>(null);
+  const [clientGateMode, setClientGateMode] = useState<ClientGateMode>(null);
+  const [consumerFinalConfirmed, setConsumerFinalConfirmed] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(36);
   const [mounted, setMounted] = useState(false);
@@ -488,6 +498,12 @@ export default function POSPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!cart.length && !clientId && !clientGateMode) {
+      setConsumerFinalConfirmed(false);
+    }
+  }, [cart.length, clientId, clientGateMode]);
+
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
   const selectedBusinessLocation =
     businessLocations.find((location) => location.id === businessLocationId) ?? null;
@@ -542,9 +558,35 @@ export default function POSPage() {
     );
   };
 
+  const closeClientGate = () => {
+    setPendingProductAdd(null);
+    setClientGateMode(null);
+  };
+
+  const continuePendingAddAsConsumerFinal = () => {
+    if (!pendingProductAdd) return;
+
+    const pending = pendingProductAdd;
+    setConsumerFinalConfirmed(true);
+    setClientId("");
+    setClientSearch("");
+    setClientSuggestionsOpen(false);
+    setDefaultPriceType(RETAIL_PRICE_TYPE);
+    closeClientGate();
+    addProductDirect(pending.product, pending.priceType);
+  };
+
+  const openPendingClientPicker = () => {
+    setClientGateMode("picker");
+    setClientSearch("");
+    setClientSuggestionsOpen(false);
+  };
+
   const handleClientChange = (nextClientId: string) => {
     const nextClient = clients.find((client) => client.id === nextClientId) ?? null;
     const nextPriceType = clientDefaultPriceType(nextClient);
+    const pending = pendingProductAdd;
+    const isPickingClientForPendingProduct = Boolean(pending && clientGateMode === "picker");
 
     setClientId(nextClientId);
     setClientSearch(nextClient ? clientName(nextClient) : "");
@@ -554,6 +596,22 @@ export default function POSPage() {
 
     if (!nextClient) {
       setDefaultPriceType(RETAIL_PRICE_TYPE);
+
+      if (isPickingClientForPendingProduct && pending) {
+        setConsumerFinalConfirmed(true);
+        closeClientGate();
+        addProductDirect(pending.product, pending.priceType);
+      }
+
+      return;
+    }
+
+    setConsumerFinalConfirmed(false);
+
+    if (isPickingClientForPendingProduct && pending) {
+      setDefaultPriceType(nextPriceType);
+      closeClientGate();
+      addProductDirect(pending.product, nextPriceType);
       return;
     }
 
@@ -704,7 +762,10 @@ export default function POSPage() {
     ];
   };
 
-  const add = (product: Product, selectedPriceType: CartItem["priceType"] = activeDefaultPriceType) => {
+  function addProductDirect(
+    product: Product,
+    selectedPriceType: CartItem["priceType"] = activeDefaultPriceType,
+  ) {
     const stock = productStockByLocation(product, stockLocation);
 
     if (isStockControlledProduct(product) && stock <= 0) {
@@ -721,7 +782,22 @@ export default function POSPage() {
     const nextCart = buildCartWithProduct(product, selectedPriceType);
     if (!validateCartStockItems(nextCart)) return;
     setCart(nextCart);
-  };
+  }
+
+  function add(
+    product: Product,
+    selectedPriceType: CartItem["priceType"] = activeDefaultPriceType,
+  ) {
+    const shouldAskForClient = !clientId && !consumerFinalConfirmed && cart.length === 0;
+
+    if (shouldAskForClient) {
+      setPendingProductAdd({ product, priceType: selectedPriceType });
+      setClientGateMode("question");
+      return;
+    }
+
+    addProductDirect(product, selectedPriceType);
+  }
 
   const stopSkuScanner = async () => {
     const scanner = scannerInstanceRef.current;
@@ -1158,6 +1234,9 @@ export default function POSPage() {
       setPayments([{ method: "EFECTIVO", amount: 0 }]);
       setDeliveryMode("PICKUP");
       setDeliveryCalculation(null);
+      setPendingProductAdd(null);
+      setClientGateMode(null);
+      setConsumerFinalConfirmed(false);
 
       toast.success("Venta registrada correctamente", { id: toastId });
       await load();
@@ -1527,261 +1606,289 @@ export default function POSPage() {
   return (
     <AppLayout title="POS" subtitle="Ventas, promos, envíos, pagos parciales y cuenta corriente">
       <div className="pos-desktop-only">
-        <div className="pos-root">
-          <section>
-            <div className="pos-toolbar">
-              <div className="pos-search">
-                <Search size={14} />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar producto o SKU..."
-                />
-              </div>
-
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm pos-scan-desktop-btn"
-                onClick={openSkuScanner}
-                title="Escanear SKU con cámara"
-              >
-                <ScanBarcode size={15} />
-                Escanear
-              </button>
-
-              <select className="pos-filter" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                <option value="">Todas las categorías</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-
-              <select
-                className="pos-filter pos-sort-filter"
-                value={sortMode}
-                onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
-                title="Ordenar productos"
-              >
-                <option value="name-asc">Nombre A-Z</option>
-                <option value="name-desc">Nombre Z-A</option>
-                <option value="category-asc">Categoría A-Z</option>
-                <option value="category-desc">Categoría Z-A</option>
-              </select>
-
-              <select
-                className="pos-filter"
-                value={stockLocation}
-                onChange={(e) => setStockLocation(e.target.value as StockLocation)}
-                title="Depósito desde donde se descuenta la mercadería"
-              >
-                <option value="LOCAL">Descontar de Mayorista</option>
-                <option value="DEPOSITO">Descontar de Minorista</option>
-              </select>
-
-              <button className="btn btn-secondary btn-sm pos-refresh-btn" onClick={() => load(true)} disabled={loading}>
-                <RefreshCcw size={14} />
-                Actualizar
-              </button>
+        <div className="pos-desktop-mobile-shell">
+          <section className="pos-desktop-hero">
+            <div>
+              <p className="pos-kicker">Venta rápida</p>
+              <h2>POS de escritorio</h2>
+              <p>{filtered.length} productos · {selectedCategoryName} · Stock {stockLocationLabelLower(stockLocation)}</p>
             </div>
 
-            {renderPricePresetSelector()}
-
-            <div className="pos-products-grid">
-              {loading ? <div className="skeleton" style={{ height: 240 }} /> : filtered.map((p) => renderProductCard(p))}
+            <div className="pos-desktop-hero-actions">
+              <span className="pos-desktop-pill">
+                <ShoppingCart size={15} />
+                {cart.length ? `${cartUnits} item${cartUnits === 1 ? "" : "s"}` : "Carrito vacío"}
+              </span>
+              <span className="pos-desktop-pill total">
+                Total {fmtMoney(total)}
+              </span>
+              <button className="pos-icon-btn" type="button" onClick={() => load(true)} disabled={loading} title="Actualizar POS">
+                <RefreshCcw size={17} />
+              </button>
             </div>
           </section>
 
-          <aside className="card pos-cart">
-            <div className="pos-cart-body">
-              <div className="pos-cart-head">
-                <ShoppingCart size={18} />
-                <b>Carrito</b>
-                <span>{cart.length} items</span>
-              </div>
+          <section className="pos-desktop-mobile-controls">
+            <div className="pos-searchbox pos-searchbox-desktop">
+              <Search size={18} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por producto o SKU..."
+                autoComplete="off"
+              />
+              <button type="button" className="pos-search-scan-btn" onClick={openSkuScanner} aria-label="Escanear SKU" title="Escanear SKU">
+                <ScanBarcode size={17} />
+              </button>
+              {search && <button type="button" onClick={() => setSearch("")} aria-label="Limpiar búsqueda"><X size={15} /></button>}
+            </div>
 
-              <div className="badge badge-blue stock-badge"><Warehouse size={13} /> Descuenta de: {stockLocationLabel(stockLocation)}</div>
+            {renderPricePresetSelector(true)}
 
-
-              
-
-              <div className="form-group">
-                <label className="form-label">Origen de stock</label>
+            <div className="pos-desktop-control-grid">
+              <label>
+                <span>Stock</span>
                 <select value={stockLocation} onChange={(e) => setStockLocation(e.target.value as StockLocation)}>
                   <option value="LOCAL">Mayorista</option>
                   <option value="DEPOSITO">Minorista</option>
                 </select>
+              </label>
+
+              <div className="pos-mobile-client-field pos-desktop-client-field">
+                {renderClientPicker(true)}
               </div>
 
-              {renderClientPicker()}
-
-              <div className="pos-delivery-box">
-                <div className="box-title"><Truck size={16} /><b>Entrega</b></div>
-                <div className="form-row pos-delivery-row">
-                  <div className="form-group">
-                    <label className="form-label">Tipo</label>
-                    <select
-                      value={deliveryMode}
-                      onChange={(e) => {
-                        const next = e.target.value as DeliveryMode;
-                        setDeliveryMode(next);
-                        setDeliveryCalculation(null);
-                        if (next === "PICKUP") removeDeliveryFromCart();
-                      }}
-                    >
-                      <option value="PICKUP">Retiro en sucursal</option>
-                      <option value="LOCAL_DELIVERY">Envío</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Sale desde</label>
-                    <select
-                      value={businessLocationId}
-                      onChange={(e) => {
-                        setBusinessLocationId(e.target.value);
-                        setDeliveryCalculation(null);
-                        if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
-                      }}
-                    >
-                      <option value="">{businessLocations.length ? "Seleccionar" : "Sin ubicaciones cargadas"}</option>
-                      {businessLocations.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.name}{location.isDefault ? " · default" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {deliveryMode === "LOCAL_DELIVERY" && (
-                  <>
-                    <div className="form-group">
-                      <label className="form-label">Precio por km</label>
-                      <input
-                        type="number"
-                        value={deliveryPricePerKm}
-                        onChange={(e) => {
-                          setDeliveryPricePerKm(e.target.value);
-                          setDeliveryCalculation(null);
-                          removeDeliveryFromCart();
-                        }}
-                        placeholder="Ej: 8000"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      className="btn btn-secondary full"
-                      onClick={calculateDelivery}
-                      disabled={calculatingDelivery || !clientId || !businessLocationId}
-                    >
-                      <Truck size={14} />
-                      {calculatingDelivery ? "Calculando..." : "Calcular envío"}
-                    </button>
-
-                    {deliveryCalculation && (
-                      <div className={deliveryCalculation.source === "COORDINATES_FALLBACK" ? "pos-delivery-ok fallback" : "pos-delivery-ok"}>
-                        <div className="pos-delivery-ok-head">
-                          <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
-                          <span className={deliveryCalculation.source === "GOOGLE_ROUTES" ? "pos-route-source google" : "pos-route-source fallback"}>
-                            {deliverySourceLabel(deliveryCalculation.source)}
-                          </span>
-                        </div>
-                        <span>Ruta: {deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}</span>
-                        {formatDurationMinutes(deliveryCalculation.durationMinutes) && (
-                          <span>Tiempo estimado: {formatDurationMinutes(deliveryCalculation.durationMinutes)}</span>
-                        )}
-                        {deliveryCalculation.source === "COORDINATES_FALLBACK" && (
-                          <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              <div className="pos-cart-items">
-                {cart.map((item, index) => renderCartItem(item, false, `${cartLineKey(item)}-${index}`))}
-                {!cart.length && <div className="pos-empty compact"><ShoppingCart size={28} /><b>Carrito vacío</b><span>Tocá productos o escaneá un SKU.</span></div>}
-              </div>
-
-              <div className="form-row">
-                
-                <div className="form-group">
-                  <label className="form-label">Descuento</label>
-                  <select value={discountType} onChange={(e) => setDiscountType(e.target.value as DiscountType | "")}>
-                    <option value="">Sin descuento</option>
-                    <option value="PERCENTAGE">%</option>
-                    <option value="FIXED">$</option>
-                  </select>
-                </div>
-              </div>
-
-              {discountType && (
-                <div className="form-group">
-                  <input type="number" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="Valor descuento" />
-                </div>
-              )}
-
-              <div className="form-group">
-                <label className="form-label">Modo de pago</label>
-                <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as "single" | "multi")}>
-                  <option value="single">Un método</option>
-                  <option value="multi">Múltiples / parcial</option>
+              <label>
+                <span>Orden</span>
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as ProductSortMode)}
+                >
+                  <option value="name-asc">Nombre A-Z</option>
+                  <option value="name-desc">Nombre Z-A</option>
+                  <option value="category-asc">Categoría A-Z</option>
+                  <option value="category-desc">Categoría Z-A</option>
                 </select>
-              </div>
-
-              {paymentMode === "single" ? (
-                <div className="form-group">
-                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}>
-                    {methods.map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-              ) : (
-                <div className="pos-payments">
-                  {payments.map((p, idx) => (
-                    <div className="pos-payment-row" key={idx}>
-                      <select
-                        value={p.method}
-                        onChange={(e) =>
-                          setPayments((prev) =>
-                            prev.map((x, i) => i === idx ? { ...x, method: e.target.value as PaymentMethod } : x),
-                          )
-                        }
-                      >
-                        {methods.map((m) => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                      <input
-                        type="number"
-                        value={p.method === "CUENTA_CORRIENTE" ? debt || "" : p.amount || ""}
-                        disabled={p.method === "CUENTA_CORRIENTE"}
-                        onChange={(e) =>
-                          setPayments((prev) =>
-                            prev.map((x, i) => i === idx ? { ...x, amount: num(e.target.value) } : x),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                  <button className="btn btn-secondary btn-sm" onClick={addPayment}><Plus size={13} /> Agregar pago</button>
-                </div>
-              )}
+              </label>
             </div>
 
-            <div className="pos-cart-footer desktop-footer">
-              <div className="pos-totals">
-                <div><span>Subtotal</span><b>{fmtMoney(subtotal)}</b></div>
-                {deliveryMode === "LOCAL_DELIVERY" && deliveryCostForTotal > 0 && <div><span>Envío incluido</span><b>{fmtMoney(deliveryCostForTotal)}</b></div>}
-                {discount > 0 && <div><span>Descuento</span><b>-{fmtMoney(discount)}</b></div>}
-                <div className="total"><span>Total</span><b>{fmtMoney(total)}</b></div>
-              </div>
-              {debt > 0 && <div className="badge badge-yellow debt-badge">Queda en cuenta corriente: {fmtMoney(debt)}</div>}
-              <button className="btn btn-primary full finish-btn" disabled={submitting || !cart.length} onClick={openSubmitConfirm}>
-                <Check size={17} />
-                {submitting ? "Registrando venta..." : `Finalizar venta · ${fmtMoney(total)}`}
-              </button>
+            <div className="pos-category-strip pos-category-strip-desktop">
+              <button type="button" className={!categoryId ? "active" : ""} onClick={() => setCategoryId("")}>Todos</button>
+              {categories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  className={categoryId === category.id ? "active" : ""}
+                  onClick={() => setCategoryId(category.id)}
+                >
+                  {category.name}
+                </button>
+              ))}
             </div>
-          </aside>
+          </section>
+
+          <section className="pos-product-section pos-product-section-desktop">
+            {loading && <div className="pos-grid pos-desktop-like-grid">{Array.from({ length: 12 }).map((_, index) => <div key={index} className="pos-product-skeleton" />)}</div>}
+            {!loading && !filtered.length && <div className="pos-empty"><Package size={34} /><b>No encontré productos</b><span>Probá otra búsqueda o sacá el filtro de categoría.</span></div>}
+            {!loading && !!filtered.length && (
+              <>
+                <div className="pos-grid pos-desktop-like-grid">
+                  {visibleProducts.map((product) => renderProductCard(product, true))}
+                </div>
+                {visibleProducts.length < filtered.length && (
+                  <button type="button" className="pos-load-more" onClick={() => setVisibleCount((prev) => prev + 36)}>
+                    Ver más productos · {filtered.length - visibleProducts.length} restantes
+                  </button>
+                )}
+              </>
+            )}
+          </section>
         </div>
+
+        {mounted && !isMobileView && createPortal(
+          <>
+            <button type="button" className="pos-cart-fab pos-cart-fab-desktop" onClick={() => setCartOpen(true)}>
+              <span className="pos-cart-fab-left">
+                <ShoppingCart size={19} />
+                <span>
+                  <b>Carrito</b>
+                  <small>{cart.length ? `${cartUnits} item${cartUnits === 1 ? "" : "s"}` : "Tocar para abrir"}</small>
+                </span>
+              </span>
+              <span className="pos-cart-fab-right">
+                <b>{fmtMoney(total)}</b>
+                <small>Finalizar venta</small>
+              </span>
+            </button>
+
+            {cartOpen && (
+              <div className="pos-cart-layer pos-cart-layer-desktop">
+                <div className="pos-cart-sheet pos-cart-sheet-desktop" role="dialog" aria-modal="true" aria-label="Carrito">
+                  <div className="pos-cart-handle" />
+                  <header className="pos-cart-header">
+                    <div><b>Carrito de venta</b><span>{cart.length} productos · {fmtMoney(total)}</span></div>
+                    <button type="button" className="pos-icon-btn" onClick={() => setCartOpen(false)}><X size={18} /></button>
+                  </header>
+
+                  <div className="pos-cart-scroll">
+                    <div className="pos-mini-summary">
+                      <span><Warehouse size={14} />{stockLocationLabel(stockLocation)}</span>
+                      <span>Precio {priceTypeLabel(activeDefaultPriceType)}</span>
+                      {debt > 0 && <span className="warn">Deuda {fmtMoney(debt)}</span>}
+                    </div>
+
+                    <div className="pos-mobile-price-actions">
+                      <button
+                        type="button"
+                        className={activeDefaultPriceType === RETAIL_PRICE_TYPE ? "active" : ""}
+                        onClick={() => applyPriceTypeToCart(RETAIL_PRICE_TYPE)}
+                      >
+                        Todos minoristas
+                      </button>
+                      <button
+                        type="button"
+                        className={activeDefaultPriceType === WHOLESALE_PRICE_TYPE ? "active" : ""}
+                        onClick={() => applyPriceTypeToCart(WHOLESALE_PRICE_TYPE)}
+                      >
+                        Todos mayoristas
+                      </button>
+                    </div>
+
+                    <div className="pos-cart-products pos-cart-products-desktop">
+                      {!cart.length && <div className="pos-empty compact"><ShoppingCart size={28} /><b>Carrito vacío</b><span>Tocá productos para agregarlos en segundos.</span></div>}
+                      {cart.map((item, index) => renderCartItem(item, true, `${cartLineKey(item)}-${index}`))}
+                    </div>
+
+                    <section className="pos-sale-options">
+                      <details open>
+                        <summary>Entrega / envío</summary>
+                        <div className="pos-option-body">
+                          <label>
+                            <span>Tipo de entrega</span>
+                            <select
+                              value={deliveryMode}
+                              onChange={(e) => {
+                                const next = e.target.value as DeliveryMode;
+                                setDeliveryMode(next);
+                                setDeliveryCalculation(null);
+                                if (next === "PICKUP") removeDeliveryFromCart();
+                              }}
+                            >
+                              <option value="PICKUP">Retiro en sucursal</option>
+                              <option value="LOCAL_DELIVERY">Envío local</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span>Sale desde</span>
+                            <select
+                              value={businessLocationId}
+                              onChange={(e) => {
+                                setBusinessLocationId(e.target.value);
+                                setDeliveryCalculation(null);
+                                if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
+                              }}
+                            >
+                              <option value="">{businessLocations.length ? "Seleccionar" : "Sin ubicaciones"}</option>
+                              {businessLocations.map((location) => <option key={location.id} value={location.id}>{location.name}{location.isDefault ? " · default" : ""}</option>)}
+                            </select>
+                          </label>
+
+                          {deliveryMode === "LOCAL_DELIVERY" && (
+                            <>
+                              <label>
+                                <span>Precio por km</span>
+                                <input
+                                  type="number"
+                                  value={deliveryPricePerKm}
+                                  onChange={(e) => {
+                                    setDeliveryPricePerKm(e.target.value);
+                                    setDeliveryCalculation(null);
+                                    removeDeliveryFromCart();
+                                  }}
+                                  placeholder="Ej: 8000"
+                                />
+                              </label>
+                              {selectedClient && <small className={clientHasCoordinates(selectedClient) ? "pos-help" : "pos-help danger"}>{clientHasCoordinates(selectedClient) ? buildClientAddress(selectedClient) || "Cliente con coordenadas" : "Este cliente no tiene coordenadas cargadas"}</small>}
+                              <button type="button" className="pos-secondary-action" onClick={calculateDelivery} disabled={calculatingDelivery || !clientId || !businessLocationId}>
+                                <Truck size={15} />{calculatingDelivery ? "Calculando..." : "Calcular envío"}
+                              </button>
+                              {deliveryCalculation && (
+                                <div className={deliveryCalculation.source === "COORDINATES_FALLBACK" ? "pos-delivery-ok fallback" : "pos-delivery-ok"}>
+                                  <div className="pos-delivery-ok-head">
+                                    <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
+                                    <span className={deliveryCalculation.source === "GOOGLE_ROUTES" ? "pos-route-source google" : "pos-route-source fallback"}>
+                                      {deliverySourceLabel(deliveryCalculation.source)}
+                                    </span>
+                                  </div>
+                                  <span>Ruta: {deliveryCalculation.distanceKm} km x {fmtMoney(deliveryCalculation.pricePerKm)}</span>
+                                  {formatDurationMinutes(deliveryCalculation.durationMinutes) && (
+                                    <span>Tiempo estimado: {formatDurationMinutes(deliveryCalculation.durationMinutes)}</span>
+                                  )}
+                                  {deliveryCalculation.source === "COORDINATES_FALLBACK" && (
+                                    <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </details>
+
+                      <details open>
+                        <summary>Ticket, descuento y pago</summary>
+                        <div className="pos-option-body">
+                          <div className="pos-ticket-fixed"><Check size={14} /> Siempre se emite ticket</div>
+                          <div className="pos-control-grid">
+                            <label><span>Descuento</span><select value={discountType} onChange={(e) => setDiscountType(e.target.value as DiscountType | "")}><option value="">Sin descuento</option><option value="PERCENTAGE">%</option><option value="FIXED">$</option></select></label>
+                          </div>
+                          {discountType && <label><span>Valor descuento</span><input type="number" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="Valor" /></label>}
+                          <label><span>Modo de pago</span><select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as "single" | "multi")}><option value="single">Un método</option><option value="multi">Múltiples / parcial</option></select></label>
+                          {paymentMode === "single" ? (
+                            <label><span>Método</span><select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}>{methods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label>
+                          ) : (
+                            <div className="pos-payments">
+                              {payments.map((payment, index) => (
+                                <div key={index} className="pos-payment-line">
+                                  <select value={payment.method} onChange={(e) => setPayments((prev) => prev.map((current, paymentIndex) => paymentIndex === index ? { ...current, method: e.target.value as PaymentMethod } : current))}>{methods.map((method) => <option key={method} value={method}>{method}</option>)}</select>
+                                  <input type="number" value={payment.method === "CUENTA_CORRIENTE" ? debt || "" : payment.amount || ""} disabled={payment.method === "CUENTA_CORRIENTE"} onChange={(e) => setPayments((prev) => prev.map((current, paymentIndex) => paymentIndex === index ? { ...current, amount: num(e.target.value) } : current))} />
+                                </div>
+                              ))}
+                              <button type="button" className="pos-secondary-action" onClick={addPayment}><Plus size={14} />Agregar pago</button>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    </section>
+                  </div>
+
+                  <footer className="pos-cart-footer">
+                    <div className="pos-totals">
+                      <div><span>Subtotal</span><b>{fmtMoney(subtotal)}</b></div>
+                      {deliveryMode === "LOCAL_DELIVERY" && deliveryCostForTotal > 0 && <div><span>Envío</span><b>{fmtMoney(deliveryCostForTotal)}</b></div>}
+                      {discount > 0 && <div><span>Descuento</span><b>-{fmtMoney(discount)}</b></div>}
+                      <div className="total"><span>Total</span><b>{fmtMoney(total)}</b></div>
+                    </div>
+                    {debt > 0 && <div className="badge badge-yellow debt-badge">Queda en cuenta corriente: {fmtMoney(debt)}</div>}
+                    <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={openSubmitConfirm}>
+                      <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
+                    </button>
+                  </footer>
+                </div>
+              </div>
+            )}
+
+            {!cartOpen && cart.length > 0 && (
+              <div className="pos-cart-preview pos-cart-preview-desktop" onClick={() => setCartOpen(true)}>
+                {cartPreview.map((item, index) => {
+                  const imageUrl = getProductImageUrl(item.product);
+                  return <span key={`${cartLineKey(item)}-${index}`}>{imageUrl ? <img src={imageUrl} alt={item.product.name} loading="lazy" /> : <Package size={13} />}</span>;
+                })}
+                {cart.length > cartPreview.length && <b>+{cart.length - cartPreview.length}</b>}
+              </div>
+            )}
+          </>,
+          document.body,
+        )}
       </div>
 
       <div className="pos-mobile-only">
@@ -2034,6 +2141,82 @@ export default function POSPage() {
         )}
       </div>
 
+      {clientGateMode && pendingProductAdd && mounted && typeof document !== "undefined" &&
+        createPortal(
+          <div className="modal-overlay client-gate-overlay">
+            <div className="modal pos-client-gate-modal">
+              <div className="modal-header">
+                <b>{clientGateMode === "question" ? "Antes de cargar el producto" : "Seleccionar cliente"}</b>
+                <button className="btn btn-ghost btn-sm" onClick={closeClientGate}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              {clientGateMode === "question" ? (
+                <>
+                  <div className="modal-body pos-client-gate-body">
+                    <div className="pos-client-gate-product">
+                      <div className="pos-client-gate-product-img">
+                        {getProductImageUrl(pendingProductAdd.product) ? (
+                          <img
+                            src={getProductImageUrl(pendingProductAdd.product) ?? ""}
+                            alt={pendingProductAdd.product.name}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <Package size={22} />
+                        )}
+                      </div>
+                      <div>
+                        <span>Producto seleccionado</span>
+                        <b>{pendingProductAdd.product.name}</b>
+                        <small>Precio {priceTypeLabel(pendingProductAdd.priceType)}</small>
+                      </div>
+                    </div>
+
+                    <div className="confirm-box">
+                      <span className="info-icon"><AlertTriangle size={18} /></span>
+                      <p>
+                        No seleccionaste ningún cliente. ¿Querés elegir un cliente ahora o cargar esta venta como consumidor final?
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="modal-footer pos-client-gate-actions">
+                    <button type="button" className="btn btn-secondary" onClick={continuePendingAddAsConsumerFinal}>
+                      Consumidor final
+                    </button>
+                    <button type="button" className="btn btn-primary" onClick={openPendingClientPicker}>
+                      Elegir cliente
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="modal-body pos-client-gate-body">
+                    <div className="pos-client-gate-help">
+                      <b>Buscá y seleccioná un cliente</b>
+                      <span>Cuando lo elijas, el producto se agrega automáticamente con el precio de su categoría.</span>
+                    </div>
+
+                    {renderClientPicker()}
+                  </div>
+
+                  <div className="modal-footer pos-client-gate-actions">
+                    <button type="button" className="btn btn-secondary" onClick={() => setClientGateMode("question")}>
+                      Volver
+                    </button>
+                    <button type="button" className="btn btn-ghost" onClick={continuePendingAddAsConsumerFinal}>
+                      Usar consumidor final
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+
       {skuScannerOpen && mounted && typeof document !== "undefined" &&
         createPortal(
           <div className="modal-overlay scanner-overlay">
@@ -2280,6 +2463,18 @@ export default function POSPage() {
         .pos-finish { width: 100%; min-height: 52px; border: 0; border-radius: 18px; background: var(--accent); color: white; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 950; }
         .pos-finish:disabled { opacity: .45; }
 
+        .client-gate-overlay { z-index: 2147483602 !important; }
+        .pos-client-gate-modal { width: min(560px, calc(100vw - 24px)); max-width: calc(100vw - 24px); border-radius: 22px; }
+        .pos-client-gate-body { display: grid; gap: 14px; }
+        .pos-client-gate-product { display: grid; grid-template-columns: 58px minmax(0,1fr); gap: 12px; align-items: center; border: 1px solid var(--border); background: var(--surface2); border-radius: 16px; padding: 10px; }
+        .pos-client-gate-product-img { width: 58px; height: 58px; border-radius: 14px; border: 1px solid var(--border); background: #fff; color: var(--text3); display: grid; place-items: center; overflow: hidden; padding: 5px; }
+        .pos-client-gate-product-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .pos-client-gate-product span, .pos-client-gate-product small, .pos-client-gate-help span { color: var(--text3); font-size: 11px; line-height: 1.35; }
+        .pos-client-gate-product b, .pos-client-gate-help b { display: block; color: var(--text); font-size: 14px; line-height: 1.25; }
+        .pos-client-gate-help { display: grid; gap: 4px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface2)); border-radius: 16px; padding: 12px; }
+        .pos-client-gate-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .pos-client-gate-actions button { width: 100%; justify-content: center; }
+        .pos-client-gate-modal .pos-client-suggestions { max-height: 320px; }
         .pos-confirm-modal, .pos-scanner-modal { width: min(520px, calc(100vw - 24px)); max-width: calc(100vw - 24px); border-radius: 20px; }
         .pos-confirm-footer { display: grid; grid-template-columns: 1fr; gap: 9px; }
         .pos-confirm-footer button { width: 100%; justify-content: center; }
@@ -2311,14 +2506,67 @@ export default function POSPage() {
           .pos-mobile-shell { padding-bottom: 124px !important; }
           .pos-pre-price-bar { grid-template-columns: 1fr; }
           .pos-pre-price-actions { min-width: 0; }
-          .pos-scanner-modal { width: 100vw; max-width: 100vw; border-radius: 22px 22px 0 0; align-self: flex-end; }
+          .pos-scanner-modal, .pos-client-gate-modal { width: 100vw; max-width: 100vw; border-radius: 22px 22px 0 0; align-self: flex-end; }
           .pos-scanner-frame, .pos-scanner-reader { min-height: 340px; }
           .pos-scanner-reader video { height: 340px !important; }
           .modal-overlay { align-items: flex-end; padding: 0; }
         }
         @media (min-width: 768px) { .pos-mobile-only { display: none !important; } .pos-desktop-only { display: block !important; } }
         @media (min-width: 700px) { .pos-mobile-shell { max-width: 1180px; margin: 0 auto; } .pos-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; } .pos-product { padding: 10px; } .pos-product strong { font-size: 13px; } .pos-product b { font-size: 14px; } .pos-cart-fab { left: 50%; right: auto; transform: translateX(-50%); width: min(520px, calc(100vw - 28px)); } .pos-cart-sheet { width: min(560px, 100vw); margin: 0 auto; } .pos-cart-layer { justify-content: center; } }
-        @media (max-width: 390px) { .pos-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } .pos-product { border-radius: 16px; } .pos-product strong { font-size: 11px; } .pos-product b { font-size: 11px; } }
+        @media (max-width: 390px) { .pos-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } .pos-product { border-radius: 16px; } .pos-product strong { font-size: 11px; } .pos-product b { font-size: 11px; } .pos-client-gate-actions { grid-template-columns: 1fr; } }
+
+
+        /* Desktop con experiencia tipo mobile: mismos controles, cards y carrito flotante */
+        .pos-desktop-mobile-shell { max-width: 1680px; margin: 0 auto; padding-bottom: 116px; }
+        .pos-desktop-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px; border: 1px solid var(--border); border-radius: 26px; background: radial-gradient(circle at top left, rgba(59,130,246,.22), transparent 34%), var(--surface); margin-bottom: 12px; box-shadow: 0 16px 44px rgba(0,0,0,.13); }
+        .pos-desktop-hero h2 { margin: 2px 0 4px; font-size: clamp(24px, 2.2vw, 34px); line-height: 1; letter-spacing: -.04em; color: var(--text); }
+        .pos-desktop-hero p { margin: 0; color: var(--text3); font-size: 13px; font-weight: 850; }
+        .pos-desktop-hero-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+        .pos-desktop-pill { min-height: 42px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); border-radius: 999px; padding: 0 13px; font-size: 12px; font-weight: 950; white-space: nowrap; }
+        .pos-desktop-pill.total { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); color: var(--accent); font-family: var(--mono); }
+        .pos-desktop-mobile-controls { position: sticky; top: 72px; z-index: 45; padding: 12px; border: 1px solid var(--border); border-radius: 24px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(18px); box-shadow: 0 18px 50px rgba(0,0,0,.16); margin-bottom: 14px; }
+        .pos-searchbox-desktop { height: 54px; grid-template-columns: auto minmax(0,1fr) auto auto; }
+        .pos-searchbox-desktop input { font-size: 16px; }
+        .pos-desktop-control-grid { display: grid; grid-template-columns: 190px minmax(320px, 1fr) 230px; gap: 10px; margin-top: 10px; align-items: end; }
+        .pos-desktop-control-grid label { display: grid; gap: 5px; min-width: 0; }
+        .pos-desktop-control-grid span { color: var(--text3); font-size: 10px; font-weight: 950; text-transform: uppercase; letter-spacing: .08em; }
+        .pos-desktop-control-grid select, .pos-desktop-control-grid input { min-width: 0; width: 100%; height: 42px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px; }
+        .pos-desktop-client-field { grid-column: auto; min-width: 0; }
+        .pos-desktop-client-field .form-label { color: var(--text3); font-size: 10px; font-weight: 950; text-transform: uppercase; letter-spacing: .08em; }
+        .pos-category-strip-desktop { padding-top: 11px; }
+        .pos-category-strip-desktop button { min-height: 38px; }
+        .pos-product-section-desktop { padding-bottom: 18px; }
+        .pos-desktop-like-grid { grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }
+        .pos-product-section-desktop .pos-product { min-height: 282px; padding: 9px; border-radius: 20px; }
+        .pos-product-section-desktop .pos-product-img { border-radius: 16px; }
+        .pos-product-section-desktop .pos-product strong { font-size: 12.5px; min-height: 30px; }
+        .pos-product-section-desktop .pos-price-dual.compact b { font-size: 10.5px; }
+        .pos-cart-fab-desktop { left: 50% !important; right: auto !important; bottom: 18px !important; transform: translateX(-50%) !important; width: min(760px, calc(100vw - 48px)) !important; min-height: 72px; border-radius: 24px; padding: 11px 16px; }
+        .pos-cart-layer-desktop { align-items: center !important; justify-content: center !important; padding: 24px; background: rgba(0,0,0,.56); }
+        .pos-cart-sheet-desktop { width: min(760px, calc(100vw - 48px)) !important; max-height: calc(100dvh - 48px); border-radius: 28px !important; background: var(--bg); }
+        .pos-cart-sheet-desktop .pos-cart-header { padding: 10px 16px 14px; }
+        .pos-cart-sheet-desktop .pos-cart-scroll { padding: 14px 14px 0; }
+        .pos-cart-sheet-desktop .pos-cart-products-desktop { max-height: 38dvh; overflow: auto; padding-right: 3px; }
+        .pos-cart-sheet-desktop .pos-sale-options { grid-template-columns: 1fr 1fr; align-items: start; }
+        .pos-cart-sheet-desktop .pos-cart-footer { padding: 15px 16px 16px; }
+        .pos-cart-preview-desktop { bottom: 104px !important; right: 50% !important; transform: translateX(380px); }
+
+        @media (min-width: 1280px) {
+          .pos-desktop-like-grid { grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 12px; }
+          .pos-product-section-desktop .pos-product { min-height: 300px; padding: 10px; }
+        }
+
+        @media (max-width: 1100px) and (min-width: 768px) {
+          .pos-desktop-mobile-controls { top: 12px; }
+          .pos-desktop-control-grid { grid-template-columns: 1fr 1fr; }
+          .pos-desktop-client-field { grid-column: 1 / -1; order: 3; }
+          .pos-desktop-hero { align-items: flex-start; flex-direction: column; }
+          .pos-desktop-hero-actions { width: 100%; justify-content: space-between; }
+          .pos-desktop-like-grid { grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 9px; }
+          .pos-product-section-desktop .pos-product { min-height: 260px; }
+          .pos-cart-sheet-desktop .pos-sale-options { grid-template-columns: 1fr; }
+          .pos-cart-preview-desktop { right: 18px !important; transform: none; }
+        }
       `}</style>
     </AppLayout>
   );

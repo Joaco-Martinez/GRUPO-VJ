@@ -15,6 +15,13 @@ router.post(
 );
 
 router.patch(
+  "/:id/provider",
+  authMiddleware,
+  requireRole("ADMIN"),
+  purchaseController.updateProvider
+);
+
+router.patch(
   "/:id/cancel",
   authMiddleware,
   requireRole("ADMIN"),

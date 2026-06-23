@@ -28,6 +28,10 @@ type CreatePurchaseInput = {
   items: PurchaseItemInput[];
 };
 
+type UpdatePurchaseProviderInput = {
+  providerName?: string | null;
+};
+
 function toNumber(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : NaN;
@@ -267,6 +271,46 @@ export const purchaseService = {
     }
 
     return createdPurchase;
+  },
+
+  async updateProvider(id: string, data: UpdatePurchaseProviderInput) {
+    const providerName = data.providerName?.trim() || null;
+
+    const updatedPurchase = await prisma.$transaction(async (tx) => {
+      const purchase = await tx.purchase.findUnique({
+        where: { id },
+        select: { id: true, financeId: true },
+      });
+
+      if (!purchase) throw new Error("Compra no encontrada");
+
+      const updated = await tx.purchase.update({
+        where: { id },
+        data: { providerName },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          finance: true,
+          items: {
+            include: {
+              product: { select: { id: true, name: true, sku: true, saleUnit: true } },
+            },
+          },
+        },
+      });
+
+      if (purchase.financeId) {
+        await tx.finance.update({
+          where: { id: purchase.financeId },
+          data: {
+            description: `[purchase:${purchase.id}] Compra de mercadería${providerName ? ` - ${providerName}` : ""}`,
+          },
+        });
+      }
+
+      return updated;
+    });
+
+    return updatedPurchase;
   },
 
   async cancel(id: string, userId?: string) {

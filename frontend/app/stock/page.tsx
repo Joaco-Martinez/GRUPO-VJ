@@ -323,6 +323,18 @@ export default function StockPage() {
 
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
+  const movementsSectionRef = useRef<HTMLDivElement | null>(null);
+
+  const goToStockMovements = () => {
+    setMobileTab("movements");
+
+    window.requestAnimationFrame(() => {
+      movementsSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  };
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -413,6 +425,7 @@ export default function StockPage() {
     1,
     Math.ceil(filtered.length / MOBILE_STOCK_PAGE_SIZE),
   );
+
   const mobileMovementsTotalPages = Math.max(
     1,
     Math.ceil(movements.length / MOBILE_MOVEMENTS_PAGE_SIZE),
@@ -422,6 +435,7 @@ export default function StockPage() {
     Math.max(1, mobileStockPage),
     mobileStockTotalPages,
   );
+
   const safeMobileMovementsPage = Math.min(
     Math.max(1, mobileMovementsPage),
     mobileMovementsTotalPages,
@@ -447,7 +461,6 @@ export default function StockPage() {
     );
   }).length;
 
-
   const selected = products.find((p) => p.id === form.productId);
 
   const stockProducts = useMemo(
@@ -461,8 +474,6 @@ export default function StockPage() {
   const productSearchResults = useMemo(() => {
     const q = normalizeSearch(productSearch);
 
-    // No mostramos nada si el usuario todavía no escribió.
-    // Así evitamos que aparezca el selector apenas entra a la página.
     if (!q) return [];
 
     return stockProducts
@@ -809,11 +820,14 @@ export default function StockPage() {
           </div>
         )}
 
-        {productPickerOpen && productSearch && !selected && productSearchResults.length === 0 && (
-          <div className="stock-product-results stock-product-results-empty">
-            <p>No encontré productos con ese nombre, SKU o categoría.</p>
-          </div>
-        )}
+        {productPickerOpen &&
+          productSearch &&
+          !selected &&
+          productSearchResults.length === 0 && (
+            <div className="stock-product-results stock-product-results-empty">
+              <p>No encontré productos con ese nombre, SKU o categoría.</p>
+            </div>
+          )}
 
         {selected && (
           <div className="stock-selected-product">
@@ -1018,30 +1032,41 @@ export default function StockPage() {
         {stockFormContent}
       </div>
 
-      <div
-        className="stock-search"
-        style={{ position: "relative", marginBottom: 18, maxWidth: 420 }}
-      >
-        <Search
-          size={14}
-          style={{
-            position: "absolute",
-            left: 12,
-            top: "50%",
-            transform: "translateY(-50%)",
-            color: "var(--text3)",
-          }}
-        />
+      <div className="stock-toolbar">
+        <div
+          className="stock-search"
+          style={{ position: "relative", maxWidth: 420, flex: "1 1 320px" }}
+        >
+          <Search
+            size={14}
+            style={{
+              position: "absolute",
+              left: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text3)",
+            }}
+          />
 
-        <input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setMobileStockPage(1);
-          }}
-          placeholder="Buscar producto, SKU o categoría..."
-          style={{ paddingLeft: 34 }}
-        />
+          <input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setMobileStockPage(1);
+            }}
+            placeholder="Buscar producto, SKU o categoría..."
+            style={{ paddingLeft: 34 }}
+          />
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-secondary stock-go-movements-btn"
+          onClick={goToStockMovements}
+        >
+          <ArrowDownCircle size={15} />
+          Ir a movimientos de stock
+        </button>
       </div>
 
       <div
@@ -1226,8 +1251,8 @@ export default function StockPage() {
                       <h3>{p.name}</h3>
                       <span>
                         {p.sku || "Sin SKU"} · {getProductCategoryLabel(p)} ·{" "}
-                        {isCompositeProduct(p) ? "PROMO" : p.saleUnit} · Mín. May.{" "}
-                        {localMin}
+                        {isCompositeProduct(p) ? "PROMO" : p.saleUnit} · Mín.
+                        May. {localMin}
                         {unit} · Mín. Min. {depositoMin}
                         {unit}
                       </span>
@@ -1314,7 +1339,10 @@ export default function StockPage() {
         )}
       </div>
 
-      <div className="card stock-card stock-movements-card">
+      <div
+        ref={movementsSectionRef}
+        className="card stock-card stock-movements-card"
+      >
         <div
           className="stock-card-title"
           style={{
@@ -1512,7 +1540,9 @@ export default function StockPage() {
                 </div>
               ) : (
                 <div className="stock-scanner-footer">
-                  <small>Tip: acercá el código, evitá reflejos y usá buena luz.</small>
+                  <small>
+                    Tip: acercá el código, evitá reflejos y usá buena luz.
+                  </small>
                 </div>
               )}
             </div>
@@ -1560,6 +1590,19 @@ export default function StockPage() {
         .stock-mobile-tabs,
         .stock-mobile-pagination {
           display: none;
+        }
+
+        .stock-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          margin-bottom: 18px;
+        }
+
+        .stock-go-movements-btn {
+          white-space: nowrap;
         }
 
         .stock-location-field {
@@ -1956,10 +1999,22 @@ export default function StockPage() {
             display: none;
           }
 
+          .stock-toolbar {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+          }
+
+          .stock-go-movements-btn {
+            width: 100%;
+            justify-content: center;
+          }
+
           .stock-search {
             max-width: none !important;
             width: 100%;
-            margin-bottom: 10px !important;
+            margin-bottom: 0 !important;
           }
 
           .stock-search input {
@@ -2271,25 +2326,6 @@ export default function StockPage() {
             justify-content: center !important;
           }
 
-          .stock-mobile-sheet-body .stock-product-search-row {
-            grid-template-columns: 1fr !important;
-          }
-
-          .stock-mobile-sheet-body .stock-product-results {
-            position: static !important;
-            margin-top: 8px !important;
-            max-height: 260px !important;
-          }
-
-          .stock-mobile-sheet-body .stock-product-picker {
-            overflow: visible !important;
-          }
-
-          .stock-mobile-sheet-body .stock-scan-btn {
-            width: 100% !important;
-            justify-content: center !important;
-          }
-
           .stock-mobile-sheet-body select,
           .stock-mobile-sheet-body input {
             width: 100% !important;
@@ -2474,7 +2510,6 @@ export default function StockPage() {
           }
         }
       `}</style>
-
     </AppLayout>
   );
 }

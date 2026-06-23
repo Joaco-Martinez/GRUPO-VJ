@@ -13,15 +13,43 @@ router.get("/income/month", authMiddleware, financeController.getIncomeByMonth);
 router.get("/income/year", authMiddleware, financeController.getIncomeByYear);
 router.get("/income/week", authMiddleware, financeController.getIncomeByWeek);
 
-router.post("/register-credit-note", authMiddleware, financeController.registerCreditNote);
-
-
+router.post(
+  "/register-credit-note",
+  authMiddleware,
+  financeController.registerCreditNote,
+);
 
 // Estadísticas extendidas
-router.get("/income/category", authMiddleware, financeController.getIncomeByCategory);
+router.get(
+  "/income/category",
+  authMiddleware,
+  financeController.getIncomeByCategory,
+);
+
+router.get(
+  "/sales/by-stock-location",
+  authMiddleware,
+  financeController.getSalesByStockLocation,
+);
+
 router.get("/products/top", authMiddleware, financeController.getTopProducts);
-router.get("/products/worst", authMiddleware, financeController.getWorstProducts);
-router.get("/products/top-range", authMiddleware, financeController.getTopProductsInRange);
+router.get(
+  "/products/worst",
+  authMiddleware,
+  financeController.getWorstProducts,
+);
+
+router.get(
+  "/products/top-range",
+  authMiddleware,
+  financeController.getTopProductsInRange,
+);
+
+router.get(
+  "/products/worst-range",
+  authMiddleware,
+  financeController.getWorstProductsInRange,
+);
 
 // Mejor producto de un mes específico
 router.get("/products/best-month", financeController.getBestProductMonth);
@@ -38,7 +66,4 @@ router.put("/:id", authMiddleware, financeController.update);
 router.patch("/:id", authMiddleware, financeController.update);
 router.delete("/:id", authMiddleware, financeController.remove);
 
-
 export default router;
-
-

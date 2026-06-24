@@ -11,10 +11,12 @@ import { fmtMoney, num } from "@/lib/helpers";
 import toast from "react-hot-toast";
 import {
   ArrowLeft,
+  Check,
   Eye,
   FileText,
   Loader2,
   Package,
+  Pencil,
   RefreshCcw,
   Search,
   Warehouse,
@@ -282,6 +284,9 @@ export default function ComprasHistorialPage() {
   const [serverTotalPages, setServerTotalPages] = useState(1);
 
   const [detail, setDetail] = useState<PurchaseView | null>(null);
+  const [providerEditing, setProviderEditing] = useState(false);
+  const [providerDraft, setProviderDraft] = useState("");
+  const [providerSaving, setProviderSaving] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -379,6 +384,45 @@ export default function ComprasHistorialPage() {
     0,
   );
 
+  const openPurchaseDetail = (purchase: PurchaseView) => {
+    setDetail(purchase);
+    setProviderDraft(getProviderName(purchase) === "Sin proveedor" ? "" : getProviderName(purchase));
+    setProviderEditing(false);
+  };
+
+  const updateProvider = async () => {
+    if (!detail) return;
+
+    setProviderSaving(true);
+    const toastId = toast.loading("Actualizando proveedor...");
+
+    try {
+      const response = await api.patch(`/purchases/${detail.id}/provider`, {
+        providerName: providerDraft.trim() || null,
+      });
+
+      const updatedPurchase: PurchaseView = {
+        ...detail,
+        ...response.data,
+        providerName: response.data?.providerName ?? (providerDraft.trim() || null),
+      };
+
+      setPurchases((prev) =>
+        prev.map((purchase) =>
+          purchase.id === updatedPurchase.id ? { ...purchase, ...updatedPurchase } : purchase,
+        ),
+      );
+      setDetail(updatedPurchase);
+      setProviderEditing(false);
+      toast.success("Proveedor actualizado", { id: toastId });
+    } catch (error) {
+      console.error(error);
+      toast.error(getErrorMessage(error, "No se pudo actualizar el proveedor"), { id: toastId });
+    } finally {
+      setProviderSaving(false);
+    }
+  };
+
   return (
     <AppLayout
       title="Historial de compras"
@@ -462,7 +506,7 @@ export default function ComprasHistorialPage() {
                 {paginatedPurchases.map((purchase) => (
                   <tr
                     key={purchase.id}
-                    onClick={() => setDetail(purchase)}
+                    onClick={() => openPurchaseDetail(purchase)}
                     style={{ cursor: "pointer" }}
                   >
                     <td style={{ fontFamily: "var(--mono)", color: "var(--text2)" }}>
@@ -485,7 +529,7 @@ export default function ComprasHistorialPage() {
                     </td>
                     <td>{getUserLabel(purchase)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
-                      <button className="btn btn-secondary btn-sm" onClick={() => setDetail(purchase)}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => openPurchaseDetail(purchase)}>
                         <Eye size={14} />
                         Ver
                       </button>
@@ -514,7 +558,7 @@ export default function ComprasHistorialPage() {
               <article
                 key={`${purchase.id}-mobile`}
                 className="purchase-history-item"
-                onClick={() => setDetail(purchase)}
+                onClick={() => openPurchaseDetail(purchase)}
               >
                 <div className="purchase-history-item-head">
                   <div>
@@ -607,9 +651,63 @@ export default function ComprasHistorialPage() {
 
               <div className="modal-body">
                 <div className="purchase-detail-grid">
-                  <div>
+                  <div className="purchase-provider-edit-card">
                     <small>Proveedor</small>
-                    <b>{getProviderName(detail)}</b>
+                    {providerEditing ? (
+                      <div className="purchase-provider-editor">
+                        <input
+                          value={providerDraft}
+                          onChange={(e) => setProviderDraft(e.target.value)}
+                          placeholder="Sin proveedor"
+                          autoFocus
+                          disabled={providerSaving}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void updateProvider();
+                            if (e.key === "Escape" && !providerSaving) {
+                              setProviderDraft(getProviderName(detail) === "Sin proveedor" ? "" : getProviderName(detail));
+                              setProviderEditing(false);
+                            }
+                          }}
+                        />
+                        <div className="purchase-provider-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={providerSaving}
+                            onClick={() => {
+                              setProviderDraft(getProviderName(detail) === "Sin proveedor" ? "" : getProviderName(detail));
+                              setProviderEditing(false);
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            disabled={providerSaving}
+                            onClick={() => void updateProvider()}
+                          >
+                            {providerSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="purchase-provider-view">
+                        <b>{getProviderName(detail)}</b>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => {
+                            setProviderDraft(getProviderName(detail) === "Sin proveedor" ? "" : getProviderName(detail));
+                            setProviderEditing(true);
+                          }}
+                        >
+                          <Pencil size={13} />
+                          Cambiar
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -851,6 +949,42 @@ export default function ComprasHistorialPage() {
           color: var(--accent);
           font-family: var(--mono);
           font-size: 18px;
+        }
+
+        .purchase-provider-edit-card {
+          align-content: start;
+        }
+
+        .purchase-provider-view {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .purchase-provider-view b {
+          min-width: 0;
+        }
+
+        .purchase-provider-view button,
+        .purchase-provider-actions button {
+          white-space: nowrap;
+        }
+
+        .purchase-provider-editor {
+          display: grid;
+          gap: 8px;
+        }
+
+        .purchase-provider-editor input {
+          width: 100%;
+          min-width: 0;
+        }
+
+        .purchase-provider-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
         }
 
         .purchase-detail-note {

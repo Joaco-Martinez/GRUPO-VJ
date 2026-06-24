@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
@@ -429,11 +429,6 @@ export default function POSPage() {
   const [scannerLoading, setScannerLoading] = useState(false);
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
-  const categoryDragElementRef = useRef<HTMLDivElement | null>(null);
-  const categoryDragStartXRef = useRef(0);
-  const categoryDragScrollLeftRef = useRef(0);
-  const categoryDraggedRef = useRef(false);
-  const categoryDraggingRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -705,53 +700,7 @@ export default function POSPage() {
     element.scrollLeft += horizontalDelta;
   };
 
-  const handleCategoryPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    const element = event.currentTarget;
-
-    if (element.scrollWidth <= element.clientWidth) return;
-
-    categoryDragElementRef.current = element;
-    categoryDraggingRef.current = true;
-    categoryDraggedRef.current = false;
-    categoryDragStartXRef.current = event.clientX;
-    categoryDragScrollLeftRef.current = element.scrollLeft;
-    element.classList.add("is-dragging");
-    element.setPointerCapture?.(event.pointerId);
-  };
-
-  const handleCategoryPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!categoryDraggingRef.current) return;
-
-    const element = categoryDragElementRef.current;
-    if (!element) return;
-
-    const distance = event.clientX - categoryDragStartXRef.current;
-
-    if (Math.abs(distance) > 4) {
-      categoryDraggedRef.current = true;
-    }
-
-    element.scrollLeft = categoryDragScrollLeftRef.current - distance;
-  };
-
-  const handleCategoryPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
-    const element = categoryDragElementRef.current;
-
-    categoryDraggingRef.current = false;
-    categoryDragElementRef.current = null;
-
-    if (!element) return;
-
-    element.classList.remove("is-dragging");
-    element.releasePointerCapture?.(event.pointerId);
-  };
-
   const handleCategorySelect = (nextCategoryId: string) => {
-    if (categoryDraggedRef.current) {
-      categoryDraggedRef.current = false;
-      return;
-    }
-
     setCategoryId(nextCategoryId);
   };
 
@@ -1693,41 +1642,11 @@ export default function POSPage() {
     <AppLayout title="POS" subtitle="Ventas, promos, envíos, pagos parciales y cuenta corriente">
       <div className="pos-desktop-only">
         <div className="pos-desktop-mobile-shell">
-          <section className="pos-desktop-hero">
-            <div>
-              <p className="pos-kicker">Venta rápida</p>
-              <h2>POS de escritorio</h2>
-              <p>{filtered.length} productos · {selectedCategoryName} · Stock {stockLocationLabelLower(stockLocation)}</p>
-            </div>
 
-            <div className="pos-desktop-hero-actions">
-              <span className="pos-desktop-pill">
-                <ShoppingCart size={15} />
-                {cart.length ? `${cartUnits} item${cartUnits === 1 ? "" : "s"}` : "Carrito vacío"}
-              </span>
-              <span className="pos-desktop-pill total">
-                Total {fmtMoney(total)}
-              </span>
-              <button className="pos-icon-btn" type="button" onClick={() => load(true)} disabled={loading} title="Actualizar POS">
-                <RefreshCcw size={17} />
-              </button>
-            </div>
-          </section>
 
-          <section className="pos-desktop-mobile-controls">
-            <div className="pos-searchbox pos-searchbox-desktop">
-              <Search size={18} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por producto o SKU..."
-                autoComplete="off"
-              />
-              <button type="button" className="pos-search-scan-btn" onClick={openSkuScanner} aria-label="Escanear SKU" title="Escanear SKU">
-                <ScanBarcode size={17} />
-              </button>
-              {search && <button type="button" onClick={() => setSearch("")} aria-label="Limpiar búsqueda"><X size={15} /></button>}
-            </div>
+          <section className="pos-product-section pos-product-section-desktop">
+          <section className="pos-desktop-mobile-controls pos-product-toolbar-desktop">
+
 
             {renderPricePresetSelector(true)}
 
@@ -1792,11 +1711,6 @@ export default function POSPage() {
             <div
               className="pos-category-strip pos-category-strip-desktop"
               onWheel={handleCategoryWheel}
-              onPointerDown={handleCategoryPointerDown}
-              onPointerMove={handleCategoryPointerMove}
-              onPointerUp={handleCategoryPointerEnd}
-              onPointerCancel={handleCategoryPointerEnd}
-              onPointerLeave={handleCategoryPointerEnd}
             >
               <button type="button" className={!categoryId ? "active" : ""} onClick={() => handleCategorySelect("")}>Todos</button>
               {filteredCategories.map((category) => (
@@ -1818,11 +1732,24 @@ export default function POSPage() {
             )}
           </section>
 
-          <section className="pos-product-section pos-product-section-desktop">
             {loading && <div className="pos-grid pos-desktop-like-grid">{Array.from({ length: 12 }).map((_, index) => <div key={index} className="pos-product-skeleton" />)}</div>}
             {!loading && !filtered.length && <div className="pos-empty"><Package size={34} /><b>No encontré productos</b><span>Probá otra búsqueda o sacá el filtro de categoría.</span></div>}
             {!loading && !!filtered.length && (
               <>
+              <div className="pos-searchbox pos-searchbox-desktop">
+              <Search size={18} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por producto o SKU..."
+                autoComplete="off"
+              />
+              <button type="button" className="pos-search-scan-btn" onClick={openSkuScanner} aria-label="Escanear SKU" title="Escanear SKU">
+                <ScanBarcode size={17} />
+              </button>
+              {search && <button type="button" onClick={() => setSearch("")} aria-label="Limpiar búsqueda"><X size={15} /></button>}
+            </div>
+            
                 <div className="pos-grid pos-desktop-like-grid">
                   {visibleProducts.map((product) => renderProductCard(product, true))}
                 </div>
@@ -2075,11 +2002,6 @@ export default function POSPage() {
             <div
               className="pos-category-strip"
               onWheel={handleCategoryWheel}
-              onPointerDown={handleCategoryPointerDown}
-              onPointerMove={handleCategoryPointerMove}
-              onPointerUp={handleCategoryPointerEnd}
-              onPointerCancel={handleCategoryPointerEnd}
-              onPointerLeave={handleCategoryPointerEnd}
             >
               <button type="button" className={!categoryId ? "active" : ""} onClick={() => handleCategorySelect("")}>Todos</button>
               {categories.map((category) => (
@@ -2621,10 +2543,6 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
   font-size: 12px; font-weight: 900; white-space: nowrap; flex-shrink: 0;
 }
 .pos-category-strip button.active { background: var(--accent); border-color: var(--accent); color: white; }
-.pos-category-strip.is-dragging {
-  cursor: grabbing;
-  user-select: none;
-}
 /* Category search desktop */
 .pos-category-tools {
   display: grid;
@@ -3188,14 +3106,16 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 
 /* Sticky controls bar */
 .pos-desktop-mobile-controls {
-  position: sticky; top: 72px; z-index: 45;
+  position: relative;
+  top: auto;
+  z-index: 5;
   padding: 12px; border: 1px solid var(--border); border-radius: 24px;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(18px);
   box-shadow: 0 16px 48px rgba(0,0,0,.14);
   margin-bottom: 14px; min-width: 0;
 }
-.pos-searchbox-desktop { height: 52px; }
+.pos-searchbox-desktop { height: 52px; margin-bottom: 10px;}
 .pos-searchbox-desktop input { font-size: 16px; }
 
 /* Desktop control grid — 3 cols por defecto */
@@ -3481,8 +3401,8 @@ body {
   overflow-x: auto !important;
   overflow-y: hidden;
   padding-bottom: 6px;
-  cursor: grab;
-  touch-action: pan-x;
+  cursor: default;
+  touch-action: auto;
   overscroll-behavior-x: contain;
 }
 
@@ -3791,6 +3711,59 @@ body {
     grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
   }
 }
+
+
+/* ================================================================
+   FIX: toolbar de productos + clicks de categorías desktop
+   ================================================================ */
+.pos-product-toolbar-desktop {
+  position: relative !important;
+  top: auto !important;
+  z-index: 5 !important;
+  margin-bottom: 14px !important;
+}
+
+.pos-category-strip button {
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+
+/* ================================================================
+   FIX: scrollbar de categorías más gruesa y fácil de agarrar
+   Mantiene el click normal en categorías, sin drag manual.
+   ================================================================ */
+@media (min-width: 768px) {
+  .pos-category-strip-desktop {
+    padding-bottom: 12px !important;
+    scrollbar-width: auto !important;
+    scrollbar-color: var(--accent) color-mix(in srgb, var(--surface2) 82%, transparent) !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar {
+    display: block !important;
+    height: 14px !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar-track {
+    background: color-mix(in srgb, var(--surface2) 85%, transparent) !important;
+    border-radius: 999px !important;
+    margin-inline: 8px !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar-thumb {
+    background: var(--accent) !important;
+    border-radius: 999px !important;
+    border: 3px solid color-mix(in srgb, var(--surface2) 85%, transparent) !important;
+    min-width: 44px !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--accent) 82%, white 18%) !important;
+  }
+}
+
       `}</style>
     </AppLayout>
   );

@@ -34,6 +34,7 @@ import {
 type Modal = 'product-create' | 'product-edit' | 'category' | 'sku-scanner' | null;
 type ProductFormStep = 'basico' | 'precios' | 'componentes';
 type ProductSortMode = 'default' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
+type SkuScannerMode = 'form' | 'search';
 type ComponentForm = { componentId: string; quantity: string; quantityKg: string };
 
 type ToastState = {
@@ -334,6 +335,7 @@ export default function ProductosPage() {
   const [scannerLoading, setScannerLoading] = useState(false);
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
+  const skuScannerModeRef = useRef<SkuScannerMode>('form');
   const productModalBeforeScannerRef = useRef<Modal>(null);
   const galleryImageInputRef = useRef<HTMLInputElement | null>(null);
   const cameraImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -810,6 +812,7 @@ export default function ProductosPage() {
     setScannerError('');
     setScannerLoading(false);
     productModalBeforeScannerRef.current = null;
+    skuScannerModeRef.current = 'form';
 
     if (previousModal === 'product-create' || previousModal === 'product-edit') {
       setModal(previousModal);
@@ -819,8 +822,9 @@ export default function ProductosPage() {
     setModal(null);
   };
 
-  const openSkuScanner = () => {
-    productModalBeforeScannerRef.current = modal;
+  const openSkuScanner = (mode: SkuScannerMode = 'form') => {
+    skuScannerModeRef.current = mode;
+    productModalBeforeScannerRef.current = mode === 'form' ? modal : null;
     setScannerError('');
     setScannerLoading(true);
     scannerHandledRef.current = false;
@@ -866,6 +870,14 @@ export default function ProductosPage() {
             if (!sku || scannerHandledRef.current) return;
 
             scannerHandledRef.current = true;
+
+            if (skuScannerModeRef.current === 'search') {
+              setSearch(sku);
+              setCurrentPage(1);
+              showToast('success', `Buscando SKU: ${sku}`);
+              await closeSkuScanner();
+              return;
+            }
 
             setForm((prev) => ({
               ...prev,
@@ -1042,12 +1054,24 @@ export default function ProductosPage() {
             }}
           />
 
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nombre, SKU o descripción..."
-            style={{ paddingLeft: 34 }}
-          />
+          <div className="products-search-input-wrap">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por nombre, SKU o descripción..."
+              style={{ paddingLeft: 34 }}
+            />
+
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm products-search-scan-btn"
+              onClick={() => openSkuScanner('search')}
+              title="Escanear SKU para buscar"
+              aria-label="Escanear SKU para buscar"
+            >
+              <ScanBarcode size={16} />
+            </button>
+          </div>
         </div>
 
         <select
@@ -1771,7 +1795,7 @@ export default function ProductosPage() {
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm products-sku-scan-btn"
-                      onClick={openSkuScanner}
+                      onClick={() => openSkuScanner('form')}
                       title="Escanear SKU con cámara"
                       aria-label="Escanear SKU con cámara"
                     >
@@ -2260,7 +2284,7 @@ export default function ProductosPage() {
         <div className="modal-overlay">
           <div className="modal products-scanner-modal">
             <div className="modal-header">
-              <b>Escanear SKU</b>
+              <b>{skuScannerModeRef.current === 'search' ? 'Escanear SKU para buscar' : 'Escanear SKU'}</b>
 
               <button className="btn btn-ghost btn-sm" onClick={closeSkuScanner}>
                 <X size={16} />
@@ -2271,9 +2295,15 @@ export default function ProductosPage() {
               <div className="products-scanner-info">
                 <ScanBarcode size={18} />
                 <div>
-                  <b>Apuntá al código de barras o QR</b>
+                  <b>
+                    {skuScannerModeRef.current === 'search'
+                      ? 'Apuntá al código del producto'
+                      : 'Apuntá al código de barras o QR'}
+                  </b>
                   <small>
-                    Cuando lo detecte, se carga automáticamente en el campo SKU.
+                    {skuScannerModeRef.current === 'search'
+                      ? 'Cuando lo detecte, se busca automáticamente por SKU.'
+                      : 'Cuando lo detecte, se carga automáticamente en el campo SKU.'}
                   </small>
                 </div>
               </div>
@@ -2562,6 +2592,28 @@ export default function ProductosPage() {
           color: var(--text3);
           font-size: 12px;
           line-height: 1.4;
+        }
+
+        .products-search-input-wrap {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 42px;
+          gap: 8px;
+          align-items: center;
+          width: 100%;
+          min-width: 0;
+        }
+
+        .products-search-input-wrap input {
+          width: 100%;
+          min-width: 0;
+        }
+
+        .products-search-scan-btn {
+          width: 42px;
+          min-width: 42px;
+          height: 38px;
+          padding: 0 !important;
+          justify-content: center;
         }
 
         .products-sku-input-wrap {
@@ -3206,6 +3258,10 @@ export default function ProductosPage() {
           .products-search {
             min-width: 0 !important;
             width: 100%;
+          }
+
+          .products-search-input-wrap {
+            grid-template-columns: minmax(0, 1fr) 42px;
           }
 
           .products-search input,

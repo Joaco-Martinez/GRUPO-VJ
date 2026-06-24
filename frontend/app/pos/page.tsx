@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
@@ -388,6 +388,7 @@ export default function POSPage() {
 
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [categorySearch, setCategorySearch] = useState("");
   const [sortMode, setSortMode] = useState<ProductSortMode>("name-asc");
   const [clientId, setClientId] = useState("");
   const [clientSearch, setClientSearch] = useState("");
@@ -428,6 +429,11 @@ export default function POSPage() {
   const [scannerLoading, setScannerLoading] = useState(false);
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
+  const categoryDragElementRef = useRef<HTMLDivElement | null>(null);
+  const categoryDragStartXRef = useRef(0);
+  const categoryDragScrollLeftRef = useRef(0);
+  const categoryDraggedRef = useRef(false);
+  const categoryDraggingRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -528,6 +534,16 @@ export default function POSPage() {
     return result.slice(0, 80);
   }, [clients, clientSearch]);
 
+  const filteredCategories = useMemo(() => {
+    const q = normalizeText(categorySearch);
+
+    if (!q) return categories;
+
+    return categories.filter((category) =>
+      normalizeText(category.name).includes(q),
+    );
+  }, [categories, categorySearch]);
+
   const deliveryProduct = useMemo(
     () => products.find((p) => isDeliveryProduct(p)),
     [products],
@@ -625,16 +641,20 @@ export default function POSPage() {
   };
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeText(search);
 
     const result = products.filter((p) => {
       if (p.isService) return false;
       if (isDeliveryProduct(p)) return false;
 
+      const haystack = normalizeText([
+        p.name,
+        p.sku,
+        categoryName(p),
+      ].filter(Boolean).join(" "));
+
       return (
-        (!q ||
-          p.name.toLowerCase().includes(q) ||
-          String(p.sku ?? "").toLowerCase().includes(q)) &&
+        (!q || haystack.includes(q)) &&
         (!categoryId || p.categoryId === categoryId)
       );
     });
@@ -668,6 +688,72 @@ export default function POSPage() {
 
   const selectedCategoryName =
     categories.find((category) => category.id === categoryId)?.name ?? "Todos";
+
+  const handleCategoryWheel = (event: WheelEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    const canScroll = element.scrollWidth > element.clientWidth;
+
+    if (!canScroll) return;
+
+    const horizontalDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+      ? event.deltaX
+      : event.deltaY;
+
+    if (horizontalDelta === 0) return;
+
+    event.preventDefault();
+    element.scrollLeft += horizontalDelta;
+  };
+
+  const handleCategoryPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+
+    if (element.scrollWidth <= element.clientWidth) return;
+
+    categoryDragElementRef.current = element;
+    categoryDraggingRef.current = true;
+    categoryDraggedRef.current = false;
+    categoryDragStartXRef.current = event.clientX;
+    categoryDragScrollLeftRef.current = element.scrollLeft;
+    element.classList.add("is-dragging");
+    element.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleCategoryPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!categoryDraggingRef.current) return;
+
+    const element = categoryDragElementRef.current;
+    if (!element) return;
+
+    const distance = event.clientX - categoryDragStartXRef.current;
+
+    if (Math.abs(distance) > 4) {
+      categoryDraggedRef.current = true;
+    }
+
+    element.scrollLeft = categoryDragScrollLeftRef.current - distance;
+  };
+
+  const handleCategoryPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    const element = categoryDragElementRef.current;
+
+    categoryDraggingRef.current = false;
+    categoryDragElementRef.current = null;
+
+    if (!element) return;
+
+    element.classList.remove("is-dragging");
+    element.releasePointerCapture?.(event.pointerId);
+  };
+
+  const handleCategorySelect = (nextCategoryId: string) => {
+    if (categoryDraggedRef.current) {
+      categoryDraggedRef.current = false;
+      return;
+    }
+
+    setCategoryId(nextCategoryId);
+  };
 
   const cartUnits = cart.reduce((acc, item) => {
     if (item.product.saleUnit === "KG") return acc + 1;
@@ -1672,19 +1758,64 @@ export default function POSPage() {
               </label>
             </div>
 
-            <div className="pos-category-strip pos-category-strip-desktop">
-              <button type="button" className={!categoryId ? "active" : ""} onClick={() => setCategoryId("")}>Todos</button>
-              {categories.map((category) => (
+            <div className="pos-category-tools">
+              <div className="pos-category-searchbox">
+                <Search size={15} />
+                <input
+                  value={categorySearch}
+                  onChange={(e) => setCategorySearch(e.target.value)}
+                  placeholder="Buscar categoría..."
+                  autoComplete="off"
+                />
+                {categorySearch && (
+                  <button
+                    type="button"
+                    onClick={() => setCategorySearch("")}
+                    aria-label="Limpiar búsqueda de categoría"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              {categoryId && (
+                <button
+                  type="button"
+                  className="pos-category-clear"
+                  onClick={() => handleCategorySelect("")}
+                >
+                  Limpiar categoría
+                </button>
+              )}
+            </div>
+
+            <div
+              className="pos-category-strip pos-category-strip-desktop"
+              onWheel={handleCategoryWheel}
+              onPointerDown={handleCategoryPointerDown}
+              onPointerMove={handleCategoryPointerMove}
+              onPointerUp={handleCategoryPointerEnd}
+              onPointerCancel={handleCategoryPointerEnd}
+              onPointerLeave={handleCategoryPointerEnd}
+            >
+              <button type="button" className={!categoryId ? "active" : ""} onClick={() => handleCategorySelect("")}>Todos</button>
+              {filteredCategories.map((category) => (
                 <button
                   key={category.id}
                   type="button"
                   className={categoryId === category.id ? "active" : ""}
-                  onClick={() => setCategoryId(category.id)}
+                  onClick={() => handleCategorySelect(category.id)}
                 >
                   {category.name}
                 </button>
               ))}
             </div>
+
+            {categorySearch.trim() && !filteredCategories.length && (
+              <small className="pos-category-empty">
+                No encontré categorías con “{categorySearch.trim()}”.
+              </small>
+            )}
           </section>
 
           <section className="pos-product-section pos-product-section-desktop">
@@ -1941,10 +2072,18 @@ export default function POSPage() {
               </label>
             </div>
 
-            <div className="pos-category-strip">
-              <button type="button" className={!categoryId ? "active" : ""} onClick={() => setCategoryId("")}>Todos</button>
+            <div
+              className="pos-category-strip"
+              onWheel={handleCategoryWheel}
+              onPointerDown={handleCategoryPointerDown}
+              onPointerMove={handleCategoryPointerMove}
+              onPointerUp={handleCategoryPointerEnd}
+              onPointerCancel={handleCategoryPointerEnd}
+              onPointerLeave={handleCategoryPointerEnd}
+            >
+              <button type="button" className={!categoryId ? "active" : ""} onClick={() => handleCategorySelect("")}>Todos</button>
               {categories.map((category) => (
-                <button key={category.id} type="button" className={categoryId === category.id ? "active" : ""} onClick={() => setCategoryId(category.id)}>{category.name}</button>
+                <button key={category.id} type="button" className={categoryId === category.id ? "active" : ""} onClick={() => handleCategorySelect(category.id)}>{category.name}</button>
               ))}
             </div>
           </section>
@@ -2482,6 +2621,74 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
   font-size: 12px; font-weight: 900; white-space: nowrap; flex-shrink: 0;
 }
 .pos-category-strip button.active { background: var(--accent); border-color: var(--accent); color: white; }
+.pos-category-strip.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+/* Category search desktop */
+.pos-category-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.pos-category-searchbox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text3);
+  min-width: 0;
+}
+.pos-category-searchbox input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+.pos-category-searchbox button,
+.pos-category-clear {
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.pos-category-searchbox button {
+  width: 28px;
+  height: 28px;
+}
+.pos-category-clear {
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+.pos-category-clear:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pos-category-empty {
+  display: block;
+  color: var(--text3);
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 4px;
+}
 
 /* Price preset bar */
 .pos-pre-price-bar {
@@ -3274,10 +3481,33 @@ body {
   overflow-x: auto !important;
   overflow-y: hidden;
   padding-bottom: 6px;
+  cursor: grab;
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+}
+
+.pos-category-strip-desktop {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.pos-category-strip-desktop::-webkit-scrollbar {
+  display: block !important;
+  height: 8px;
+}
+
+.pos-category-strip-desktop::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pos-category-strip-desktop::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
 }
 
 .pos-category-strip button {
   flex: 0 0 auto;
+  cursor: pointer;
 }
 
 .pos-desktop-like-grid {
@@ -3437,6 +3667,15 @@ body {
 }
 
 @container (max-width: 620px) {
+  .pos-category-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-category-clear {
+    width: 100%;
+    justify-content: center;
+  }
+
   .pos-desktop-like-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
@@ -3485,6 +3724,15 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .pos-category-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-category-clear {
+    width: 100%;
+    justify-content: center;
+  }
+
   .pos-desktop-hero-actions {
     display: none !important;
   }

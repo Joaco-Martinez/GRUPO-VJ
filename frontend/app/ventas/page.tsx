@@ -1458,6 +1458,48 @@ export default function VentasPage() {
       .slice(0, 24);
   }, [products, editProductSearch]);
 
+  const editSaleStockLocation = useMemo(() => {
+    const loc = String((editItemsSale as SaleExtra | null)?.stockLocation ?? 'LOCAL').toUpperCase();
+    return loc === 'DEPOSITO' ? 'DEPOSITO' : 'LOCAL';
+  }, [editItemsSale]);
+
+  // Quantities of each product in the ORIGINAL sale items (before this edit)
+  const oldEditSaleQtyMap = useMemo(() => {
+    const map = new Map<string, { qty: number; kg: number }>();
+    if (!editItemsSale) return map;
+    for (const item of (editItemsSale as SaleExtra).items ?? []) {
+      const pid = String(item.productId ?? '');
+      if (!pid) continue;
+      const existing = map.get(pid) ?? { qty: 0, kg: 0 };
+      map.set(pid, {
+        qty: existing.qty + num(item.quantity || 0),
+        kg: existing.kg + num(item.quantityKg || 0),
+      });
+    }
+    return map;
+  }, [editItemsSale]);
+
+  // Effective available stock = current product stock + old sale quantity for that product
+  // (because the backend restores the old stock before validating the new quantities)
+  const editAvailableStockMap = useMemo(() => {
+    const map = new Map<string, { units: number; kg: number }>();
+    for (const product of products) {
+      const pid = String((product as any).id);
+      const old = oldEditSaleQtyMap.get(pid) ?? { qty: 0, kg: 0 };
+      const stockUnits = editSaleStockLocation === 'DEPOSITO'
+        ? num((product as any).stockDeposito)
+        : num((product as any).stockLocal);
+      const stockKg = editSaleStockLocation === 'DEPOSITO'
+        ? num((product as any).stockDepositoKg)
+        : num((product as any).stockLocalKg);
+      map.set(pid, {
+        units: stockUnits + old.qty,
+        kg: stockKg + old.kg,
+      });
+    }
+    return map;
+  }, [products, oldEditSaleQtyMap, editSaleStockLocation]);
+
   const addProductToEditSale = (product: Product) => {
     const productAny = product as any;
     const productId = String(productAny.id);
@@ -1694,6 +1736,25 @@ export default function VentasPage() {
     if (!editLines.length) {
       toast.error('La venta tiene que tener al menos un producto');
       return;
+    }
+
+    // Validate stock before calling the API
+    for (const line of editLines) {
+      if (line.isDelivery) continue;
+      const available = editAvailableStockMap.get(line.productId);
+      if (available === undefined) continue;
+      if (line.saleUnit === 'KG') {
+        const kg = num(line.quantityKg);
+        if (kg > available.kg) {
+          toast.error(`Stock insuficiente para ${line.name}. Disponible: ${available.kg} kg`);
+          return;
+        }
+      } else {
+        if (line.quantity > available.units) {
+          toast.error(`Stock insuficiente para ${line.name}. Disponible: ${available.units} unid.`);
+          return;
+        }
+      }
     }
 
     setSavingItems(true);
@@ -3548,6 +3609,15 @@ export default function VentasPage() {
                             value={line.quantityKg ?? ''}
                             onChange={(e) => updateEditLine(line.key, { quantityKg: num(e.target.value) })}
                           />
+                          {(() => {
+                            const available = editAvailableStockMap.get(line.productId);
+                            const over = available !== undefined && num(line.quantityKg) > available.kg;
+                            return over ? (
+                              <small style={{ color: 'var(--danger, #dc2626)' }}>
+                                ⚠ Disponible: {available.kg} kg
+                              </small>
+                            ) : null;
+                          })()}
                         </label>
                       ) : (
                         <label>
@@ -3555,9 +3625,19 @@ export default function VentasPage() {
                           <input
                             type="number"
                             min={1}
+                            max={editAvailableStockMap.get(line.productId)?.units ?? undefined}
                             value={line.quantity}
                             onChange={(e) => updateEditLine(line.key, { quantity: Math.max(1, num(e.target.value)) })}
                           />
+                          {(() => {
+                            const available = editAvailableStockMap.get(line.productId);
+                            const over = available !== undefined && line.quantity > available.units;
+                            return over ? (
+                              <small style={{ color: 'var(--danger, #dc2626)' }}>
+                                ⚠ Disponible: {available.units}
+                              </small>
+                            ) : null;
+                          })()}
                         </label>
                       )}
 

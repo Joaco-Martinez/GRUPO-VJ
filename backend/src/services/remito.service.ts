@@ -9,6 +9,7 @@ import {
   RemitoPDFData,
   generateRemitoPDFBuffer,
 } from "./remitoPdf.service";
+import { startOfDayAR, endOfDayAR } from "../utils/dateAR";
 
 type CreateRemitoFromSaleInput = {
   saleId: string;
@@ -422,11 +423,11 @@ export const remitoService = {
       where.issueDate = {};
 
       if (params.from) {
-        where.issueDate.gte = new Date(params.from);
+        where.issueDate.gte = startOfDayAR(params.from);
       }
 
       if (params.to) {
-        where.issueDate.lte = new Date(params.to);
+        where.issueDate.lte = endOfDayAR(params.to);
       }
     }
 

@@ -1,4 +1,4 @@
-import { startOfDayAR, endOfDayAR } from "../utils/dateAR";
+import { startOfDayAR, endOfDayAR, monthRangeAR } from "../utils/dateAR";
 import {
   AccountMovementType,
   CategoryFinance,
@@ -54,7 +54,7 @@ type AccountDebtAllocation = {
 };
 
 function toDateOnly(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return startOfDayAR(d);
 }
 
 
@@ -530,8 +530,7 @@ export const productStatsService = {
   },
 
   async getBestProductByMonth(year: number, month: number, unit?: "UNIT" | "KG") {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    const { start: startDate, end: endDate } = monthRangeAR(year, month);
 
     const data = await this.buildProductReport({
       startDate,
@@ -543,8 +542,7 @@ export const productStatsService = {
   },
 
   async getWorstProductByMonth(year: number, month: number, unit?: "UNIT" | "KG") {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    const { start: startDate, end: endDate } = monthRangeAR(year, month);
 
     const data = await this.buildProductReport({
       startDate,

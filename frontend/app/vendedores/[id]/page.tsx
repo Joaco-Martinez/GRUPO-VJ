@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { clientName, fmtDate, fmtMoney, num } from '@/lib/helpers';
+import { todayInputAR, startOfDayAR, endOfDayAR } from '@/lib/dateAR';
 import toast from 'react-hot-toast';
 import {
   ArrowLeft,
@@ -212,19 +213,16 @@ function getErrorMessage(error: unknown, fallback: string) {
   );
 }
 
-function toInputDate(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function toInputDate() {
+  return todayInputAR();
 }
 
 function getDayRange(dateValue: string) {
-  const safeDate = dateValue || toInputDate();
-  const from = new Date(`${safeDate}T00:00:00`);
-  const to = new Date(`${safeDate}T23:59:59.999`);
-
-  return { from, to };
+  const safeDate = dateValue || todayInputAR();
+  return {
+    from: startOfDayAR(safeDate),
+    to: endOfDayAR(safeDate),
+  };
 }
 
 function getClientLabel(client: unknown) {

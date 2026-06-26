@@ -9,6 +9,7 @@ import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
 import type { PaymentMethod, Product, ProductCategory } from "@/types";
 import { categoryName, fmtMoney, normalizeArray, num } from "@/lib/helpers";
+import { todayInputAR } from "@/lib/dateAR";
 import toast from "react-hot-toast";
 import {
   AlertTriangle,
@@ -233,7 +234,7 @@ export default function ComprasPage() {
 
   const [providerName, setProviderName] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [purchaseDate, setPurchaseDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [purchaseDate, setPurchaseDate] = useState(() => todayInputAR());
   const [description, setDescription] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("TRANSFERENCIA");
 
@@ -581,7 +582,7 @@ export default function ComprasPage() {
     setInvoiceNumber("");
     setDescription("");
     setPaymentMethod("TRANSFERENCIA");
-    setPurchaseDate(new Date().toISOString().slice(0, 10));
+    setPurchaseDate(todayInputAR());
     setStockLocation("LOCAL");
   };
 

@@ -8,6 +8,7 @@ import Link from "next/link";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
 import { fmtMoney, num } from "@/lib/helpers";
+import { formatDateAR, formatDateTimeAR } from "@/lib/dateAR";
 import toast from "react-hot-toast";
 import {
   ArrowLeft,
@@ -124,31 +125,13 @@ function safeNum(value: number | string | null | undefined, fallback?: number | 
 }
 
 function fmtDate(value?: string | null) {
-  if (!value) return "Sin fecha";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin fecha";
-
-  return date.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  const result = formatDateAR(value);
+  return result === "—" ? "Sin fecha" : result;
 }
 
 function fmtDateTime(value?: string | null) {
-  if (!value) return "Sin fecha";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin fecha";
-
-  return date.toLocaleString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const result = formatDateTimeAR(value);
+  return result === "—" ? "Sin fecha" : result;
 }
 
 function getPurchaseDate(purchase: PurchaseView) {

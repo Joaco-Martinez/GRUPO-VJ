@@ -10,6 +10,7 @@ import {
   SaleUnit,
 } from "@prisma/client";
 import alertService from "./alert.service";
+import { parseDateInputAR } from "../utils/dateAR";
 
 type PurchaseItemInput = {
   productId: string;
@@ -54,9 +55,9 @@ function validatePaymentMethod(value: unknown): PaymentMethod | undefined {
 
 function parseDate(value: unknown): Date {
   if (!value) return new Date();
-  const date = value instanceof Date ? value : new Date(String(value));
-  if (Number.isNaN(date.getTime())) throw new Error("Fecha inválida");
-  return date;
+  const parsed = parseDateInputAR(value as Date | string);
+  if (!parsed) throw new Error("Fecha inválida");
+  return parsed;
 }
 
 export const purchaseService = {

@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
@@ -388,6 +388,7 @@ export default function POSPage() {
 
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [categorySearch, setCategorySearch] = useState("");
   const [sortMode, setSortMode] = useState<ProductSortMode>("name-asc");
   const [clientId, setClientId] = useState("");
   const [clientSearch, setClientSearch] = useState("");
@@ -528,6 +529,16 @@ export default function POSPage() {
     return result.slice(0, 80);
   }, [clients, clientSearch]);
 
+  const filteredCategories = useMemo(() => {
+    const q = normalizeText(categorySearch);
+
+    if (!q) return categories;
+
+    return categories.filter((category) =>
+      normalizeText(category.name).includes(q),
+    );
+  }, [categories, categorySearch]);
+
   const deliveryProduct = useMemo(
     () => products.find((p) => isDeliveryProduct(p)),
     [products],
@@ -625,16 +636,20 @@ export default function POSPage() {
   };
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeText(search);
 
     const result = products.filter((p) => {
       if (p.isService) return false;
       if (isDeliveryProduct(p)) return false;
 
+      const haystack = normalizeText([
+        p.name,
+        p.sku,
+        categoryName(p),
+      ].filter(Boolean).join(" "));
+
       return (
-        (!q ||
-          p.name.toLowerCase().includes(q) ||
-          String(p.sku ?? "").toLowerCase().includes(q)) &&
+        (!q || haystack.includes(q)) &&
         (!categoryId || p.categoryId === categoryId)
       );
     });
@@ -668,6 +683,26 @@ export default function POSPage() {
 
   const selectedCategoryName =
     categories.find((category) => category.id === categoryId)?.name ?? "Todos";
+
+  const handleCategoryWheel = (event: WheelEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    const canScroll = element.scrollWidth > element.clientWidth;
+
+    if (!canScroll) return;
+
+    const horizontalDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+      ? event.deltaX
+      : event.deltaY;
+
+    if (horizontalDelta === 0) return;
+
+    event.preventDefault();
+    element.scrollLeft += horizontalDelta;
+  };
+
+  const handleCategorySelect = (nextCategoryId: string) => {
+    setCategoryId(nextCategoryId);
+  };
 
   const cartUnits = cart.reduce((acc, item) => {
     if (item.product.saleUnit === "KG") return acc + 1;
@@ -1607,41 +1642,11 @@ export default function POSPage() {
     <AppLayout title="POS" subtitle="Ventas, promos, envíos, pagos parciales y cuenta corriente">
       <div className="pos-desktop-only">
         <div className="pos-desktop-mobile-shell">
-          <section className="pos-desktop-hero">
-            <div>
-              <p className="pos-kicker">Venta rápida</p>
-              <h2>POS de escritorio</h2>
-              <p>{filtered.length} productos · {selectedCategoryName} · Stock {stockLocationLabelLower(stockLocation)}</p>
-            </div>
 
-            <div className="pos-desktop-hero-actions">
-              <span className="pos-desktop-pill">
-                <ShoppingCart size={15} />
-                {cart.length ? `${cartUnits} item${cartUnits === 1 ? "" : "s"}` : "Carrito vacío"}
-              </span>
-              <span className="pos-desktop-pill total">
-                Total {fmtMoney(total)}
-              </span>
-              <button className="pos-icon-btn" type="button" onClick={() => load(true)} disabled={loading} title="Actualizar POS">
-                <RefreshCcw size={17} />
-              </button>
-            </div>
-          </section>
 
-          <section className="pos-desktop-mobile-controls">
-            <div className="pos-searchbox pos-searchbox-desktop">
-              <Search size={18} />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por producto o SKU..."
-                autoComplete="off"
-              />
-              <button type="button" className="pos-search-scan-btn" onClick={openSkuScanner} aria-label="Escanear SKU" title="Escanear SKU">
-                <ScanBarcode size={17} />
-              </button>
-              {search && <button type="button" onClick={() => setSearch("")} aria-label="Limpiar búsqueda"><X size={15} /></button>}
-            </div>
+          <section className="pos-product-section pos-product-section-desktop">
+          <section className="pos-desktop-mobile-controls pos-product-toolbar-desktop">
+
 
             {renderPricePresetSelector(true)}
 
@@ -1672,26 +1677,79 @@ export default function POSPage() {
               </label>
             </div>
 
-            <div className="pos-category-strip pos-category-strip-desktop">
-              <button type="button" className={!categoryId ? "active" : ""} onClick={() => setCategoryId("")}>Todos</button>
-              {categories.map((category) => (
+            <div className="pos-category-tools">
+              <div className="pos-category-searchbox">
+                <Search size={15} />
+                <input
+                  value={categorySearch}
+                  onChange={(e) => setCategorySearch(e.target.value)}
+                  placeholder="Buscar categoría..."
+                  autoComplete="off"
+                />
+                {categorySearch && (
+                  <button
+                    type="button"
+                    onClick={() => setCategorySearch("")}
+                    aria-label="Limpiar búsqueda de categoría"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              {categoryId && (
+                <button
+                  type="button"
+                  className="pos-category-clear"
+                  onClick={() => handleCategorySelect("")}
+                >
+                  Limpiar categoría
+                </button>
+              )}
+            </div>
+
+            <div
+              className="pos-category-strip pos-category-strip-desktop"
+              onWheel={handleCategoryWheel}
+            >
+              <button type="button" className={!categoryId ? "active" : ""} onClick={() => handleCategorySelect("")}>Todos</button>
+              {filteredCategories.map((category) => (
                 <button
                   key={category.id}
                   type="button"
                   className={categoryId === category.id ? "active" : ""}
-                  onClick={() => setCategoryId(category.id)}
+                  onClick={() => handleCategorySelect(category.id)}
                 >
                   {category.name}
                 </button>
               ))}
             </div>
+
+            {categorySearch.trim() && !filteredCategories.length && (
+              <small className="pos-category-empty">
+                No encontré categorías con “{categorySearch.trim()}”.
+              </small>
+            )}
           </section>
 
-          <section className="pos-product-section pos-product-section-desktop">
             {loading && <div className="pos-grid pos-desktop-like-grid">{Array.from({ length: 12 }).map((_, index) => <div key={index} className="pos-product-skeleton" />)}</div>}
             {!loading && !filtered.length && <div className="pos-empty"><Package size={34} /><b>No encontré productos</b><span>Probá otra búsqueda o sacá el filtro de categoría.</span></div>}
             {!loading && !!filtered.length && (
               <>
+              <div className="pos-searchbox pos-searchbox-desktop">
+              <Search size={18} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por producto o SKU..."
+                autoComplete="off"
+              />
+              <button type="button" className="pos-search-scan-btn" onClick={openSkuScanner} aria-label="Escanear SKU" title="Escanear SKU">
+                <ScanBarcode size={17} />
+              </button>
+              {search && <button type="button" onClick={() => setSearch("")} aria-label="Limpiar búsqueda"><X size={15} /></button>}
+            </div>
+            
                 <div className="pos-grid pos-desktop-like-grid">
                   {visibleProducts.map((product) => renderProductCard(product, true))}
                 </div>
@@ -1941,10 +1999,13 @@ export default function POSPage() {
               </label>
             </div>
 
-            <div className="pos-category-strip">
-              <button type="button" className={!categoryId ? "active" : ""} onClick={() => setCategoryId("")}>Todos</button>
+            <div
+              className="pos-category-strip"
+              onWheel={handleCategoryWheel}
+            >
+              <button type="button" className={!categoryId ? "active" : ""} onClick={() => handleCategorySelect("")}>Todos</button>
               {categories.map((category) => (
-                <button key={category.id} type="button" className={categoryId === category.id ? "active" : ""} onClick={() => setCategoryId(category.id)}>{category.name}</button>
+                <button key={category.id} type="button" className={categoryId === category.id ? "active" : ""} onClick={() => handleCategorySelect(category.id)}>{category.name}</button>
               ))}
             </div>
           </section>
@@ -2482,6 +2543,70 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
   font-size: 12px; font-weight: 900; white-space: nowrap; flex-shrink: 0;
 }
 .pos-category-strip button.active { background: var(--accent); border-color: var(--accent); color: white; }
+/* Category search desktop */
+.pos-category-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.pos-category-searchbox {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text3);
+  min-width: 0;
+}
+.pos-category-searchbox input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+}
+.pos-category-searchbox button,
+.pos-category-clear {
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.pos-category-searchbox button {
+  width: 28px;
+  height: 28px;
+}
+.pos-category-clear {
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+.pos-category-clear:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pos-category-empty {
+  display: block;
+  color: var(--text3);
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 4px;
+}
 
 /* Price preset bar */
 .pos-pre-price-bar {
@@ -2981,14 +3106,16 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 
 /* Sticky controls bar */
 .pos-desktop-mobile-controls {
-  position: sticky; top: 72px; z-index: 45;
+  position: relative;
+  top: auto;
+  z-index: 5;
   padding: 12px; border: 1px solid var(--border); border-radius: 24px;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(18px);
   box-shadow: 0 16px 48px rgba(0,0,0,.14);
   margin-bottom: 14px; min-width: 0;
 }
-.pos-searchbox-desktop { height: 52px; }
+.pos-searchbox-desktop { height: 52px; margin-bottom: 10px;}
 .pos-searchbox-desktop input { font-size: 16px; }
 
 /* Desktop control grid — 3 cols por defecto */
@@ -3274,10 +3401,33 @@ body {
   overflow-x: auto !important;
   overflow-y: hidden;
   padding-bottom: 6px;
+  cursor: default;
+  touch-action: auto;
+  overscroll-behavior-x: contain;
+}
+
+.pos-category-strip-desktop {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.pos-category-strip-desktop::-webkit-scrollbar {
+  display: block !important;
+  height: 8px;
+}
+
+.pos-category-strip-desktop::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pos-category-strip-desktop::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
 }
 
 .pos-category-strip button {
   flex: 0 0 auto;
+  cursor: pointer;
 }
 
 .pos-desktop-like-grid {
@@ -3437,6 +3587,15 @@ body {
 }
 
 @container (max-width: 620px) {
+  .pos-category-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-category-clear {
+    width: 100%;
+    justify-content: center;
+  }
+
   .pos-desktop-like-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
@@ -3485,6 +3644,15 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .pos-category-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-category-clear {
+    width: 100%;
+    justify-content: center;
+  }
+
   .pos-desktop-hero-actions {
     display: none !important;
   }
@@ -3543,6 +3711,59 @@ body {
     grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
   }
 }
+
+
+/* ================================================================
+   FIX: toolbar de productos + clicks de categorías desktop
+   ================================================================ */
+.pos-product-toolbar-desktop {
+  position: relative !important;
+  top: auto !important;
+  z-index: 5 !important;
+  margin-bottom: 14px !important;
+}
+
+.pos-category-strip button {
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+
+/* ================================================================
+   FIX: scrollbar de categorías más gruesa y fácil de agarrar
+   Mantiene el click normal en categorías, sin drag manual.
+   ================================================================ */
+@media (min-width: 768px) {
+  .pos-category-strip-desktop {
+    padding-bottom: 12px !important;
+    scrollbar-width: auto !important;
+    scrollbar-color: var(--accent) color-mix(in srgb, var(--surface2) 82%, transparent) !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar {
+    display: block !important;
+    height: 14px !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar-track {
+    background: color-mix(in srgb, var(--surface2) 85%, transparent) !important;
+    border-radius: 999px !important;
+    margin-inline: 8px !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar-thumb {
+    background: var(--accent) !important;
+    border-radius: 999px !important;
+    border: 3px solid color-mix(in srgb, var(--surface2) 85%, transparent) !important;
+    min-width: 44px !important;
+  }
+
+  .pos-category-strip-desktop::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--accent) 82%, white 18%) !important;
+  }
+}
+
       `}</style>
     </AppLayout>
   );

@@ -4,7 +4,14 @@ import { authMiddleware, requireRole } from "../middleware/auth";
 
 const router = Router();
 
-// Movimientos
+// Movimientos de stock
+// overview: devuelve 5 ingresos, 5 salidas y 5 transferencias por defecto.
+router.get("/movements/overview", authMiddleware, productController.getMovementsOverview);
+
+// search: búsqueda/paginación por tipo visual, producto, SKU, fecha, usuario, referencia.
+router.get("/movements/search", authMiddleware, productController.searchMovements);
+
+// Compatibilidad con el endpoint viejo.
 router.get("/movements", authMiddleware, productController.getMovements);
 
 // Stock UNIT

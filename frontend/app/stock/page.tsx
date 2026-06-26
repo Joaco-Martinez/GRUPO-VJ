@@ -1,16 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
-
+import StockMovementsPanel from "./StockMovementsPanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
 import type { MovementLocation, Product, StockMovement } from "@/types";
-import { fmtDate, normalizeArray, num } from "@/lib/helpers";
+import { normalizeArray, num } from "@/lib/helpers";
 import {
   ArrowDownCircle,
   ArrowLeftRight,
-  ArrowUpCircle,
   ArrowUpDown,
   BarChart2,
   Camera,
@@ -25,20 +24,6 @@ type MobileTab = "stock" | "movements";
 type SortKey = "category" | "product" | "sku";
 type SortDirection = "asc" | "desc";
 
-type MovementUserView = {
-  id?: string | null;
-  name?: string | null;
-  email?: string | null;
-};
-
-type StockMovementExtra = StockMovement & {
-  userId?: string | null;
-  userName?: string | null;
-  user?: MovementUserView | null;
-  seller?: MovementUserView | null;
-  createdBy?: MovementUserView | null;
-  employee?: MovementUserView | null;
-};
 
 type StockForm = {
   productId: string;
@@ -61,7 +46,7 @@ const emptyForm: StockForm = {
 };
 
 const MOBILE_STOCK_PAGE_SIZE = 8;
-const MOBILE_MOVEMENTS_PAGE_SIZE = 12;
+const DESKTOP_STOCK_PAGE_SIZE = 20;
 const STOCK_SKU_SCANNER_ELEMENT_ID = "grupo-vj-stock-sku-scanner";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -84,18 +69,6 @@ async function fetchStockData() {
     products: normalizeArray<Product>(p.data),
     movements: normalizeArray<StockMovement>(m.data),
   };
-}
-
-function movementIcon(type?: string) {
-  if (type === "SALE") {
-    return <ArrowUpCircle size={14} style={{ color: "var(--danger)" }} />;
-  }
-
-  if (type === "TRANSFER") {
-    return <ArrowLeftRight size={14} style={{ color: "var(--accent2)" }} />;
-  }
-
-  return <ArrowDownCircle size={14} style={{ color: "var(--accent)" }} />;
 }
 
 type ProductComponentLike = {
@@ -242,37 +215,6 @@ function getStockBadgeClass(localLow: boolean, depositoLow: boolean) {
   return localLow || depositoLow ? "badge-red" : "badge-green";
 }
 
-function movementLocationLabel(location?: MovementLocation | null) {
-  if (location === "LOCAL") return "Mayorista";
-  if (location === "DEPOSITO") return "Minorista";
-  return "—";
-}
-
-function getMovementUserLabel(movement: StockMovement) {
-  const m = movement as StockMovementExtra;
-
-  const name =
-    m.user?.name ||
-    m.seller?.name ||
-    m.createdBy?.name ||
-    m.employee?.name ||
-    m.userName;
-
-  if (name) return name;
-
-  const email =
-    m.user?.email ||
-    m.seller?.email ||
-    m.createdBy?.email ||
-    m.employee?.email;
-
-  if (email) return email;
-
-  if (m.userId) return `Usuario #${String(m.userId).slice(-8)}`;
-
-  return "Sin usuario";
-}
-
 function getProductCategoryLabel(product: Product) {
   const p = product as Product & {
     category?: { name?: string | null; nombre?: string | null } | string | null;
@@ -310,9 +252,8 @@ export default function StockPage() {
   const [form, setForm] = useState<StockForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
-  const [mobileTab, setMobileTab] = useState<MobileTab>("stock");
+  const [mobileTab, setMobileTab] = useState<MobileTab>("movements");
   const [mobileStockPage, setMobileStockPage] = useState(1);
-  const [mobileMovementsPage, setMobileMovementsPage] = useState(1);
   const [productSearch, setProductSearch] = useState("");
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -323,6 +264,7 @@ export default function StockPage() {
 
   const scannerInstanceRef = useRef<any>(null);
   const scannerHandledRef = useRef(false);
+  const movementsSectionRef = useRef<HTMLDivElement | null>(null);
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -409,32 +351,44 @@ export default function StockPage() {
     });
   }, [products, search, sortKey, sortDirection]);
 
+  const desktopStockTotalPages = Math.max(
+    1,
+    Math.ceil(filtered.length / DESKTOP_STOCK_PAGE_SIZE),
+  );
+
   const mobileStockTotalPages = Math.max(
     1,
     Math.ceil(filtered.length / MOBILE_STOCK_PAGE_SIZE),
   );
-  const mobileMovementsTotalPages = Math.max(
-    1,
-    Math.ceil(movements.length / MOBILE_MOVEMENTS_PAGE_SIZE),
+
+  const safeDesktopStockPage = Math.min(
+    Math.max(1, mobileStockPage),
+    desktopStockTotalPages,
   );
 
   const safeMobileStockPage = Math.min(
     Math.max(1, mobileStockPage),
     mobileStockTotalPages,
   );
-  const safeMobileMovementsPage = Math.min(
-    Math.max(1, mobileMovementsPage),
-    mobileMovementsTotalPages,
+
+  const desktopStockItems = filtered.slice(
+    (safeDesktopStockPage - 1) * DESKTOP_STOCK_PAGE_SIZE,
+    safeDesktopStockPage * DESKTOP_STOCK_PAGE_SIZE,
+  );
+
+  const desktopStockStart =
+    filtered.length === 0
+      ? 0
+      : (safeDesktopStockPage - 1) * DESKTOP_STOCK_PAGE_SIZE + 1;
+
+  const desktopStockEnd = Math.min(
+    filtered.length,
+    safeDesktopStockPage * DESKTOP_STOCK_PAGE_SIZE,
   );
 
   const mobileStockItems = filtered.slice(
     (safeMobileStockPage - 1) * MOBILE_STOCK_PAGE_SIZE,
     safeMobileStockPage * MOBILE_STOCK_PAGE_SIZE,
-  );
-
-  const mobileMovementItems = movements.slice(
-    (safeMobileMovementsPage - 1) * MOBILE_MOVEMENTS_PAGE_SIZE,
-    safeMobileMovementsPage * MOBILE_MOVEMENTS_PAGE_SIZE,
   );
 
   const lowStockCount = products.filter((p) => {
@@ -958,7 +912,7 @@ export default function StockPage() {
   return (
     <AppLayout
       title="Stock"
-      subtitle="Inventario mayorista, minorista y movimientos"
+      subtitle="Carga de stock, historial de movimientos e inventario"
     >
       <div className="stock-mobile-summary">
         <div className="stock-mobile-summary-grid">
@@ -996,18 +950,18 @@ export default function StockPage() {
       <div className="stock-mobile-tabs">
         <button
           type="button"
-          className={mobileTab === "stock" ? "is-active" : ""}
-          onClick={() => setMobileTab("stock")}
-        >
-          Inventario
-        </button>
-
-        <button
-          type="button"
           className={mobileTab === "movements" ? "is-active" : ""}
           onClick={() => setMobileTab("movements")}
         >
           Movimientos
+        </button>
+
+        <button
+          type="button"
+          className={mobileTab === "stock" ? "is-active" : ""}
+          onClick={() => setMobileTab("stock")}
+        >
+          Inventario
         </button>
       </div>
 
@@ -1018,30 +972,35 @@ export default function StockPage() {
         {stockFormContent}
       </div>
 
-      <div
-        className="stock-search"
-        style={{ position: "relative", marginBottom: 18, maxWidth: 420 }}
-      >
-        <Search
-          size={14}
-          style={{
-            position: "absolute",
-            left: 12,
-            top: "50%",
-            transform: "translateY(-50%)",
-            color: "var(--text3)",
-          }}
-        />
+      <StockMovementsPanel ref={movementsSectionRef} />
 
-        <input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setMobileStockPage(1);
-          }}
-          placeholder="Buscar producto, SKU o categoría..."
-          style={{ paddingLeft: 34 }}
-        />
+      <div className="stock-toolbar">
+        <div
+          className="stock-search"
+          style={{ position: "relative", maxWidth: 420, flex: "1 1 320px" }}
+        >
+          <Search
+            size={14}
+            style={{
+              position: "absolute",
+              left: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "var(--text3)",
+            }}
+          />
+
+          <input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setMobileStockPage(1);
+            }}
+            placeholder="Buscar producto, SKU o categoría..."
+            style={{ paddingLeft: 34 }}
+          />
+        </div>
+
       </div>
 
       <div
@@ -1100,7 +1059,7 @@ export default function StockPage() {
               </thead>
 
               <tbody>
-                {filtered.map((p) => {
+                {desktopStockItems.map((p) => {
                   const local = getProductLocalStock(p);
                   const deposito = getProductDepositoStock(p);
                   const localMin = getProductMinStock(p, "LOCAL");
@@ -1176,11 +1135,7 @@ export default function StockPage() {
                             {status}
                           </span>
 
-                          {(localLow || depositoLow) && (
-                            <small className="stock-low-detail">
-                              {getStockLowDetail(localLow, depositoLow)}
-                            </small>
-                          )}
+                        
                         </div>
                       </td>
                     </tr>
@@ -1197,6 +1152,45 @@ export default function StockPage() {
             </div>
           )}
         </div>
+
+        {!loading && filtered.length > 0 && (
+          <div className="stock-desktop-pagination">
+            <span>
+              Mostrando {desktopStockStart} - {desktopStockEnd} de {filtered.length}
+              {filtered.length === 1 ? " producto" : " productos"}
+            </span>
+
+            <div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={safeDesktopStockPage === 1}
+                onClick={() =>
+                  setMobileStockPage((prev) => Math.max(1, prev - 1))
+                }
+              >
+                Anterior
+              </button>
+
+              <span>
+                Página {safeDesktopStockPage} de {desktopStockTotalPages}
+              </span>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={safeDesktopStockPage === desktopStockTotalPages}
+                onClick={() =>
+                  setMobileStockPage((prev) =>
+                    Math.min(desktopStockTotalPages, prev + 1),
+                  )
+                }
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="stock-mobile-list">
           {loading ? (
@@ -1314,164 +1308,6 @@ export default function StockPage() {
         )}
       </div>
 
-      <div className="card stock-card stock-movements-card">
-        <div
-          className="stock-card-title"
-          style={{
-            padding: 16,
-            borderBottom: "1px solid var(--border)",
-            fontWeight: 800,
-          }}
-        >
-          Movimientos recientes
-        </div>
-
-        <div className="table-wrap stock-desktop-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Producto</th>
-                <th>Tipo</th>
-                <th>Desde</th>
-                <th>Hacia</th>
-                <th>Cantidad</th>
-                <th>Usuario</th>
-                <th>Referencia</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {movements.slice(0, 80).map((m) => (
-                <tr key={m.id}>
-                  <td>{fmtDate(m.createdAt)}</td>
-
-                  <td>{m.product?.name ?? m.productId}</td>
-
-                  <td>
-                    <span
-                      style={{ display: "flex", gap: 6, alignItems: "center" }}
-                    >
-                      {movementIcon(m.type)}
-                      {m.type}
-                    </span>
-                  </td>
-
-                  <td>{movementLocationLabel(m.from)}</td>
-
-                  <td>{movementLocationLabel(m.to)}</td>
-
-                  <td style={{ fontFamily: "var(--mono)" }}>
-                    {m.quantityKg ? `${m.quantityKg} kg` : (m.quantity ?? "—")}
-                  </td>
-
-                  <td>{getMovementUserLabel(m)}</td>
-
-                  <td>{m.reason ?? m.reference ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {!movements.length && !loading && (
-            <div className="empty-state">
-              <BarChart2 size={36} />
-              <p>Sin movimientos</p>
-            </div>
-          )}
-        </div>
-
-        <div className="stock-mobile-list stock-movements-mobile-list">
-          {mobileMovementItems.map((m) => (
-            <article
-              className="stock-mobile-item stock-mobile-movement-item"
-              key={m.id}
-            >
-              <div className="stock-mobile-head">
-                <div>
-                  <h3>{m.product?.name ?? m.productId}</h3>
-                  <span>{fmtDate(m.createdAt)}</span>
-                </div>
-
-                <span className="stock-movement-type">
-                  {movementIcon(m.type)}
-                  {m.type}
-                </span>
-              </div>
-
-              <div className="stock-mobile-data stock-mobile-movement-data">
-                <div>
-                  <small>Desde</small>
-                  <strong>{movementLocationLabel(m.from)}</strong>
-                </div>
-
-                <div>
-                  <small>Hacia</small>
-                  <strong>{movementLocationLabel(m.to)}</strong>
-                </div>
-
-                <div>
-                  <small>Cantidad</small>
-                  <strong>
-                    {m.quantityKg ? `${m.quantityKg} kg` : (m.quantity ?? "—")}
-                  </strong>
-                </div>
-
-                <div>
-                  <small>Usuario</small>
-                  <strong>{getMovementUserLabel(m)}</strong>
-                </div>
-
-                <div>
-                  <small>Referencia</small>
-                  <strong>{m.reason ?? m.reference ?? "—"}</strong>
-                </div>
-              </div>
-            </article>
-          ))}
-
-          {!movements.length && !loading && (
-            <div className="empty-state">
-              <BarChart2 size={36} />
-              <p>Sin movimientos</p>
-            </div>
-          )}
-        </div>
-
-        {!loading && movements.length > 0 && (
-          <div className="stock-mobile-pagination">
-            <span>
-              Página {safeMobileMovementsPage} de {mobileMovementsTotalPages} ·{" "}
-              {movements.length} movimientos
-            </span>
-
-            <div>
-              <button
-                className="btn btn-secondary btn-sm"
-                disabled={safeMobileMovementsPage === 1}
-                onClick={() =>
-                  setMobileMovementsPage((prev) => Math.max(1, prev - 1))
-                }
-              >
-                Anterior
-              </button>
-
-              <button
-                className="btn btn-secondary btn-sm"
-                disabled={safeMobileMovementsPage === mobileMovementsTotalPages}
-                onClick={() =>
-                  setMobileMovementsPage((prev) =>
-                    Math.min(mobileMovementsTotalPages, prev + 1),
-                  )
-                }
-              >
-                Siguiente
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
       {scannerOpen &&
         typeof document !== "undefined" &&
         createPortal(
@@ -1560,6 +1396,48 @@ export default function StockPage() {
         .stock-mobile-tabs,
         .stock-mobile-pagination {
           display: none;
+        }
+
+        .stock-desktop-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 12px 16px;
+          border-top: 1px solid var(--border);
+          background: var(--surface);
+        }
+
+        .stock-desktop-pagination > span {
+          color: var(--text3);
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .stock-desktop-pagination > div {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .stock-desktop-pagination > div > span {
+          color: var(--text2);
+          font-size: 12px;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+
+        .stock-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: flex-start;
+          gap: 12px;
+          flex-wrap: wrap;
+          margin-bottom: 18px;
+        }
+
+        .stock-go-movements-btn {
+          white-space: nowrap;
         }
 
         .stock-location-field {
@@ -1956,6 +1834,18 @@ export default function StockPage() {
             display: none;
           }
 
+          .stock-toolbar {
+            display: ${mobileTab === "stock" ? "grid" : "none"};
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+          }
+
+          .stock-go-movements-btn {
+            width: 100%;
+            justify-content: center;
+          }
+
           .stock-search {
             max-width: none !important;
             width: 100%;
@@ -1980,6 +1870,10 @@ export default function StockPage() {
           }
 
           .stock-desktop-table {
+            display: none;
+          }
+
+          .stock-desktop-pagination {
             display: none;
           }
 

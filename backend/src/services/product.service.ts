@@ -1,5 +1,6 @@
 import prisma from "../prisma";
 import {
+  Prisma,
   ProductType,
   Location,
   MovementType,
@@ -12,10 +13,7 @@ import fs from "fs";
 import alertService from "./alert.service";
 
 function normalizeSku(raw: string): string {
-  return raw
-    .trim()
-    .replace(/['"]/g, "")
-    .replace(/\s+/g, "");
+  return raw.trim().replace(/['"]/g, "").replace(/\s+/g, "");
 }
 
 function toNumberOrNull(v: any) {
@@ -59,6 +57,228 @@ type GetProductsOptions = {
   sort?: string;
 };
 
+type StockMovementVisualType = "INGRESS" | "EGRESS" | "TRANSFER";
+
+type GetStockMovementsFilters = {
+  productId?: string;
+  userId?: string;
+  fromDate?: Date;
+  toDate?: Date;
+  search?: string;
+  movement?: StockMovementVisualType | "ALL";
+  page?: number;
+  limit?: number;
+};
+
+const STOCK_MOVEMENT_VISUAL_META: Record<
+  StockMovementVisualType,
+  {
+    group: StockMovementVisualType;
+    label: string;
+    color: "green" | "red" | "blue";
+    hex: string;
+    description: string;
+  }
+> = {
+  INGRESS: {
+    group: "INGRESS",
+    label: "Ingreso de stock",
+    color: "green",
+    hex: "#16a34a",
+    description: "Stock que entra al sistema o vuelve por una cancelación",
+  },
+  EGRESS: {
+    group: "EGRESS",
+    label: "Salida de stock",
+    color: "red",
+    hex: "#dc2626",
+    description: "Stock que sale por venta o ajuste negativo",
+  },
+  TRANSFER: {
+    group: "TRANSFER",
+    label: "Movimiento entre depósitos",
+    color: "blue",
+    hex: "#2563eb",
+    description: "Stock movido entre Mayorista y Minorista",
+  },
+};
+
+const stockMovementInclude = {
+  product: {
+    include: {
+      category: true,
+    },
+  },
+  user: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+    },
+  },
+} satisfies Prisma.StockMovementInclude;
+
+function cleanString(value?: string | null) {
+  const v = String(value ?? "").trim();
+  return v.length ? v : undefined;
+}
+
+function normalizePositiveInteger(value: any, fallback: number, max = 100) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(Math.floor(n), max);
+}
+
+function getStockMovementVisualMeta(movement: {
+  type: MovementType;
+  from?: Location | null;
+  to?: Location | null;
+}) {
+  if (movement.type === MovementType.TRANSFER) {
+    return STOCK_MOVEMENT_VISUAL_META.TRANSFER;
+  }
+
+  if (
+    movement.type === MovementType.INGRESS ||
+    movement.type === MovementType.SALE_CANCEL
+  ) {
+    return STOCK_MOVEMENT_VISUAL_META.INGRESS;
+  }
+
+  if (movement.type === MovementType.SALE) {
+    return STOCK_MOVEMENT_VISUAL_META.EGRESS;
+  }
+
+  // Fallback para ADJUSTMENT u otros movimientos viejos:
+  // si tiene origen y no destino, salió; si tiene destino y no origen, entró.
+  if (movement.from && !movement.to) return STOCK_MOVEMENT_VISUAL_META.EGRESS;
+  if (!movement.from && movement.to) return STOCK_MOVEMENT_VISUAL_META.INGRESS;
+  if (movement.from && movement.to) return STOCK_MOVEMENT_VISUAL_META.TRANSFER;
+
+  return STOCK_MOVEMENT_VISUAL_META.EGRESS;
+}
+
+function getMovementTypeWhere(
+  movement?: StockMovementVisualType | "ALL",
+): Prisma.StockMovementWhereInput | undefined {
+  if (!movement || movement === "ALL") return undefined;
+
+  if (movement === "TRANSFER") {
+    return {
+      OR: [
+        { type: MovementType.TRANSFER },
+        {
+          AND: [{ from: { not: null } }, { to: { not: null } }],
+        },
+      ],
+    };
+  }
+
+  if (movement === "INGRESS") {
+    return {
+      OR: [
+        { type: MovementType.INGRESS },
+        { type: MovementType.SALE_CANCEL },
+        {
+          AND: [{ from: null }, { to: { not: null } }],
+        },
+      ],
+    };
+  }
+
+  return {
+    OR: [
+      { type: MovementType.SALE },
+      {
+        AND: [{ from: { not: null } }, { to: null }],
+      },
+    ],
+  };
+}
+
+function buildStockMovementWhere(filters?: GetStockMovementsFilters) {
+  const and: Prisma.StockMovementWhereInput[] = [];
+
+  if (filters?.productId) and.push({ productId: filters.productId });
+  if (filters?.userId) and.push({ userId: filters.userId });
+
+  const createdAt: Prisma.DateTimeFilter = {};
+  if (filters?.fromDate) createdAt.gte = filters.fromDate;
+  if (filters?.toDate) createdAt.lte = filters.toDate;
+  if (Object.keys(createdAt).length > 0) and.push({ createdAt });
+
+  const movementWhere = getMovementTypeWhere(filters?.movement);
+  if (movementWhere) and.push(movementWhere);
+
+  const search = cleanString(filters?.search);
+
+  if (search) {
+    and.push({
+      OR: [
+        { reason: { contains: search, mode: "insensitive" } },
+        { reference: { contains: search, mode: "insensitive" } },
+        {
+          product: {
+            is: {
+              OR: [
+                { name: { contains: search, mode: "insensitive" } },
+                { sku: { contains: search, mode: "insensitive" } },
+                {
+                  category: {
+                    is: {
+                      name: { contains: search, mode: "insensitive" },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        {
+          user: {
+            is: {
+              OR: [
+                { name: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
+      ],
+    });
+  }
+
+  return and.length ? { AND: and } : {};
+}
+
+function formatStockMovementForView<T extends Record<string, any>>(
+  movement: T,
+) {
+  const meta = getStockMovementVisualMeta({
+    type: movement.type,
+    from: movement.from,
+    to: movement.to,
+  });
+
+  const quantity = movement.quantity ?? null;
+  const quantityKg = movement.quantityKg ?? null;
+
+  return {
+    ...movement,
+    movementGroup: meta.group,
+    movementLabel: meta.label,
+    movementColor: meta.color,
+    movementHex: meta.hex,
+    movementDescription: meta.description,
+    quantityLabel:
+      quantityKg !== null && quantityKg !== undefined
+        ? `${quantityKg} kg`
+        : quantity !== null && quantity !== undefined
+          ? String(quantity)
+          : "—",
+  };
+}
+
 type CreateProductInput = {
   name: string;
   description?: string | null;
@@ -95,7 +315,9 @@ type CreateProductInput = {
   boxContents?: { productId: string; quantity: number; quantityKg?: number }[];
 };
 
-function normalizeComponents(data: CreateProductInput | any): ProductComponentInput[] {
+function normalizeComponents(
+  data: CreateProductInput | any,
+): ProductComponentInput[] {
   if (Array.isArray(data.components)) return data.components;
 
   if (Array.isArray(data.boxContents)) {
@@ -128,7 +350,7 @@ async function validateCategory(categoryId?: string | null) {
 
 async function validateComponents(
   compositeId: string | null,
-  components: ProductComponentInput[]
+  components: ProductComponentInput[],
 ) {
   const normalized = components.map((c) => {
     const componentId = c.componentId ?? c.productId;
@@ -152,7 +374,9 @@ async function validateComponents(
     }
 
     if (seen.has(c.componentId)) {
-      throw new Error("No podés repetir el mismo componente dentro de una promo");
+      throw new Error(
+        "No podés repetir el mismo componente dentro de una promo",
+      );
     }
 
     seen.add(c.componentId);
@@ -161,7 +385,9 @@ async function validateComponents(
     const hasKgQty = c.quantityKg !== null && c.quantityKg > 0;
 
     if (!hasUnitQty && !hasKgQty) {
-      throw new Error("Cada componente debe tener quantity o quantityKg mayor a 0");
+      throw new Error(
+        "Cada componente debe tener quantity o quantityKg mayor a 0",
+      );
     }
 
     const componentProduct = await prisma.product.findUnique({
@@ -185,19 +411,19 @@ async function validateComponents(
 
     if (componentProduct.type === ProductType.COMPUESTO) {
       throw new Error(
-        `El componente "${componentProduct.name}" es COMPUESTO. Por ahora no se permiten promos dentro de promos`
+        `El componente "${componentProduct.name}" es COMPUESTO. Por ahora no se permiten promos dentro de promos`,
       );
     }
 
     if (componentProduct.saleUnit === SaleUnit.UNIT && hasKgQty) {
       throw new Error(
-        `El componente "${componentProduct.name}" se vende por unidad, no por KG`
+        `El componente "${componentProduct.name}" se vende por unidad, no por KG`,
       );
     }
 
     if (componentProduct.saleUnit === SaleUnit.KG && hasUnitQty) {
       throw new Error(
-        `El componente "${componentProduct.name}" se vende por KG, no por unidad`
+        `El componente "${componentProduct.name}" se vende por KG, no por unidad`,
       );
     }
   }
@@ -239,7 +465,9 @@ function validatePricesBySaleUnit(data: CreateProductInput | any) {
     }
 
     if (!isValidPositiveNumber(wholesalePricePerKg)) {
-      throw new Error("Si saleUnit es KG, wholesalePricePerKg debe ser mayor a 0");
+      throw new Error(
+        "Si saleUnit es KG, wholesalePricePerKg debe ser mayor a 0",
+      );
     }
   }
 
@@ -274,7 +502,9 @@ function validatePricesBySaleUnit(data: CreateProductInput | any) {
   }
 
   if (type === ProductType.COMPUESTO && saleUnit === SaleUnit.KG) {
-    throw new Error("Por ahora los productos COMPUESTOS deben venderse por UNIT");
+    throw new Error(
+      "Por ahora los productos COMPUESTOS deben venderse por UNIT",
+    );
   }
 }
 
@@ -302,10 +532,7 @@ export const productService = {
     const limit = Number(options?.limit);
 
     const hasPagination =
-      Number.isFinite(page) &&
-      Number.isFinite(limit) &&
-      page > 0 &&
-      limit > 0;
+      Number.isFinite(page) && Number.isFinite(limit) && page > 0 && limit > 0;
 
     const search = options?.search?.trim();
     const categoryId = options?.categoryId?.trim();
@@ -437,7 +664,10 @@ export const productService = {
 
   async create(data: CreateProductInput) {
     if (!data.name || !data.name.trim()) {
-      return { statusCode: 400, message: "El nombre del producto es requerido" };
+      return {
+        statusCode: 400,
+        message: "El nombre del producto es requerido",
+      };
     }
 
     if (!data.sku || !data.sku.trim()) {
@@ -575,7 +805,10 @@ export const productService = {
       }
 
       if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
-        return { statusCode: 409, message: "Ya existe un producto con ese SKU" };
+        return {
+          statusCode: 409,
+          message: "Ya existe un producto con ese SKU",
+        };
       }
 
       return {
@@ -608,7 +841,9 @@ export const productService = {
       safeDeleteLocalFile(file.path);
 
       if (product.imageId) {
-        await cloudinary.uploader.destroy(product.imageId).catch(() => undefined);
+        await cloudinary.uploader
+          .destroy(product.imageId)
+          .catch(() => undefined);
       }
 
       return prisma.product.update({
@@ -648,15 +883,22 @@ export const productService = {
       data.sku = normalized;
     }
 
-    if (data.categoryId !== undefined && data.categoryId !== null && data.categoryId !== "") {
+    if (
+      data.categoryId !== undefined &&
+      data.categoryId !== null &&
+      data.categoryId !== ""
+    ) {
       await validateCategory(data.categoryId);
     }
 
     const nextType = (data.type as ProductType | undefined) ?? existing.type;
-    const nextSaleUnit = (data.saleUnit as SaleUnit | undefined) ?? existing.saleUnit;
+    const nextSaleUnit =
+      (data.saleUnit as SaleUnit | undefined) ?? existing.saleUnit;
 
     if (nextType === ProductType.COMPUESTO && nextSaleUnit === SaleUnit.KG) {
-      throw new Error("Por ahora los productos COMPUESTOS deben venderse por UNIT");
+      throw new Error(
+        "Por ahora los productos COMPUESTOS deben venderse por UNIT",
+      );
     }
 
     const prismaData: any = {};
@@ -665,11 +907,16 @@ export const productService = {
       if (value !== undefined) prismaData[key] = value;
     };
 
-    setIfDefined("name", data.name !== undefined ? String(data.name).trim() : undefined);
+    setIfDefined(
+      "name",
+      data.name !== undefined ? String(data.name).trim() : undefined,
+    );
 
     setIfDefined(
       "description",
-      data.description !== undefined ? String(data.description).trim() || null : undefined
+      data.description !== undefined
+        ? String(data.description).trim() || null
+        : undefined,
     );
 
     setIfDefined("type", data.type);
@@ -678,81 +925,97 @@ export const productService = {
     setIfDefined("imageUrl", data.imageUrl);
     setIfDefined("imageId", data.imageId);
     setIfDefined("isActive", data.isActive);
-    setIfDefined("isService", data.isService !== undefined ? isTrue(data.isService) : undefined);
+    setIfDefined(
+      "isService",
+      data.isService !== undefined ? isTrue(data.isService) : undefined,
+    );
     setIfDefined("saleUnit", data.saleUnit);
 
-    setIfDefined("price", data.price !== undefined ? Number(data.price) : undefined);
+    setIfDefined(
+      "price",
+      data.price !== undefined ? Number(data.price) : undefined,
+    );
 
     setIfDefined(
       "clientPrice",
-      data.clientPrice !== undefined ? Number(data.clientPrice) : undefined
+      data.clientPrice !== undefined ? Number(data.clientPrice) : undefined,
     );
 
     setIfDefined(
       "wholesalePrice",
-      data.wholesalePrice !== undefined ? Number(data.wholesalePrice) : undefined
+      data.wholesalePrice !== undefined
+        ? Number(data.wholesalePrice)
+        : undefined,
     );
 
     setIfDefined(
       "purchasePrice",
-      data.purchasePrice !== undefined ? Number(data.purchasePrice) : undefined
+      data.purchasePrice !== undefined ? Number(data.purchasePrice) : undefined,
     );
 
     setIfDefined(
       "stockLocal",
-      data.stockLocal !== undefined ? Number(data.stockLocal) : undefined
+      data.stockLocal !== undefined ? Number(data.stockLocal) : undefined,
     );
 
     setIfDefined(
       "stockDeposito",
-      data.stockDeposito !== undefined ? Number(data.stockDeposito) : undefined
+      data.stockDeposito !== undefined ? Number(data.stockDeposito) : undefined,
     );
 
     setIfDefined(
       "minStock",
-      data.minStock !== undefined ? Number(data.minStock) : undefined
+      data.minStock !== undefined ? Number(data.minStock) : undefined,
     );
 
     setIfDefined(
       "minStockDeposito",
-      data.minStockDeposito !== undefined ? Number(data.minStockDeposito) : undefined
+      data.minStockDeposito !== undefined
+        ? Number(data.minStockDeposito)
+        : undefined,
     );
 
     setIfDefined(
       "pricePerKg",
-      data.pricePerKg !== undefined ? Number(data.pricePerKg) : undefined
+      data.pricePerKg !== undefined ? Number(data.pricePerKg) : undefined,
     );
 
     setIfDefined(
       "clientPricePerKg",
-      data.clientPricePerKg !== undefined ? Number(data.clientPricePerKg) : undefined
+      data.clientPricePerKg !== undefined
+        ? Number(data.clientPricePerKg)
+        : undefined,
     );
 
     setIfDefined(
       "wholesalePricePerKg",
-      data.wholesalePricePerKg !== undefined ? Number(data.wholesalePricePerKg) : undefined
+      data.wholesalePricePerKg !== undefined
+        ? Number(data.wholesalePricePerKg)
+        : undefined,
     );
 
     setIfDefined(
       "stockLocalKg",
-      data.stockLocalKg !== undefined ? Number(data.stockLocalKg) : undefined
+      data.stockLocalKg !== undefined ? Number(data.stockLocalKg) : undefined,
     );
 
     setIfDefined(
       "stockDepositoKg",
-      data.stockDepositoKg !== undefined ? Number(data.stockDepositoKg) : undefined
+      data.stockDepositoKg !== undefined
+        ? Number(data.stockDepositoKg)
+        : undefined,
     );
 
     setIfDefined(
       "minStockKg",
-      data.minStockKg !== undefined ? Number(data.minStockKg) : undefined
+      data.minStockKg !== undefined ? Number(data.minStockKg) : undefined,
     );
 
     setIfDefined(
       "minStockDepositoKg",
       data.minStockDepositoKg !== undefined
         ? Number(data.minStockDepositoKg)
-        : undefined
+        : undefined,
     );
 
     if (data.saleUnit === SaleUnit.UNIT) {
@@ -790,7 +1053,10 @@ export const productService = {
     }
   },
 
-  async updateComponents(productId: string, components: ProductComponentInput[]) {
+  async updateComponents(
+    productId: string,
+    components: ProductComponentInput[],
+  ) {
     const product = await prisma.product.findUnique({
       where: { id: productId },
       select: {
@@ -807,7 +1073,10 @@ export const productService = {
       throw new Error(`El producto "${product.name}" no es de tipo COMPUESTO`);
     }
 
-    const normalizedComponents = await validateComponents(productId, components);
+    const normalizedComponents = await validateComponents(
+      productId,
+      components,
+    );
 
     await prisma.$transaction([
       prisma.productComponent.deleteMany({
@@ -836,8 +1105,14 @@ export const productService = {
     });
   },
 
-  async transferStock(productId: string, from: Location, quantity: number, userId: string) {
-    if (!userId) throw new Error("Falta userId en la operación de transferencia");
+  async transferStock(
+    productId: string,
+    from: Location,
+    quantity: number,
+    userId: string,
+  ) {
+    if (!userId)
+      throw new Error("Falta userId en la operación de transferencia");
 
     const qty = Number(quantity);
 
@@ -856,7 +1131,9 @@ export const productService = {
     }
 
     if (product.type === ProductType.COMPUESTO) {
-      throw new Error("No se transfiere stock directo de productos compuestos. Transferí sus componentes");
+      throw new Error(
+        "No se transfiere stock directo de productos compuestos. Transferí sus componentes",
+      );
     }
 
     const to = from === Location.DEPOSITO ? Location.LOCAL : Location.DEPOSITO;
@@ -903,8 +1180,14 @@ export const productService = {
     return updated;
   },
 
-  async transferStockKg(productId: string, from: Location, quantityKg: number, userId: string) {
-    if (!userId) throw new Error("Falta userId en la operación de transferencia");
+  async transferStockKg(
+    productId: string,
+    from: Location,
+    quantityKg: number,
+    userId: string,
+  ) {
+    if (!userId)
+      throw new Error("Falta userId en la operación de transferencia");
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
@@ -917,7 +1200,9 @@ export const productService = {
     }
 
     if (product.type === ProductType.COMPUESTO) {
-      throw new Error("No se transfiere stock directo de productos compuestos. Transferí sus componentes");
+      throw new Error(
+        "No se transfiere stock directo de productos compuestos. Transferí sus componentes",
+      );
     }
 
     const qty = Number(quantityKg);
@@ -970,7 +1255,12 @@ export const productService = {
     return updated;
   },
 
-  async addStockKg(productId: string, to: Location, quantityKg: number, userId: string) {
+  async addStockKg(
+    productId: string,
+    to: Location,
+    quantityKg: number,
+    userId: string,
+  ) {
     if (!userId) throw new Error("Falta userId en la operación de ingreso");
 
     const product = await prisma.product.findUnique({
@@ -984,7 +1274,9 @@ export const productService = {
     }
 
     if (product.type === ProductType.COMPUESTO) {
-      throw new Error("No se agrega stock directo a productos compuestos. Agregá stock a sus componentes");
+      throw new Error(
+        "No se agrega stock directo a productos compuestos. Agregá stock a sus componentes",
+      );
     }
 
     const qty = Number(quantityKg);
@@ -998,7 +1290,8 @@ export const productService = {
         where: { id: productId },
         data: {
           stockLocalKg: to === Location.LOCAL ? { increment: qty } : undefined,
-          stockDepositoKg: to === Location.DEPOSITO ? { increment: qty } : undefined,
+          stockDepositoKg:
+            to === Location.DEPOSITO ? { increment: qty } : undefined,
         },
       });
 
@@ -1021,7 +1314,12 @@ export const productService = {
     return updated;
   },
 
-  async addStock(productId: string, to: Location, quantity: number, userId: string) {
+  async addStock(
+    productId: string,
+    to: Location,
+    quantity: number,
+    userId: string,
+  ) {
     if (!userId) throw new Error("Falta userId en la operación de ingreso");
 
     const qty = Number(quantity);
@@ -1041,7 +1339,9 @@ export const productService = {
     }
 
     if (product.type === ProductType.COMPUESTO) {
-      throw new Error("No se agrega stock directo a productos compuestos. Agregá stock a sus componentes");
+      throw new Error(
+        "No se agrega stock directo a productos compuestos. Agregá stock a sus componentes",
+      );
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -1049,7 +1349,8 @@ export const productService = {
         where: { id: productId },
         data: {
           stockLocal: to === Location.LOCAL ? { increment: qty } : undefined,
-          stockDeposito: to === Location.DEPOSITO ? { increment: qty } : undefined,
+          stockDeposito:
+            to === Location.DEPOSITO ? { increment: qty } : undefined,
         },
       });
 
@@ -1072,40 +1373,151 @@ export const productService = {
     return updated;
   },
 
-  async getMovements(filters?: {
-    productId?: string;
-    userId?: string;
-    fromDate?: Date;
-    toDate?: Date;
-  }) {
-    const createdAt: any = {};
+  async getMovements(filters?: GetStockMovementsFilters) {
+    const where = buildStockMovementWhere(filters);
 
-    if (filters?.fromDate) createdAt.gte = filters.fromDate;
-    if (filters?.toDate) createdAt.lte = filters.toDate;
+    const hasPagination =
+      filters?.page !== undefined || filters?.limit !== undefined;
 
-    return prisma.stockMovement.findMany({
-      where: {
-        productId: filters?.productId,
-        userId: filters?.userId,
-        ...(Object.keys(createdAt).length > 0 && { createdAt }),
-      },
-      include: {
-        product: {
-          include: {
-            category: true,
-          },
+    if (!hasPagination) {
+      const movements = await prisma.stockMovement.findMany({
+        where,
+        include: stockMovementInclude,
+        orderBy: {
+          createdAt: "desc",
         },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
+        take: 250,
+      });
+
+      return movements.map(formatStockMovementForView);
+    }
+
+    const page = normalizePositiveInteger(filters?.page, 1, 100000);
+    const limit = normalizePositiveInteger(filters?.limit, 20, 100);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await prisma.$transaction([
+      prisma.stockMovement.findMany({
+        where,
+        include: stockMovementInclude,
+        orderBy: {
+          createdAt: "desc",
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+        skip,
+        take: limit,
+      }),
+      prisma.stockMovement.count({ where }),
+    ]);
+
+    return {
+      data: items.map(formatStockMovementForView),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  },
+
+  async searchMovements(filters?: GetStockMovementsFilters) {
+    return this.getMovements({
+      ...filters,
+      page: filters?.page ?? 1,
+      limit: filters?.limit ?? 20,
     });
+  },
+
+  async getMovementsOverview(
+    filters?: Omit<GetStockMovementsFilters, "movement" | "page"> & {
+      limit?: number;
+    },
+  ) {
+    const limit = normalizePositiveInteger(filters?.limit, 5, 30);
+
+    const baseFilters = {
+      productId: filters?.productId,
+      userId: filters?.userId,
+      fromDate: filters?.fromDate,
+      toDate: filters?.toDate,
+      search: filters?.search,
+    };
+
+    const ingressWhere = buildStockMovementWhere({
+      ...baseFilters,
+      movement: "INGRESS",
+    });
+
+    const egressWhere = buildStockMovementWhere({
+      ...baseFilters,
+      movement: "EGRESS",
+    });
+
+    const transferWhere = buildStockMovementWhere({
+      ...baseFilters,
+      movement: "TRANSFER",
+    });
+
+    const [
+      ingressItems,
+      egressItems,
+      transferItems,
+      ingressTotal,
+      egressTotal,
+      transferTotal,
+    ] = await prisma.$transaction([
+      prisma.stockMovement.findMany({
+        where: ingressWhere,
+        include: stockMovementInclude,
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      }),
+      prisma.stockMovement.findMany({
+        where: egressWhere,
+        include: stockMovementInclude,
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      }),
+      prisma.stockMovement.findMany({
+        where: transferWhere,
+        include: stockMovementInclude,
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      }),
+      prisma.stockMovement.count({ where: ingressWhere }),
+      prisma.stockMovement.count({ where: egressWhere }),
+      prisma.stockMovement.count({ where: transferWhere }),
+    ]);
+
+    return {
+      limit,
+      summary: {
+        ingress: {
+          ...STOCK_MOVEMENT_VISUAL_META.INGRESS,
+          total: ingressTotal,
+        },
+        egress: {
+          ...STOCK_MOVEMENT_VISUAL_META.EGRESS,
+          total: egressTotal,
+        },
+        transfer: {
+          ...STOCK_MOVEMENT_VISUAL_META.TRANSFER,
+          total: transferTotal,
+        },
+      },
+      ingress: {
+        ...STOCK_MOVEMENT_VISUAL_META.INGRESS,
+        total: ingressTotal,
+        items: ingressItems.map(formatStockMovementForView),
+      },
+      egress: {
+        ...STOCK_MOVEMENT_VISUAL_META.EGRESS,
+        total: egressTotal,
+        items: egressItems.map(formatStockMovementForView),
+      },
+      transfer: {
+        ...STOCK_MOVEMENT_VISUAL_META.TRANSFER,
+        total: transferTotal,
+        items: transferItems.map(formatStockMovementForView),
+      },
+    };
   },
 };

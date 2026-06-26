@@ -11,7 +11,12 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024,
   },
   fileFilter: (_req, file, cb) => {
-    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+    const allowedMimeTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/jpg",
+    ];
 
     if (!allowedMimeTypes.includes(file.mimetype)) {
       return cb(new Error("Formato de imagen inválido. Usá JPG, PNG o WEBP."));
@@ -21,7 +26,9 @@ const upload = multer({
     const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
 
     if (!allowedExtensions.includes(ext)) {
-      return cb(new Error("Extensión de imagen inválida. Usá JPG, PNG o WEBP."));
+      return cb(
+        new Error("Extensión de imagen inválida. Usá JPG, PNG o WEBP."),
+      );
     }
 
     cb(null, true);
@@ -54,6 +61,53 @@ function normalizeBoolean(value: any) {
   if (value === "true") return true;
   if (value === "false") return false;
   return Boolean(value);
+}
+
+type StockMovementVisualQuery = "INGRESS" | "EGRESS" | "TRANSFER" | "ALL";
+
+function toPositiveIntegerOrUndefined(value: any, max = 100) {
+  if (value === undefined || value === null || value === "") return undefined;
+
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+
+  return Math.min(Math.floor(n), max);
+}
+
+function normalizeMovementQuery(
+  value: any,
+): StockMovementVisualQuery | undefined {
+  if (!value) return undefined;
+
+  const normalized = String(value).trim().toUpperCase();
+
+  if (normalized === "ALL" || normalized === "TODOS") return "ALL";
+  if (["INGRESS", "INGRESO", "ENTRADA"].includes(normalized)) return "INGRESS";
+  if (["EGRESS", "EGRESO", "SALIDA", "SALE"].includes(normalized))
+    return "EGRESS";
+  if (["TRANSFER", "TRANSFERENCIA", "MOVIMIENTO"].includes(normalized))
+    return "TRANSFER";
+
+  return undefined;
+}
+
+function getMovementFiltersFromQuery(req: Request) {
+  const { start: fromDate, end: toDate } = optionalRangeAR(
+    req.query.fromDate as string | undefined,
+    req.query.toDate as string | undefined,
+  );
+
+  return {
+    productId: req.query.productId as string | undefined,
+    userId: req.query.userId as string | undefined,
+    fromDate,
+    toDate,
+    search:
+      typeof req.query.search === "string"
+        ? req.query.search.trim()
+        : undefined,
+    movement: normalizeMovementQuery(req.query.movement ?? req.query.type),
+  };
 }
 
 export const productController = {
@@ -93,7 +147,7 @@ export const productController = {
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
       const product = await productService.getById(
-        getParamAsString(req.params.id, "id")
+        getParamAsString(req.params.id, "id"),
       );
 
       if (!product) {
@@ -215,7 +269,9 @@ export const productController = {
       }
 
       if (body.wholesalePricePerKg !== undefined) {
-        cleanBody.wholesalePricePerKg = toNumberOrUndefined(body.wholesalePricePerKg);
+        cleanBody.wholesalePricePerKg = toNumberOrUndefined(
+          body.wholesalePricePerKg,
+        );
       }
 
       if (body.stockLocal !== undefined) {
@@ -247,12 +303,14 @@ export const productController = {
       }
 
       if (body.minStockDepositoKg !== undefined) {
-        cleanBody.minStockDepositoKg = toNumberOrUndefined(body.minStockDepositoKg);
+        cleanBody.minStockDepositoKg = toNumberOrUndefined(
+          body.minStockDepositoKg,
+        );
       }
 
       const updated = await productService.update(
         getParamAsString(req.params.id, "id"),
-        cleanBody
+        cleanBody,
       );
 
       res.json(updated);
@@ -283,7 +341,7 @@ export const productController = {
         productId,
         from,
         Number(quantity),
-        userId
+        userId,
       );
 
       res.json(updated);
@@ -305,7 +363,7 @@ export const productController = {
         productId,
         to,
         Number(quantity),
-        userId
+        userId,
       );
 
       res.json(updated);
@@ -329,7 +387,7 @@ export const productController = {
         getParamAsString(id, "id"),
         from,
         Number(quantityKg),
-        userId
+        userId,
       );
 
       res.json(updated);
@@ -353,7 +411,7 @@ export const productController = {
         getParamAsString(id, "id"),
         to,
         Number(quantityKg),
-        userId
+        userId,
       );
 
       res.json(updated);
@@ -378,7 +436,7 @@ export const productController = {
 
       const result = await productService.updateComponents(
         getParamAsString(id, "id"),
-        components
+        components,
       );
 
       res.json(result);
@@ -396,7 +454,7 @@ export const productController = {
       }
 
       const product = await productService.getBySku(
-        getParamAsString(sku, "sku")
+        getParamAsString(sku, "sku"),
       );
 
       if (!product) {
@@ -414,19 +472,49 @@ export const productController = {
 
   async getMovements(req: Request, res: Response, next: NextFunction) {
     try {
-      const { start: fromDate, end: toDate } = optionalRangeAR(
-        req.query.fromDate as string | undefined,
-        req.query.toDate as string | undefined
-      );
+      const filters = getMovementFiltersFromQuery(req);
+
+      const page = toPositiveIntegerOrUndefined(req.query.page, 100000);
+      const limit = toPositiveIntegerOrUndefined(req.query.limit, 100);
 
       const movements = await productService.getMovements({
-        productId: req.query.productId as string | undefined,
-        userId: req.query.userId as string | undefined,
-        fromDate,
-        toDate,
+        ...filters,
+        page,
+        limit,
       });
 
       res.json(movements);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getMovementsOverview(req: Request, res: Response, next: NextFunction) {
+    try {
+      const filters = getMovementFiltersFromQuery(req);
+
+      const overview = await productService.getMovementsOverview({
+        ...filters,
+        limit: toPositiveIntegerOrUndefined(req.query.limit, 30) ?? 5,
+      });
+
+      res.json(overview);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async searchMovements(req: Request, res: Response, next: NextFunction) {
+    try {
+      const filters = getMovementFiltersFromQuery(req);
+
+      const result = await productService.searchMovements({
+        ...filters,
+        page: toPositiveIntegerOrUndefined(req.query.page, 100000) ?? 1,
+        limit: toPositiveIntegerOrUndefined(req.query.limit, 100) ?? 20,
+      });
+
+      res.json(result);
     } catch (err) {
       next(err);
     }
@@ -444,7 +532,7 @@ export const productController = {
 
         const updatedProduct = await productService.updateImage(
           getParamAsString(req.params.id, "id"),
-          req.file
+          req.file,
         );
 
         res.json({

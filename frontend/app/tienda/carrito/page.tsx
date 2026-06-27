@@ -312,35 +312,18 @@ export default function TiendaCarritoPage() {
       return;
     }
 
-    const whatsappMessage = buildFrontendCartMessage({
-      items: cartItems,
-      total,
-      notes,
-      storeSuffix,
-    });
-    const whatsappUrl = buildFrontendWhatsappUrl(whatsappMessage);
-
-    if (!whatsappUrl) {
-      const message =
-        "Falta configurar NEXT_PUBLIC_STORE_WHATSAPP_NUMBER en el frontend.";
-      setError(message);
-      toast.error(message);
-      return;
-    }
-
-    // Primero abrimos WhatsApp, sin esperar al backend.
-    const whatsappWindow = window.open(whatsappUrl, "_blank");
-    if (!whatsappWindow) {
-      window.location.href = whatsappUrl;
-    }
+    // Abrimos una pestaña en blanco dentro del gesto de click para no perder
+    // el permiso del navegador, pero NO la navegamos a WhatsApp todavía: el
+    // pedido recién es real (con stock validado) después de checkoutWhatsapp.
+    const whatsappWindow = window.open("about:blank", "_blank");
 
     setSaving(true);
     setError("");
 
-    const toastId = toast.loading("Registrando pedido...");
+    const toastId = toast.loading("Validando stock y registrando pedido...");
 
     try {
-      await shopApi.checkoutWhatsapp({
+      const result = await shopApi.checkoutWhatsapp({
         paymentMethod: "TRANSFERENCIA",
         customerNotes: notes.trim(),
         items: cartItems.map((item) => ({
@@ -351,10 +334,30 @@ export default function TiendaCarritoPage() {
         })),
       });
 
+      const whatsappUrl =
+        result.whatsappUrl ||
+        buildFrontendWhatsappUrl(
+          buildFrontendCartMessage({ items: cartItems, total, notes, storeSuffix }),
+        );
+
+      if (whatsappUrl) {
+        if (whatsappWindow) {
+          whatsappWindow.location.href = whatsappUrl;
+        } else {
+          window.location.href = whatsappUrl;
+        }
+      } else if (whatsappWindow) {
+        whatsappWindow.close();
+      }
+
       clear();
       toast.success("Pedido registrado en el sistema", { id: toastId });
       return;
     } catch (err: unknown) {
+      // El pedido NO se creó (sin stock real, precio inválido, etc): cerramos
+      // la pestaña en blanco para no dar la impresión de que el pedido salió.
+      whatsappWindow?.close();
+
       const message = getErrorMessage(err, "No se pudo registrar el pedido");
 
       if (
@@ -394,7 +397,7 @@ export default function TiendaCarritoPage() {
 
     setConfirmModal({
       title: "Finalizar pedido",
-      message: `¿Confirmás abrir WhatsApp ahora con el pedido por ${formatMoney(total)}? El sistema lo registrará en segundo plano.`,
+      message: `¿Confirmás el pedido por ${formatMoney(total)}? Primero validamos el stock y lo registramos en el sistema, y después te redirigimos a WhatsApp.`,
       confirmText: "Finalizar por WhatsApp",
       danger: false,
       onConfirm: checkout,
@@ -1236,6 +1239,25 @@ export default function TiendaCarritoPage() {
           flex-shrink: 0;
         }
 
+        .modal-icon-loading {
+          background: var(--blue-soft);
+        }
+
+        .modal-spinner {
+          width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          border: 2.5px solid rgba(37, 99, 235, 0.25);
+          border-top-color: var(--blue);
+          animation: spin 0.75s linear infinite;
+        }
+
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
         .modal-message {
           margin: 0;
           color: var(--muted);
@@ -2016,13 +2038,28 @@ export default function TiendaCarritoPage() {
             </div>
 
             <div className="modal-body">
-              <div className="modal-message-row">
-                <span className="modal-icon">
-                  <AlertTriangle size={18} />
-                </span>
+              {confirmLoading ? (
+                <div className="modal-message-row">
+                  <span className="modal-icon modal-icon-loading">
+                    <span className="modal-spinner" />
+                  </span>
 
-                <p className="modal-message">{confirmModal.message}</p>
-              </div>
+                  <p className="modal-message">
+                    <strong>Estamos validando el stock y creando tu pedido.</strong>
+                    <br />
+                    No cierres ni recargues esta página — en unos segundos vas
+                    a ser redirigido automáticamente a WhatsApp.
+                  </p>
+                </div>
+              ) : (
+                <div className="modal-message-row">
+                  <span className="modal-icon">
+                    <AlertTriangle size={18} />
+                  </span>
+
+                  <p className="modal-message">{confirmModal.message}</p>
+                </div>
+              )}
             </div>
 
             <div className="modal-footer">
@@ -2040,7 +2077,7 @@ export default function TiendaCarritoPage() {
                 disabled={confirmLoading}
               >
                 {confirmLoading
-                  ? "Creando..."
+                  ? "Creando pedido..."
                   : (confirmModal.confirmText ?? "Confirmar")}
               </button>
             </div>

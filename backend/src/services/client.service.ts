@@ -466,6 +466,7 @@ export const clientService = {
       createUser: boolean;
       password: string;
       unlinkUser: boolean;
+      resetToDefaultPassword: boolean;
     }>
   ) {
     const existing = await prisma.client.findUnique({
@@ -546,6 +547,28 @@ export const clientService = {
             name: `${cleanData.nombre ?? existing.nombre} ${
               cleanData.apellido ?? existing.apellido
             }`.trim(),
+          },
+        });
+      }
+
+      const userId = cleanData.userId ?? existing.userId;
+
+      if (userId && (data.password || data.resetToDefaultPassword)) {
+        const newPassword = data.resetToDefaultPassword
+          ? DEFAULT_CLIENT_PASSWORD
+          : String(data.password);
+
+        if (!data.resetToDefaultPassword && newPassword.trim().length < 6) {
+          throw new Error("La contraseña debe tener al menos 6 caracteres");
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            password: hashedPassword,
+            mustChangePassword: true,
           },
         });
       }

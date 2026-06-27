@@ -195,6 +195,8 @@ export default function ClientesPage() {
     description: "",
   });
   const [saving, setSaving] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [resetToDefaultPassword, setResetToDefaultPassword] = useState(false);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
@@ -340,6 +342,8 @@ export default function ClientesPage() {
           ? ""
           : String(c.longitude),
     });
+    setNewPassword("");
+    setResetToDefaultPassword(false);
     setClientFormStep("datos");
     setModal("edit");
   };
@@ -387,6 +391,8 @@ export default function ClientesPage() {
     setModal(null);
     setEditing(null);
     setMovements([]);
+    setNewPassword("");
+    setResetToDefaultPassword(false);
   };
 
   const requestCloseClientFormModal = () => {
@@ -438,6 +444,19 @@ export default function ClientesPage() {
       return;
     }
 
+    const hasUserAccount =
+      modal === "edit" && Boolean((editing as any)?.userId || editing?.user);
+
+    if (
+      hasUserAccount &&
+      !resetToDefaultPassword &&
+      newPassword.trim() &&
+      newPassword.trim().length < 6
+    ) {
+      toast.error("La contraseña debe tener al menos 6 caracteres");
+      return;
+    }
+
     setSaving(true);
 
     const toastId = toast.loading(
@@ -468,6 +487,12 @@ export default function ClientesPage() {
         createUser: modal === "create",
       };
 
+      if (hasUserAccount && resetToDefaultPassword) {
+        (payload as any).resetToDefaultPassword = true;
+      } else if (hasUserAccount && newPassword.trim()) {
+        (payload as any).password = newPassword.trim();
+      }
+
       if (modal === "create") {
         await api.post("/clients", payload);
         toast.success(
@@ -476,7 +501,12 @@ export default function ClientesPage() {
         );
       } else if (editing) {
         await api.put(`/clients/${editing.id}`, payload);
-        toast.success("Cliente actualizado correctamente", { id: toastId });
+        toast.success(
+          resetToDefaultPassword
+            ? `Cliente actualizado. Contraseña restablecida a ${CLIENT_DEFAULT_PASSWORD_LABEL}`
+            : "Cliente actualizado correctamente",
+          { id: toastId },
+        );
       }
 
       forceCloseModal();
@@ -1938,6 +1968,69 @@ export default function ClientesPage() {
                         : "Este cliente ya tiene acceso a la tienda."
                       : "Este cliente todavía no tiene usuario de acceso."}
                 </div>
+
+                {modal === "edit" &&
+                  ((editing as any)?.userId || editing?.user) && (
+                    <div
+                      style={{
+                        marginBottom: 14,
+                        padding: 14,
+                        borderRadius: 14,
+                        border: "1px solid var(--border)",
+                        background: "var(--surface2)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                          fontWeight: 900,
+                          color: "var(--text)",
+                          marginBottom: 10,
+                          fontSize: 13,
+                        }}
+                      >
+                        <KeyRound size={15} style={{ color: "var(--accent)" }} />
+                        Cambiar contraseña
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Nueva contraseña</label>
+                        <input
+                          type="text"
+                          value={newPassword}
+                          placeholder="Dejar vacío para no cambiarla"
+                          disabled={resetToDefaultPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                        />
+                      </div>
+
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginTop: 10,
+                          fontSize: 12,
+                          color: "var(--text2)",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={resetToDefaultPassword}
+                          onChange={(e) => {
+                            setResetToDefaultPassword(e.target.checked);
+                            if (e.target.checked) setNewPassword("");
+                          }}
+                        />
+                        Restablecer a la contraseña por defecto (
+                        {CLIENT_DEFAULT_PASSWORD_LABEL})
+                      </label>
+                    </div>
+                  )}
 
                 <div
                   className="form-row"

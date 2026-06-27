@@ -136,13 +136,14 @@ function getProductStock(product: any, category: CategoryClient) {
     });
 
     const available = Math.max(0, Math.min(...maxByComponents));
+    const isKg = product.saleUnit === SaleUnit.KG;
 
     return {
-      availableQuantity: available,
-      availableKg: 0,
+      availableQuantity: isKg ? 0 : available,
+      availableKg: isKg ? available : 0,
       stockLabel:
         available > 0
-          ? `${available} disponibles en ${locationLabel}`
+          ? `${isKg ? round2(available) + " kg" : available} disponibles en ${locationLabel}`
           : `Sin stock en ${locationLabel}`,
       canSell: available > 0,
     };

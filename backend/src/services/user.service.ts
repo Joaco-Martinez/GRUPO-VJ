@@ -180,6 +180,8 @@ const userSelect = {
   createdAt: true,
   updatedAt: true,
   client: true,
+  defaultStockLocation: true,
+  defaultPriceCategory: true,
 };
 
 export const userService = {
@@ -535,6 +537,37 @@ export const userService = {
       }
 
       cleanData.password = await bcrypt.hash(data.password, 10);
+    }
+
+    return prisma.user.update({
+      where: { id },
+      data: cleanData,
+      select: userSelect,
+    });
+  },
+
+  async updateOwnPreferences(
+    id: string,
+    data: Partial<{
+      defaultStockLocation: "LOCAL" | "DEPOSITO" | null;
+      defaultPriceCategory: string | null;
+    }>
+  ) {
+    const cleanData: any = {};
+
+    if (data.defaultStockLocation !== undefined) {
+      if (
+        data.defaultStockLocation !== null &&
+        !["LOCAL", "DEPOSITO"].includes(data.defaultStockLocation)
+      ) {
+        throw new Error("Depósito por defecto inválido. Usá LOCAL o DEPOSITO");
+      }
+
+      cleanData.defaultStockLocation = data.defaultStockLocation;
+    }
+
+    if (data.defaultPriceCategory !== undefined) {
+      cleanData.defaultPriceCategory = data.defaultPriceCategory;
     }
 
     return prisma.user.update({

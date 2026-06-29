@@ -26,6 +26,29 @@ function safeJson(data: any) {
 }
 
 export const userController = {
+  async updateOwnPreferences(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const { defaultStockLocation, defaultPriceCategory } = req.body;
+
+      const updated = await userService.updateOwnPreferences(userId, {
+        defaultStockLocation:
+          defaultStockLocation === undefined ? undefined : defaultStockLocation || null,
+        defaultPriceCategory:
+          defaultPriceCategory === undefined ? undefined : defaultPriceCategory || null,
+      });
+
+      res.json(safeJson(updated));
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async getAll(_req: Request, res: Response, next: NextFunction) {
     try {
       const users = await userService.getAll();

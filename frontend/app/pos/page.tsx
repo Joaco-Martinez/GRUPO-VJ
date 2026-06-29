@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import AppLayout from "@/components/AppLayout";
+import { useAuthStore } from "@/store/auth";
 import api from "@/lib/api";
 import type {
   BusinessLocation,
@@ -403,6 +404,8 @@ export default function POSPage() {
 
   const receiptType: ReceiptType = "TICKET";
   const [defaultPriceType, setDefaultPriceType] = useState<CartItem["priceType"]>(RETAIL_PRICE_TYPE);
+  const { user: me } = useAuthStore();
+  const appliedOwnPreferencesRef = useRef(false);
   const [discountType, setDiscountType] = useState<DiscountType | "">("");
   const [discountValue, setDiscountValue] = useState("");
 
@@ -441,6 +444,31 @@ export default function POSPage() {
 
     return () => media.removeEventListener("change", syncMobileView);
   }, []);
+
+  useEffect(() => {
+    if (appliedOwnPreferencesRef.current || !me) return;
+    appliedOwnPreferencesRef.current = true;
+
+    if (me.defaultStockLocation === "LOCAL" || me.defaultStockLocation === "DEPOSITO") {
+      setStockLocation(me.defaultStockLocation);
+    }
+
+    if (me.defaultPriceCategory === RETAIL_PRICE_TYPE || me.defaultPriceCategory === WHOLESALE_PRICE_TYPE) {
+      setDefaultPriceType(me.defaultPriceCategory as CartItem["priceType"]);
+    }
+  }, [me]);
+
+  const saveOwnPreferences = async () => {
+    try {
+      await api.put("/users/me/preferences", {
+        defaultStockLocation: stockLocation,
+        defaultPriceCategory: defaultPriceType,
+      });
+      toast.success("Guardado como predeterminado para tu usuario");
+    } catch (error) {
+      toast.error("No se pudo guardar la preferencia");
+    }
+  };
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -1659,6 +1687,16 @@ export default function POSPage() {
                 </select>
               </label>
 
+              <button
+                type="button"
+                className="pos-save-default-pref"
+                onClick={saveOwnPreferences}
+                title="Usar el stock y precio actuales como predeterminados para mi usuario"
+              >
+                <Check size={14} />
+                Usar como predeterminado
+              </button>
+
               <div className="pos-mobile-client-field pos-desktop-client-field">
                 {renderClientPicker(true)}
               </div>
@@ -1981,6 +2019,16 @@ export default function POSPage() {
                   <option value="DEPOSITO">Minorista</option>
                 </select>
               </label>
+              <button
+                type="button"
+                className="pos-save-default-pref"
+                onClick={saveOwnPreferences}
+                title="Usar el stock y precio actuales como predeterminados para mi usuario"
+              >
+                <Check size={14} />
+                Usar como predeterminado
+              </button>
+
               <div className="pos-mobile-client-field">
                 {renderClientPicker(true)}
               </div>
@@ -3052,7 +3100,8 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 }
 .pos-control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pos-mobile-client-field,
-.pos-sort-mobile-field { grid-column: 1 / -1; }
+.pos-sort-mobile-field,
+.pos-control-grid .pos-save-default-pref { grid-column: 1 / -1; }
 .pos-control-grid label { display: grid; gap: 5px; min-width: 0; }
 .pos-control-grid span  {
   color: var(--text3); font-size: 10px; font-weight: 900;
@@ -3065,6 +3114,24 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
   background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px;
 }
 .pos-product-section { padding-bottom: 16px; }
+
+/* Botón "Usar como predeterminado" — debe leerse claramente como botón en mobile y desktop */
+.pos-save-default-pref {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; min-height: 42px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent); border-radius: 14px;
+  padding: 0 12px; font-size: 12px; font-weight: 950;
+  white-space: nowrap; cursor: pointer;
+  transition: background-color .12s, border-color .12s, transform .05s;
+}
+.pos-save-default-pref svg { flex-shrink: 0; }
+.pos-save-default-pref:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+.pos-save-default-pref:active { transform: scale(.98); }
 
 /* ================================================================
    DESKTOP SHELL (≥768px)
@@ -3121,7 +3188,7 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 /* Desktop control grid — 3 cols por defecto */
 .pos-desktop-control-grid {
   display: grid;
-  grid-template-columns: minmax(140px, 180px) minmax(0,1fr) minmax(150px, 210px);
+  grid-template-columns: minmax(140px, 180px) minmax(170px, 220px) minmax(0,1fr) minmax(150px, 210px);
   gap: 10px; margin-top: 10px; align-items: end; min-width: 0;
 }
 .pos-desktop-control-grid label { display: grid; gap: 5px; min-width: 0; }
@@ -3135,6 +3202,7 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
   border-radius: 14px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); padding: 0 10px; font-size: 14px;
 }
+.pos-desktop-control-grid .pos-save-default-pref { height: 42px; }
 .pos-desktop-client-field .form-label {
   color: var(--text3); font-size: 10px; font-weight: 950;
   text-transform: uppercase; letter-spacing: .08em;
@@ -3376,7 +3444,7 @@ body {
 .pos-desktop-control-grid {
   width: 100%;
   display: grid !important;
-  grid-template-columns: minmax(150px, 190px) minmax(260px, 1fr) minmax(150px, 210px);
+  grid-template-columns: minmax(150px, 190px) minmax(170px, 220px) minmax(260px, 1fr) minmax(150px, 210px);
   gap: 10px;
 }
 

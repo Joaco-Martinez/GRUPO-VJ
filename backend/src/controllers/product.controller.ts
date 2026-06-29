@@ -107,7 +107,20 @@ function getMovementFiltersFromQuery(req: Request) {
         ? req.query.search.trim()
         : undefined,
     movement: normalizeMovementQuery(req.query.movement ?? req.query.type),
+    origin: normalizeOriginQuery(req.query.origin),
   };
+}
+
+function normalizeOriginQuery(
+  value: unknown,
+): "CLIENT" | "INTERNAL" | "ALL" | undefined {
+  const normalized = String(value ?? "").trim().toUpperCase();
+
+  if (normalized === "CLIENT" || normalized === "INTERNAL") {
+    return normalized;
+  }
+
+  return undefined;
 }
 
 export const productController = {

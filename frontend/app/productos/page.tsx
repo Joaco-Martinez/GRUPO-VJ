@@ -31,7 +31,7 @@ import {
   ScanBarcode,
 } from 'lucide-react';
 
-type Modal = 'product-create' | 'product-edit' | 'category' | 'sku-scanner' | null;
+type Modal = 'product-create' | 'product-edit' | 'category' | 'sku-scanner' | 'stock-notice' | null;
 type ProductFormStep = 'basico' | 'precios' | 'componentes';
 type ProductSortMode = 'default' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 type SkuScannerMode = 'form' | 'search';
@@ -321,6 +321,9 @@ export default function ProductosPage() {
   const [loadingAllProducts, setLoadingAllProducts] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
   const [editing, setEditing] = useState<Product | null>(null);
+  const [pendingProductAction, setPendingProductAction] = useState<
+    { type: 'create' } | { type: 'edit'; product: Product } | null
+  >(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState('');
@@ -505,6 +508,16 @@ export default function ProductosPage() {
   };
 
   const openCreate = () => {
+    setPendingProductAction({ type: 'create' });
+    setModal('stock-notice');
+  };
+
+  const openEdit = (product: Product) => {
+    setPendingProductAction({ type: 'edit', product });
+    setModal('stock-notice');
+  };
+
+  const proceedCreate = () => {
     setEditing(null);
     setForm({ ...emptyProductForm, categoryId: categories[0]?.id ?? '' });
     setComponents([]);
@@ -514,7 +527,7 @@ export default function ProductosPage() {
     void loadAllProductsForComponents();
   };
 
-  const openEdit = (product: Product) => {
+  const proceedEdit = (product: Product) => {
     setEditing(product);
     setForm({
       name: product.name ?? '',
@@ -558,6 +571,21 @@ export default function ProductosPage() {
     setProductFormStep('basico');
     setModal('product-edit');
     void loadAllProductsForComponents();
+  };
+
+  const confirmStockNotice = () => {
+    if (!pendingProductAction) {
+      setModal(null);
+      return;
+    }
+
+    if (pendingProductAction.type === 'create') {
+      proceedCreate();
+    } else {
+      proceedEdit(pendingProductAction.product);
+    }
+
+    setPendingProductAction(null);
   };
 
   const handleImageChange = (file?: File | null) => {
@@ -1720,6 +1748,55 @@ export default function ProductosPage() {
             </div>
           </div>,
           document.body
+        )}
+
+      {modal === 'stock-notice' && typeof document !== 'undefined' &&
+        createPortal(
+        <div className="modal-overlay">
+          <div className="modal products-small-modal" style={{ maxWidth: 460 }}>
+            <div className="modal-header">
+              <b>Antes de continuar</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setPendingProductAction(null);
+                  setModal(null);
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ margin: 0, lineHeight: 1.5 }}>
+                {pendingProductAction?.type === 'create'
+                  ? 'Crear un producto desde aquí no genera ningún ingreso o egreso de stock.'
+                  : 'Editar un producto desde aquí no genera ningún ingreso o egreso de stock.'}{' '}
+                Lo recomendable es cargar y ajustar las cantidades desde la
+                sección <b>Stock</b>, para que quede registrado el movimiento
+                correspondiente.
+              </p>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setPendingProductAction(null);
+                  setModal(null);
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button className="btn btn-primary" onClick={confirmStockNotice}>
+                Entendido, continuar
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
         )}
 
       {(modal === 'product-create' || modal === 'product-edit') && typeof document !== 'undefined' &&

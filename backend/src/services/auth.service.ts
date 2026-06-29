@@ -28,6 +28,8 @@ function sanitizeUser(user: any) {
     isActive: user.isActive,
     mustChangePassword: user.mustChangePassword ?? false,
     client: user.client ?? null,
+    defaultStockLocation: user.defaultStockLocation ?? null,
+    defaultPriceCategory: user.defaultPriceCategory ?? null,
   };
 }
 

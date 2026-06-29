@@ -16,6 +16,7 @@ import {
 type MovementLocation = "LOCAL" | "DEPOSITO";
 type MovementGroup = "INGRESS" | "EGRESS" | "TRANSFER";
 type MovementFilter = "ALL" | MovementGroup;
+type MovementOrigin = "ALL" | "CLIENT" | "INTERNAL";
 
 type MovementUserView = {
   id?: string | null;
@@ -42,6 +43,7 @@ type StockMovementView = {
   quantityLabel?: string | null;
   reason?: string | null;
   reference?: string | null;
+  isClientMovement?: boolean | null;
   createdAt: string;
   product?: MovementProductView | null;
   user?: MovementUserView | null;
@@ -114,6 +116,12 @@ const movementOptions: { value: MovementFilter; label: string }[] = [
   { value: "TRANSFER", label: "Movimientos" },
 ];
 
+const originOptions: { value: MovementOrigin; label: string }[] = [
+  { value: "ALL", label: "Todos" },
+  { value: "INTERNAL", label: "Vendedores / interno" },
+  { value: "CLIENT", label: "Clientes (Web)" },
+];
+
 function getMovementGroup(movement: StockMovementView): MovementGroup {
   if (movement.movementGroup) return movement.movementGroup;
   if (movement.type === "TRANSFER") return "TRANSFER";
@@ -180,6 +188,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
 
     const [search, setSearch] = useState("");
     const [movement, setMovement] = useState<MovementFilter>("ALL");
+    const [origin, setOrigin] = useState<MovementOrigin>("ALL");
     const [fromDate, setFromDate] = useState("");
     const [toDate, setToDate] = useState("");
     const [page, setPage] = useState(1);
@@ -203,8 +212,15 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
 
       setOverviewLoading(true);
 
+      const overviewQuery = buildQuery({
+        limit: 5,
+        origin: origin === "ALL" ? undefined : origin,
+      });
+
       api
-        .get<MovementOverviewResponse>("/products/movements/overview?limit=5")
+        .get<MovementOverviewResponse>(
+          `/products/movements/overview?${overviewQuery}`,
+        )
         .then((res) => {
           if (!alive) return;
           setOverview({ ...emptyOverview, ...res.data });
@@ -220,7 +236,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
       return () => {
         alive = false;
       };
-    }, []);
+    }, [origin]);
 
     useEffect(() => {
       if (!expanded) return;
@@ -235,6 +251,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
           limit: 15,
           search,
           movement: movement === "ALL" ? undefined : movement,
+          origin: origin === "ALL" ? undefined : origin,
           fromDate,
           toDate,
         });
@@ -258,7 +275,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
         alive = false;
         window.clearTimeout(timeoutId);
       };
-    }, [expanded, search, movement, fromDate, toDate, page]);
+    }, [expanded, search, movement, origin, fromDate, toDate, page]);
 
     const openMovementGroup = (group: MovementGroup) => {
       setMovement(group);
@@ -269,6 +286,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
     const resetFilters = () => {
       setSearch("");
       setMovement("ALL");
+      setOrigin("ALL");
       setFromDate("");
       setToDate("");
       setPage(1);
@@ -295,6 +313,22 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
             <Filter size={14} />
             {expanded ? "Ocultar búsqueda" : "Buscar / ampliar"}
           </button>
+        </div>
+
+        <div className="stock-movement-origin-tabs">
+          {originOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={origin === option.value ? "is-active" : ""}
+              onClick={() => {
+                setOrigin(option.value);
+                setPage(1);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
         <div className="stock-movement-overview-grid">
@@ -372,6 +406,20 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
                 ))}
               </select>
 
+              <select
+                value={origin}
+                onChange={(e) => {
+                  setOrigin(e.target.value as MovementOrigin);
+                  setPage(1);
+                }}
+              >
+                {originOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+
               <input
                 type="date"
                 value={fromDate}
@@ -413,6 +461,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
                     <th>Hacia</th>
                     <th>Cantidad</th>
                     <th>Usuario</th>
+                    <th>Origen</th>
                     <th>Referencia</th>
                   </tr>
                 </thead>
@@ -439,6 +488,13 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
                           {getQuantityLabel(item)}
                         </td>
                         <td>{getMovementUserLabel(item)}</td>
+                        <td>
+                          <span
+                            className={`stock-movement-origin-badge ${item.isClientMovement ? "is-client" : "is-internal"}`}
+                          >
+                            {item.isClientMovement ? "Cliente (Web)" : "Vendedor"}
+                          </span>
+                        </td>
                         <td>{item.reason ?? item.reference ?? "—"}</td>
                       </tr>
                     );
@@ -496,6 +552,13 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
                       <div>
                         <small>Usuario</small>
                         <strong>{getMovementUserLabel(item)}</strong>
+                      </div>
+
+                      <div>
+                        <small>Origen</small>
+                        <strong>
+                          {item.isClientMovement ? "Cliente (Web)" : "Vendedor"}
+                        </strong>
                       </div>
 
                       <div>
@@ -582,6 +645,51 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
             color: var(--text3);
             font-size: 12px;
             font-weight: 700;
+          }
+
+          .stock-movement-origin-tabs {
+            display: flex;
+            gap: 8px;
+            padding: 14px 14px 0;
+            flex-wrap: wrap;
+          }
+
+          .stock-movement-origin-tabs button {
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text3);
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 850;
+            cursor: pointer;
+          }
+
+          .stock-movement-origin-tabs button.is-active {
+            background: var(--text);
+            color: var(--surface);
+            border-color: var(--text);
+          }
+
+          .stock-movement-origin-badge {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 3px 9px;
+            font-size: 10.5px;
+            font-weight: 900;
+            white-space: nowrap;
+          }
+
+          .stock-movement-origin-badge.is-client {
+            color: #2563eb;
+            background: color-mix(in srgb, #2563eb 12%, transparent);
+          }
+
+          .stock-movement-origin-badge.is-internal {
+            color: var(--text3);
+            background: var(--surface2);
+            border: 1px solid var(--border);
           }
 
           .stock-movement-overview-grid {
@@ -719,7 +827,7 @@ const StockMovementsPanel = forwardRef<HTMLDivElement>(
 
           .stock-movement-filters {
             display: grid;
-            grid-template-columns: minmax(220px, 1fr) 160px 150px 150px auto;
+            grid-template-columns: minmax(200px, 1fr) 150px 170px 140px 140px auto;
             gap: 10px;
             padding: 14px;
             border-bottom: 1px solid var(--border);

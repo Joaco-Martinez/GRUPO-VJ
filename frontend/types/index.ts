@@ -57,6 +57,8 @@ export interface User {
   client?: Client | null;
   createdAt?: string;
   updatedAt?: string;
+  defaultStockLocation?: 'LOCAL' | 'DEPOSITO' | null;
+  defaultPriceCategory?: string | null;
 }
 
 export interface ProductCategory {

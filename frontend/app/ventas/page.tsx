@@ -161,6 +161,7 @@ type SaleExtra = Sale & {
   payments?: PaymentView[];
   items?: SaleItemView[];
   userId?: string | null;
+  isWebSale?: boolean | null;
   sellerId?: string | null;
   createdById?: string | null;
   userName?: string | null;
@@ -238,6 +239,13 @@ type SalesFetchResult = {
   stats?: SalesStats | null;
 };
 
+type DeliveryCostOption = {
+  key: 'SHORT' | 'CALCULATED' | 'LONG' | 'AVERAGE';
+  label: string;
+  distanceKm: number;
+  deliveryCost: number;
+};
+
 type DeliveryCalculation = {
   distanceKm: number;
   pricePerKm: number;
@@ -252,6 +260,9 @@ type DeliveryCalculation = {
   originAddress?: string;
   destinationAddress?: string;
   deliveryAddressSnapshot?: string;
+  options?: DeliveryCostOption[];
+  average?: DeliveryCostOption;
+  selectedOptionKey?: DeliveryCostOption['key'];
 };
 
 type SaleEditLine = {
@@ -491,6 +502,10 @@ function getSalePaymentLabel(sale: Sale) {
 
 function getSaleSellerLabel(sale: Sale) {
   const saleExtra = sale as SaleExtra;
+
+  if (saleExtra.isWebSale) {
+    return 'Venta desde la Web';
+  }
 
   const name =
     saleExtra.user?.name ||
@@ -1616,6 +1631,21 @@ export default function VentasPage() {
     });
   };
 
+  const selectEditDeliveryOption = (option: DeliveryCostOption) => {
+    if (!editDeliveryCalculation) return;
+
+    const updated: DeliveryCalculation = {
+      ...editDeliveryCalculation,
+      distanceKm: option.distanceKm,
+      deliveryCost: option.deliveryCost,
+      selectedOptionKey: option.key,
+    };
+
+    setEditDeliveryDistanceKm(String(updated.distanceKm));
+    setEditDeliveryCalculation(updated);
+    applyDeliveryToEditLines(updated);
+  };
+
   const calculateEditDelivery = async () => {
     if (!editItemsSale) return;
 
@@ -1665,10 +1695,12 @@ export default function VentasPage() {
         pricePerKm,
       });
 
+      const average: DeliveryCostOption | undefined = response.data.average;
+
       const calculation: DeliveryCalculation = {
-        distanceKm: num(response.data.distanceKm),
+        distanceKm: average ? average.distanceKm : num(response.data.distanceKm),
         pricePerKm: num(response.data.pricePerKm),
-        deliveryCost: num(response.data.deliveryCost),
+        deliveryCost: average ? average.deliveryCost : num(response.data.deliveryCost),
         durationMinutes: response.data.durationMinutes ?? null,
         straightDistanceKm: response.data.straightDistanceKm ?? null,
         source: response.data.source,
@@ -1679,6 +1711,9 @@ export default function VentasPage() {
         originAddress: response.data.originAddress,
         destinationAddress: response.data.destinationAddress,
         deliveryAddressSnapshot: response.data.deliveryAddressSnapshot,
+        options: response.data.options,
+        average,
+        selectedOptionKey: 'AVERAGE',
       };
 
       setEditDeliveryDistanceKm(String(calculation.distanceKm));
@@ -3548,6 +3583,24 @@ export default function VentasPage() {
                     {editDeliveryCalculation.source === 'COORDINATES_FALLBACK' && (
                       <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
                     )}
+                    {editDeliveryCalculation.options && editDeliveryCalculation.average && (
+                      <div className="sales-edit-delivery-options">
+                        <small>Elegí una opción de costo de envío:</small>
+                        <div className="sales-edit-delivery-options-list">
+                          {[...editDeliveryCalculation.options, editDeliveryCalculation.average].map((option) => (
+                            <button
+                              type="button"
+                              key={option.key}
+                              className={`sales-edit-delivery-option${editDeliveryCalculation.selectedOptionKey === option.key ? ' selected' : ''}`}
+                              onClick={() => selectEditDeliveryOption(option)}
+                            >
+                              <span>{option.label}</span>
+                              <b>{fmtMoney(option.deliveryCost)}</b>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4672,6 +4725,46 @@ export default function VentasPage() {
           background: rgba(245, 158, 11, 0.13);
           color: var(--warn);
           border: 1px solid rgba(245, 158, 11, 0.25);
+        }
+
+        .sales-edit-delivery-options {
+          display: grid;
+          gap: 6px;
+          margin-top: 4px;
+        }
+
+        .sales-edit-delivery-options-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .sales-edit-delivery-option {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 2px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 10px;
+          padding: 6px 10px;
+          font-size: 11px;
+          color: var(--text2);
+          cursor: pointer;
+        }
+
+        .sales-edit-delivery-option b {
+          font-size: 12px;
+          color: var(--text1);
+        }
+
+        .sales-edit-delivery-option.selected {
+          border-color: var(--accent);
+          background: rgba(34, 197, 94, 0.14);
+        }
+
+        .sales-edit-delivery-option.selected b {
+          color: var(--accent);
         }
 
         .sales-edit-delivery-card {

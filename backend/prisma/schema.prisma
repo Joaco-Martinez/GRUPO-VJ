@@ -19,6 +19,8 @@ model User {
   passwordResetExpires DateTime?
   passwordResetToken   String?           @unique
   mustChangePassword   Boolean           @default(false)
+  defaultStockLocation Location?
+  defaultPriceCategory String?
   accountMovements     AccountMovement[]
   client               Client?
   remitos              Remito[]
@@ -417,6 +419,7 @@ model Sale {
   status                  SaleStatus        @default(PENDING)
   isAccountSale           Boolean           @default(false)
   accountDebtAmount       Float             @default(0)
+  isWebSale               Boolean           @default(false)
   createdAt               DateTime          @default(now())
   updatedAt               DateTime          @updatedAt
   pdfUrl                  String?
@@ -582,6 +585,7 @@ model StockMovement {
   quantityKg Float?
   reason     String?
   reference  String?
+  isClientMovement Boolean @default(false)
   createdAt  DateTime     @default(now())
   product    Product      @relation(fields: [productId], references: [id])
   user       User?        @relation(fields: [userId], references: [id])

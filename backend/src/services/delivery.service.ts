@@ -350,6 +350,46 @@ export const deliveryService = {
     const roundedDistanceKm = round2(distanceKm);
     const deliveryCost = round2(roundedDistanceKm * pricePerKm);
 
+    // Ofrecemos 3 opciones de costo al vendedor (más un promedio), ya que
+    // la distancia estimada puede variar según tráfico, ruta elegida, etc.
+    const shortDistanceKm = round2(straightDistanceKm * 1.1);
+    const longDistanceKm = round2(roundedDistanceKm * 1.15);
+
+    const options = [
+      {
+        key: "SHORT" as const,
+        label: "Ruta corta",
+        distanceKm: shortDistanceKm,
+        deliveryCost: round2(shortDistanceKm * pricePerKm),
+      },
+      {
+        key: "CALCULATED" as const,
+        label: "Ruta calculada",
+        distanceKm: roundedDistanceKm,
+        deliveryCost,
+      },
+      {
+        key: "LONG" as const,
+        label: "Ruta con margen",
+        distanceKm: longDistanceKm,
+        deliveryCost: round2(longDistanceKm * pricePerKm),
+      },
+    ];
+
+    const averageDistanceKm = round2(
+      options.reduce((sum, option) => sum + option.distanceKm, 0) / options.length,
+    );
+    const averageDeliveryCost = round2(
+      options.reduce((sum, option) => sum + option.deliveryCost, 0) / options.length,
+    );
+
+    const average = {
+      key: "AVERAGE" as const,
+      label: "Promedio",
+      distanceKm: averageDistanceKm,
+      deliveryCost: averageDeliveryCost,
+    };
+
     const originAddress = buildLocationAddress(location);
     const destinationAddress = buildClientAddress(client);
 
@@ -359,6 +399,8 @@ export const deliveryService = {
       durationMinutes,
       pricePerKm,
       deliveryCost,
+      options,
+      average,
       source,
 
       // Info extra para saber qué hizo el backend.

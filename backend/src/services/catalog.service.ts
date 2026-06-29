@@ -666,6 +666,7 @@ export const catalogService = {
       receiptType: ReceiptType.TICKET,
       status: SaleStatus.PENDING,
       stockLocation,
+      isWebSale: true,
       items: normalizedItems,
     });
 

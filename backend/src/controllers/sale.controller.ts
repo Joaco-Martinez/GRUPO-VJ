@@ -87,6 +87,7 @@ function normalizeSaleBody(body: any) {
   return {
     payload: {
       ...body,
+      isWebSale: false,
       stockLocation,
       quotationHours: toNumber(body.quotationHours),
       discountValue: toNumber(body.discountValue),

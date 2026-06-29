@@ -66,6 +66,7 @@ type GetStockMovementsFilters = {
   toDate?: Date;
   search?: string;
   movement?: StockMovementVisualType | "ALL";
+  origin?: "CLIENT" | "INTERNAL" | "ALL";
   page?: number;
   limit?: number;
 };
@@ -201,6 +202,9 @@ function buildStockMovementWhere(filters?: GetStockMovementsFilters) {
 
   if (filters?.productId) and.push({ productId: filters.productId });
   if (filters?.userId) and.push({ userId: filters.userId });
+
+  if (filters?.origin === "CLIENT") and.push({ isClientMovement: true });
+  if (filters?.origin === "INTERNAL") and.push({ isClientMovement: false });
 
   const createdAt: Prisma.DateTimeFilter = {};
   if (filters?.fromDate) createdAt.gte = filters.fromDate;
@@ -1439,6 +1443,7 @@ export const productService = {
       fromDate: filters?.fromDate,
       toDate: filters?.toDate,
       search: filters?.search,
+      origin: filters?.origin,
     };
 
     const ingressWhere = buildStockMovementWhere({

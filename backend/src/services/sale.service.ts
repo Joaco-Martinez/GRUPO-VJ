@@ -59,6 +59,7 @@ type CreateSaleInput = {
 
   receiptType: ReceiptType;
   status?: SaleStatus;
+  isWebSale?: boolean;
 
   items: {
     productId: string;
@@ -615,6 +616,68 @@ function buildStockLines(items: ResolvedSaleItem[]) {
   );
 }
 
+/**
+ * Compara las líneas de stock de la venta antes/después de editarla y devuelve
+ * sólo el delta neto por producto, para no generar un ingreso + egreso completos
+ * en cada edición sino un único movimiento por el cambio real.
+ */
+function diffStockLines(oldLines: StockLine[], newLines: StockLine[]) {
+  const map = new Map<
+    string,
+    { productId: string; quantity: number; quantityKg: number; reason: string }
+  >();
+
+  for (const line of oldLines) {
+    const entry = map.get(line.productId) ?? {
+      productId: line.productId,
+      quantity: 0,
+      quantityKg: 0,
+      reason: line.reason,
+    };
+
+    entry.quantity -= line.quantity;
+    entry.quantityKg -= line.quantityKg;
+    map.set(line.productId, entry);
+  }
+
+  for (const line of newLines) {
+    const entry = map.get(line.productId) ?? {
+      productId: line.productId,
+      quantity: 0,
+      quantityKg: 0,
+      reason: line.reason,
+    };
+
+    entry.quantity += line.quantity;
+    entry.quantityKg += line.quantityKg;
+    entry.reason = line.reason;
+    map.set(line.productId, entry);
+  }
+
+  const toDiscount: StockLine[] = [];
+  const toRestore: StockLine[] = [];
+
+  for (const entry of map.values()) {
+    if (entry.quantity > 0 || entry.quantityKg > 0) {
+      toDiscount.push({
+        productId: entry.productId,
+        quantity: Math.max(entry.quantity, 0),
+        quantityKg: Math.max(entry.quantityKg, 0),
+        reason: `Ajuste por modificación de venta (${entry.reason})`,
+      });
+    } else if (entry.quantity < 0 || entry.quantityKg < 0) {
+      toRestore.push({
+        productId: entry.productId,
+        quantity: Math.max(-entry.quantity, 0),
+        quantityKg: Math.max(-entry.quantityKg, 0),
+        reason: `Ajuste por modificación de venta (${entry.reason})`,
+      });
+    }
+  }
+
+  return { toDiscount, toRestore };
+}
+
 async function validateStockAvailability(
   tx: any,
   stockLines: StockLine[],
@@ -663,7 +726,8 @@ async function discountStockLines(
   userId: string | undefined,
   saleId: string,
   stockLocation: StockLocation,
-  pendingAlerts: string[]
+  pendingAlerts: string[],
+  isClientMovement: boolean = false
 ) {
   for (const line of stockLines) {
     const data: any = {};
@@ -693,6 +757,7 @@ async function discountStockLines(
       quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
       reason: line.reason,
       reference: saleId,
+      isClientMovement,
       product: {
         connect: {
           id: line.productId,
@@ -722,7 +787,8 @@ async function restoreStockLines(
   userId: string | undefined,
   saleId: string,
   stockLocation: StockLocation,
-  pendingAlerts: string[]
+  pendingAlerts: string[],
+  isClientMovement: boolean = false
 ) {
   for (const line of stockLines) {
     const data: any = {};
@@ -760,6 +826,7 @@ async function restoreStockLines(
       quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
       reason: "Cancelación de venta",
       reference: saleId,
+      isClientMovement,
       product: {
         connect: {
           id: line.productId,
@@ -1476,6 +1543,7 @@ export const saleService = {
 
             isAccountSale: paymentState.isAccountSale,
             accountDebtAmount: paymentState.debtAmount,
+            isWebSale: Boolean(data.isWebSale),
 
             items: {
               create: itemsWithProfit.map(buildSaleItemCreateData),
@@ -1516,7 +1584,8 @@ export const saleService = {
           data.userId,
           sale.id,
           stockLocation,
-          pendingAlerts
+          pendingAlerts,
+          Boolean(data.isWebSale)
         );
 
         if (paymentState.isAccountSale && paymentState.debtAmount > 0 && data.clientId) {
@@ -1717,22 +1786,40 @@ export const saleService = {
       throw new Error("Para ajustar deuda necesitás seleccionar cliente");
     }
 
+    const oldStockLocation = normalizeStockLocation(
+      (sale as any).stockLocation ?? "LOCAL"
+    );
+    const sameStockLocation = oldStockLocation === stockLocation;
+
     const oldStockLines = buildStockLines(sale.items.map(saleItemToResolved));
     const newStockLines = buildStockLines(itemsWithProfit);
+
+    // En vez de revertir TODO el stock viejo y descontar TODO el stock nuevo
+    // (lo que generaba un ingreso + egreso completos en cada edición), sólo
+    // movemos el delta neto por producto: si una venta pasa de 2 a 4
+    // unidades, se genera un único egreso de 2 (no un ingreso de 2 + egreso de 4).
+    // Si cambia el depósito/local de la venta no se puede compensar el delta
+    // entre ubicaciones distintas, así que en ese caso sí se revierte/descuenta todo.
+    const { toDiscount, toRestore } = sameStockLocation
+      ? diffStockLines(oldStockLines, newStockLines)
+      : { toDiscount: newStockLines, toRestore: oldStockLines };
+
+    const isClientMovement = Boolean((sale as any).isWebSale);
     const pendingAlerts: string[] = [];
 
     const updated = await prisma.$transaction(
       async (tx) => {
         await restoreStockLines(
           tx,
-          oldStockLines,
+          toRestore,
           sale.userId ?? undefined,
           sale.id,
-          normalizeStockLocation((sale as any).stockLocation ?? "LOCAL"),
-          pendingAlerts
+          sameStockLocation ? stockLocation : oldStockLocation,
+          pendingAlerts,
+          isClientMovement
         );
 
-        await validateStockAvailability(tx, newStockLines, stockLocation);
+        await validateStockAvailability(tx, toDiscount, stockLocation);
 
         await tx.boxContent.deleteMany({
           where: {
@@ -1863,11 +1950,12 @@ export const saleService = {
 
         await discountStockLines(
           tx,
-          newStockLines,
+          toDiscount,
           sale.userId ?? undefined,
           sale.id,
           stockLocation,
-          pendingAlerts
+          pendingAlerts,
+          isClientMovement
         );
 
         return editedSale;

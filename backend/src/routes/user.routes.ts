@@ -4,6 +4,7 @@ import { authMiddleware, requireRole } from "../middleware/auth";
 
 const router = Router();
 
+router.put("/me/preferences", authMiddleware, userController.updateOwnPreferences);
 router.get("/", authMiddleware, requireRole("ADMIN"), userController.getAll);
 router.get("/:id/activity", authMiddleware, requireRole("ADMIN"), userController.getActivityById);
 router.get("/:id", authMiddleware, requireRole("ADMIN"), userController.getById);

@@ -193,6 +193,25 @@ export const saleController = {
     }
   },
 
+  async generarComprobante(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await saleService.generarComprobanteVenta(
+        getParamAsString(req.params.id, "id")
+      );
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`
+      );
+      res.setHeader("Content-Length", result.buffer.length);
+
+      return res.send(result.buffer);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const normalized = normalizeSaleBody(req.body);

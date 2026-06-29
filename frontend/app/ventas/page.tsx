@@ -762,12 +762,14 @@ export default function VentasPage() {
   const [invoiceModal, setInvoiceModal] = useState<InvoiceModalState | null>(null);
   const [creditNoteModal, setCreditNoteModal] = useState<CreditNoteModalState | null>(null);
   const [quotationModal, setQuotationModal] = useState<Sale | null>(null);
+  const [comprobanteModal, setComprobanteModal] = useState<Sale | null>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   const [invoicingId, setInvoicingId] = useState<string | null>(null);
   const [creditNoteLoadingId, setCreditNoteLoadingId] = useState<string | null>(null);
   const [quotationLoadingId, setQuotationLoadingId] = useState<string | null>(null);
+  const [comprobanteLoadingId, setComprobanteLoadingId] = useState<string | null>(null);
   const [printingTicketId, setPrintingTicketId] = useState<string | null>(null);
 
   const [remitoLoadingId, setRemitoLoadingId] = useState<string | null>(null);
@@ -1307,6 +1309,104 @@ export default function VentasPage() {
       toast.error(message);
     } finally {
       setQuotationLoadingId(null);
+    }
+  };
+
+  const getComprobantePdfBlob = async (sale: Sale) => {
+    const response = await api.get(`/sales/${sale.id}/comprobante-pdf`, {
+      responseType: 'blob',
+    });
+
+    const contentType = String(response.headers['content-type'] ?? '');
+
+    if (!contentType.includes('application/pdf')) {
+      const errorText = await response.data.text();
+
+      try {
+        const parsed = JSON.parse(errorText) as { message?: string; error?: string };
+        throw new Error(parsed.message || parsed.error || 'El backend no devolvió un PDF');
+      } catch {
+        throw new Error(errorText || 'El backend no devolvió un PDF válido');
+      }
+    }
+
+    return new Blob([response.data], {
+      type: 'application/pdf',
+    });
+  };
+
+  const downloadComprobante = async (sale: Sale) => {
+    if (sale.status !== 'COMPLETED' || isSaleInvoiced(sale)) {
+      toast.error('Solo se puede descargar el comprobante de una venta confirmada y sin facturar');
+      return;
+    }
+
+    try {
+      setComprobanteLoadingId(sale.id);
+
+      const toastId = toast.loading('Generando comprobante...');
+
+      const blob = await getComprobantePdfBlob(sale);
+
+      downloadBlob(blob, `comprobante-${sale.id}.pdf`);
+
+      setComprobanteModal(null);
+      toast.success('Comprobante descargado', { id: toastId });
+    } catch (error: unknown) {
+      const message = await getBlobErrorMessage(error, 'No se pudo descargar el comprobante.');
+      toast.error(message);
+    } finally {
+      setComprobanteLoadingId(null);
+    }
+  };
+
+  const shareComprobantePdfWhatsapp = async (sale: Sale) => {
+    if (sale.status !== 'COMPLETED' || isSaleInvoiced(sale)) {
+      toast.error('Solo se puede enviar el comprobante de una venta confirmada y sin facturar');
+      return;
+    }
+
+    try {
+      setComprobanteLoadingId(sale.id);
+
+      const toastId = toast.loading('Generando comprobante para WhatsApp...');
+
+      const blob = await getComprobantePdfBlob(sale);
+      const filename = `comprobante-${sale.id.slice(-8)}.pdf`;
+      const file = new File([blob], filename, {
+        type: 'application/pdf',
+      });
+
+      const nav = navigator as Navigator & {
+        canShare?: (data: ShareData) => boolean;
+      };
+
+      const shareData: ShareData = {
+        title: `Comprobante #${sale.id.slice(-8)}`,
+        text: `Hola, te envío el comprobante de tu compra en Grupo VJ. Total: ${fmtMoney(sale.total)}`,
+        files: [file],
+      };
+
+      if (navigator.share && (!nav.canShare || nav.canShare(shareData))) {
+        await navigator.share(shareData);
+
+        setComprobanteModal(null);
+
+        toast.success('Elegí WhatsApp para enviar el comprobante PDF', { id: toastId });
+        return;
+      }
+
+      downloadBlob(blob, filename);
+
+      toast.error(
+        'Este navegador no permite enviar PDFs directo por WhatsApp. Te descargué el PDF para adjuntarlo manualmente.',
+        { id: toastId }
+      );
+    } catch (error: unknown) {
+      const message = await getBlobErrorMessage(error, 'No se pudo compartir el comprobante PDF.');
+      toast.error(message);
+    } finally {
+      setComprobanteLoadingId(null);
     }
   };
 
@@ -2816,6 +2916,29 @@ export default function VentasPage() {
                       </button>
                     )}
 
+                    {s.status === 'COMPLETED' && !isSaleInvoiced(s) && (
+                      <button
+                        className="sales-action-row"
+                        disabled={comprobanteLoadingId === s.id}
+                        onClick={() => {
+                          setComprobanteModal(s);
+                          setMobileActionsSale(null);
+                        }}
+                      >
+                        <span>
+                          {comprobanteLoadingId === s.id ? (
+                            <Loader2 size={17} className="animate-spin" />
+                          ) : (
+                            <FileText size={17} />
+                          )}
+                        </span>
+                        <div>
+                          <b>Comprobante de venta</b>
+                          <small>Descargar o enviar PDF por WhatsApp (sin facturar)</small>
+                        </div>
+                      </button>
+                    )}
+
                     {!isSaleInvoiced(s) && s.status !== 'CANCELLED' && (
                       <button
                         className="sales-action-row sales-action-row-primary"
@@ -3204,6 +3327,92 @@ export default function VentasPage() {
                 onClick={() => shareQuotationPdfWhatsapp(quotationModal)}
               >
                 {quotationLoadingId === quotationModal.id ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <MessageCircle size={16} />
+                )}
+                Enviar PDF por WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+        ,
+        document.body
+      )}
+
+      {mounted && comprobanteModal && createPortal(
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setComprobanteModal(null)}
+        >
+          <div className="modal sales-small-modal" style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <b>Comprobante #{comprobanteModal.id.slice(-8)}</b>
+
+              <button className="btn btn-ghost btn-sm" onClick={() => setComprobanteModal(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ color: 'var(--text2)', marginBottom: 14 }}>
+                Elegí qué querés hacer con el comprobante PDF de{' '}
+                <b>{clientName(comprobanteModal.client)}</b>.
+              </p>
+
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 14,
+                  padding: 12,
+                  marginBottom: 12,
+                  display: 'grid',
+                  gap: 6,
+                }}
+              >
+                <small style={{ color: 'var(--text3)' }}>Total de la venta</small>
+                <b style={{ fontSize: 20, color: 'var(--accent)' }}>
+                  {fmtMoney(comprobanteModal.total)}
+                </b>
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 14,
+                  padding: 12,
+                  color: 'var(--text2)',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                Este comprobante no es válido como factura. Para enviarlo por{' '}
+                <b>WhatsApp</b>, el sistema usa el menú de compartir del dispositivo. En celular
+                te debería aparecer WhatsApp como opción. En PC, si el navegador no permite
+                compartir archivos, se descarga el PDF para adjuntarlo manualmente.
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                disabled={comprobanteLoadingId === comprobanteModal.id}
+                onClick={() => downloadComprobante(comprobanteModal)}
+              >
+                {comprobanteLoadingId === comprobanteModal.id ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <FileText size={16} />
+                )}
+                Descargar PDF
+              </button>
+
+              <button
+                className="btn btn-primary"
+                disabled={comprobanteLoadingId === comprobanteModal.id}
+                onClick={() => shareComprobantePdfWhatsapp(comprobanteModal)}
+              >
+                {comprobanteLoadingId === comprobanteModal.id ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <MessageCircle size={16} />

@@ -27,6 +27,12 @@ router.get(
   saleController.generarCotizacion
 );
 
+router.get(
+  "/:id/comprobante-pdf",
+  authMiddleware,
+  saleController.generarComprobante
+);
+
 router.get("/:id", authMiddleware, saleController.getById);
 
 export default router;

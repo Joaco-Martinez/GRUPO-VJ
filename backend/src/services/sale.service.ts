@@ -20,6 +20,7 @@ import alertService from "./alert.service";
 import { productStatsService } from "./productStats.service";
 import { generarTicketPedidoPDF } from "../utils/generarReciboPDF";
 import { generarCotizacionPDF } from "../utils/generarCotizacionPDF";
+import { generarComprobanteVentaPDF } from "../utils/generarComprobanteVentaPDF";
 
 type CreateSaleInput = {
   userId?: string;
@@ -2254,6 +2255,46 @@ export const saleService = {
 
     return {
       filename: `cotizacion-${sale.id}.pdf`,
+      buffer: pdfBuffer,
+    };
+  },
+
+  async generarComprobanteVenta(saleId: string) {
+    const sale = await prisma.sale.findUnique({
+      where: {
+        id: saleId,
+      },
+      include: {
+        items: {
+          include: {
+            product: true,
+          },
+        },
+        user: true,
+        client: true,
+      },
+    });
+
+    if (!sale) {
+      throw new Error("Venta no encontrada");
+    }
+
+    if (sale.status !== SaleStatus.COMPLETED) {
+      throw new Error(
+        "Solo se puede generar el comprobante de una venta confirmada"
+      );
+    }
+
+    if (sale.isInvoiced) {
+      throw new Error(
+        "Esta venta ya fue facturada, descargue la factura correspondiente"
+      );
+    }
+
+    const pdfBuffer = await generarComprobanteVentaPDF(sale);
+
+    return {
+      filename: `comprobante-${sale.id}.pdf`,
       buffer: pdfBuffer,
     };
   },

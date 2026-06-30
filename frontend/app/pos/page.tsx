@@ -59,6 +59,14 @@ type StockLocation = "LOCAL" | "DEPOSITO";
 type DeliveryMode = "PICKUP" | "LOCAL_DELIVERY";
 type ProductSortMode = "name-asc" | "name-desc" | "category-asc" | "category-desc";
 
+type DeliveryCostOption = {
+  key: "SHORT" | "CALCULATED" | "LONG" | "AVERAGE";
+  label: string;
+  distanceKm: number;
+  durationMinutes?: number | null;
+  deliveryCost: number;
+};
+
 type DeliveryCalculation = {
   distanceKm: number;
   pricePerKm: number;
@@ -73,6 +81,9 @@ type DeliveryCalculation = {
   originAddress?: string;
   destinationAddress?: string;
   deliveryAddressSnapshot?: string;
+  options?: DeliveryCostOption[];
+  average?: DeliveryCostOption;
+  selectedOptionKey?: DeliveryCostOption["key"];
 };
 
 type ConfirmState = {
@@ -1115,6 +1126,9 @@ export default function POSPage() {
         originAddress: response.data.originAddress,
         destinationAddress: response.data.destinationAddress,
         deliveryAddressSnapshot: response.data.deliveryAddressSnapshot,
+        options: response.data.options,
+        average: response.data.average,
+        selectedOptionKey: "CALCULATED",
       };
 
       setDeliveryCalculation(calculation);
@@ -1130,6 +1144,19 @@ export default function POSPage() {
     } finally {
       setCalculatingDelivery(false);
     }
+  };
+
+  const selectDeliveryOption = (option: DeliveryCostOption) => {
+    if (!deliveryCalculation) return;
+    const next: DeliveryCalculation = {
+      ...deliveryCalculation,
+      distanceKm: option.distanceKm,
+      deliveryCost: option.deliveryCost,
+      durationMinutes: option.durationMinutes ?? null,
+      selectedOptionKey: option.key,
+    };
+    setDeliveryCalculation(next);
+    applyDeliveryToCart(next);
   };
 
   const productsSubtotal = cart.reduce((a, item) => {
@@ -1923,6 +1950,33 @@ export default function POSPage() {
                                   {deliveryCalculation.source === "COORDINATES_FALLBACK" && (
                                     <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
                                   )}
+                                  {(deliveryCalculation.options?.length || deliveryCalculation.average) && (
+                                    <div className="pos-delivery-options">
+                                      {deliveryCalculation.options?.map((option) => (
+                                        <button
+                                          key={option.key}
+                                          type="button"
+                                          className={deliveryCalculation.selectedOptionKey === option.key ? "pos-delivery-option active" : "pos-delivery-option"}
+                                          onClick={() => selectDeliveryOption(option)}
+                                        >
+                                          <span>{option.label}</span>
+                                          <b>{fmtMoney(option.deliveryCost)}</b>
+                                          <small>{option.distanceKm} km</small>
+                                        </button>
+                                      ))}
+                                      {deliveryCalculation.average && (
+                                        <button
+                                          type="button"
+                                          className={deliveryCalculation.selectedOptionKey === "AVERAGE" ? "pos-delivery-option active" : "pos-delivery-option"}
+                                          onClick={() => selectDeliveryOption(deliveryCalculation.average!)}
+                                        >
+                                          <span>{deliveryCalculation.average.label}</span>
+                                          <b>{fmtMoney(deliveryCalculation.average.deliveryCost)}</b>
+                                          <small>{deliveryCalculation.average.distanceKm} km</small>
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </>
@@ -2186,6 +2240,33 @@ export default function POSPage() {
                                   )}
                                   {deliveryCalculation.source === "COORDINATES_FALLBACK" && (
                                     <small>Google no respondió. Se usó distancia recta ajustada como cálculo aproximado.</small>
+                                  )}
+                                  {(deliveryCalculation.options?.length || deliveryCalculation.average) && (
+                                    <div className="pos-delivery-options">
+                                      {deliveryCalculation.options?.map((option) => (
+                                        <button
+                                          key={option.key}
+                                          type="button"
+                                          className={deliveryCalculation.selectedOptionKey === option.key ? "pos-delivery-option active" : "pos-delivery-option"}
+                                          onClick={() => selectDeliveryOption(option)}
+                                        >
+                                          <span>{option.label}</span>
+                                          <b>{fmtMoney(option.deliveryCost)}</b>
+                                          <small>{option.distanceKm} km</small>
+                                        </button>
+                                      ))}
+                                      {deliveryCalculation.average && (
+                                        <button
+                                          type="button"
+                                          className={deliveryCalculation.selectedOptionKey === "AVERAGE" ? "pos-delivery-option active" : "pos-delivery-option"}
+                                          onClick={() => selectDeliveryOption(deliveryCalculation.average!)}
+                                        >
+                                          <span>{deliveryCalculation.average.label}</span>
+                                          <b>{fmtMoney(deliveryCalculation.average.deliveryCost)}</b>
+                                          <small>{deliveryCalculation.average.distanceKm} km</small>
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -3037,6 +3118,23 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 .pos-delivery-ok.fallback b { color: var(--warn); }
 .pos-delivery-ok small    { color: var(--text3); font-size: 11px; line-height: 1.35; }
 .pos-delivery-ok-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pos-delivery-options {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 8px;
+}
+.pos-delivery-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: 10px; padding: 6px 8px; cursor: pointer;
+  text-align: left; transition: border-color .12s, background-color .12s;
+}
+.pos-delivery-option span { font-size: 10px; font-weight: 800; color: var(--text3); text-transform: uppercase; }
+.pos-delivery-option b { font-size: 13px; color: var(--text1); }
+.pos-delivery-option small { font-size: 10px; color: var(--text3); }
+.pos-delivery-option:hover { border-color: var(--accent); }
+.pos-delivery-option.active {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.pos-delivery-option.active b { color: var(--accent); }
 .pos-route-source {
   flex-shrink: 0; border-radius: 999px; padding: 4px 7px;
   font-size: 10px; font-weight: 950; letter-spacing: .04em; text-transform: uppercase;

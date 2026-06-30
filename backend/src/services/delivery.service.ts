@@ -132,6 +132,7 @@ function selectGoogleRoute(routes?: GoogleRoutesResponse["routes"]) {
       routeIndex: 0,
       alternativesCount: validRoutes.length,
       routeStrategy: "DEFAULT_ROUTE" as const,
+      allRoutes: validRoutes,
     };
   }
 
@@ -150,6 +151,7 @@ function selectGoogleRoute(routes?: GoogleRoutesResponse["routes"]) {
     routeIndex: longestRouteIndex,
     alternativesCount: validRoutes.length,
     routeStrategy: "LONGEST_ALTERNATIVE" as const,
+    allRoutes: validRoutes,
   };
 }
 
@@ -224,12 +226,22 @@ async function getGoogleRoute(params: {
 
     const durationSeconds = parseGoogleDurationSeconds(selectedRoute.route.duration);
 
+    const alternatives = selectedRoute.allRoutes.map((route) => {
+      const meters = Number(route.distanceMeters);
+      const seconds = parseGoogleDurationSeconds(route.duration);
+      return {
+        distanceKm: meters / 1000,
+        durationMinutes: seconds !== null ? round2(seconds / 60) : null,
+      };
+    });
+
     return {
       distanceKm: distanceMeters / 1000,
       durationMinutes: durationSeconds !== null ? round2(durationSeconds / 60) : null,
       routeIndex: selectedRoute.routeIndex,
       alternativesCount: selectedRoute.alternativesCount,
       routeStrategy: selectedRoute.routeStrategy,
+      alternatives,
     };
   } catch (error) {
     console.error("Google Routes API request failed:", error);
@@ -330,6 +342,10 @@ export const deliveryService = {
     });
 
     let distanceKm: number;
+    let shortDistanceKm: number;
+    let longDistanceKm: number;
+    let shortDurationMinutes: number | null = null;
+    let longDurationMinutes: number | null = null;
 
     if (googleRoute) {
       source = "GOOGLE_ROUTES";
@@ -338,6 +354,18 @@ export const deliveryService = {
       routeIndex = googleRoute.routeIndex;
       alternativesCount = googleRoute.alternativesCount;
       routeStrategy = googleRoute.routeStrategy;
+
+      const alternatives = googleRoute.alternatives.length ? googleRoute.alternatives : [
+        { distanceKm: googleRoute.distanceKm, durationMinutes: googleRoute.durationMinutes },
+      ];
+
+      const shortest = alternatives.reduce((a, b) => (b.distanceKm < a.distanceKm ? b : a));
+      const longest = alternatives.reduce((a, b) => (b.distanceKm > a.distanceKm ? b : a));
+
+      shortDistanceKm = shortest.distanceKm;
+      shortDurationMinutes = shortest.durationMinutes;
+      longDistanceKm = longest.distanceKm;
+      longDurationMinutes = longest.durationMinutes;
     } else {
       const multiplier =
         Number.isFinite(DELIVERY_FALLBACK_MULTIPLIER) && DELIVERY_FALLBACK_MULTIPLIER > 0
@@ -345,49 +373,47 @@ export const deliveryService = {
           : 1.4;
 
       distanceKm = straightDistanceKm * multiplier;
+      shortDistanceKm = straightDistanceKm;
+      longDistanceKm = distanceKm;
     }
 
     const roundedDistanceKm = round2(distanceKm);
     const deliveryCost = round2(roundedDistanceKm * pricePerKm);
 
-    // Ofrecemos 3 opciones de costo al vendedor (más un promedio), ya que
-    // la distancia estimada puede variar según tráfico, ruta elegida, etc.
-    const shortDistanceKm = round2(straightDistanceKm * 1.1);
-    const longDistanceKm = round2(roundedDistanceKm * 1.15);
+    const roundedShortKm = round2(shortDistanceKm);
+    const roundedLongKm = round2(longDistanceKm);
+    const averageKm = round2((roundedShortKm + roundedLongKm) / 2);
 
     const options = [
       {
         key: "SHORT" as const,
         label: "Ruta corta",
-        distanceKm: shortDistanceKm,
-        deliveryCost: round2(shortDistanceKm * pricePerKm),
+        distanceKm: roundedShortKm,
+        durationMinutes: shortDurationMinutes,
+        deliveryCost: round2(roundedShortKm * pricePerKm),
       },
       {
         key: "CALCULATED" as const,
         label: "Ruta calculada",
         distanceKm: roundedDistanceKm,
+        durationMinutes,
         deliveryCost,
       },
       {
         key: "LONG" as const,
-        label: "Ruta con margen",
-        distanceKm: longDistanceKm,
-        deliveryCost: round2(longDistanceKm * pricePerKm),
+        label: "Ruta larga",
+        distanceKm: roundedLongKm,
+        durationMinutes: longDurationMinutes,
+        deliveryCost: round2(roundedLongKm * pricePerKm),
       },
     ];
-
-    const averageDistanceKm = round2(
-      options.reduce((sum, option) => sum + option.distanceKm, 0) / options.length,
-    );
-    const averageDeliveryCost = round2(
-      options.reduce((sum, option) => sum + option.deliveryCost, 0) / options.length,
-    );
 
     const average = {
       key: "AVERAGE" as const,
       label: "Promedio",
-      distanceKm: averageDistanceKm,
-      deliveryCost: averageDeliveryCost,
+      distanceKm: averageKm,
+      durationMinutes: null,
+      deliveryCost: round2(averageKm * pricePerKm),
     };
 
     const originAddress = buildLocationAddress(location);
@@ -399,14 +425,15 @@ export const deliveryService = {
       durationMinutes,
       pricePerKm,
       deliveryCost,
-      options,
-      average,
       source,
 
       // Info extra para saber qué hizo el backend.
       routeStrategy,
       routeIndex,
       alternativesCount,
+
+      options,
+      average,
 
       businessLocationId: location.id,
       businessLocationName: location.name,

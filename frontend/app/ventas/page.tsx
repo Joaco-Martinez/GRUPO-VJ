@@ -32,7 +32,7 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const PAGE_SIZE = 10;
 const DELIVERY_SKU = 'ENVIO-FLETE2';
-const DEFAULT_DELIVERY_PRICE_PER_KM = 8000;
+const DEFAULT_DELIVERY_PRICE_PER_KM = 618;
 
 const badge = (s: string) =>
   s === 'COMPLETED' ? 'badge-green' : s === 'PENDING' ? 'badge-yellow' : 'badge-red';

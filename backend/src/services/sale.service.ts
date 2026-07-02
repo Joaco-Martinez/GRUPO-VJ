@@ -21,6 +21,7 @@ import { productStatsService } from "./productStats.service";
 import { generarTicketPedidoPDF } from "../utils/generarReciboPDF";
 import { generarCotizacionPDF } from "../utils/generarCotizacionPDF";
 import { generarComprobanteVentaPDF } from "../utils/generarComprobanteVentaPDF";
+import { cached } from "../utils/simpleCache";
 
 type CreateSaleInput = {
   userId?: string;
@@ -1241,34 +1242,51 @@ function getConfirmedMoneyWhere(baseWhere: any = {}) {
   };
 }
 
+const SALES_STATS_CACHE_TTL_MS = 8_000;
+
 async function buildSalesStats(params: GetSalesParams = {}) {
   const baseWhere = buildSalesWhere(params, false);
   const confirmedWhere = getConfirmedMoneyWhere(baseWhere);
 
-  const [
-    totalCount,
-    pendingCount,
-    completedCount,
-    cancelledCount,
-    confirmedTotal,
-    debt,
-  ] = await Promise.all([
-    prisma.sale.count({ where: baseWhere }),
-    prisma.sale.count({ where: { ...baseWhere, status: SaleStatus.PENDING } }),
-    prisma.sale.count({ where: { ...baseWhere, status: SaleStatus.COMPLETED } }),
-    prisma.sale.count({ where: { ...baseWhere, status: SaleStatus.CANCELLED } }),
-    prisma.sale.aggregate({ where: confirmedWhere, _sum: { total: true } }),
-    prisma.sale.aggregate({ where: confirmedWhere, _sum: { accountDebtAmount: true } }),
-  ]);
+  // Antes esto eran 6 queries (4 counts + 2 aggregates) recalculadas en
+  // cada request de listado, escaneando toda la tabla de ventas cada vez.
+  // Se agrupan los counts por status en una sola query y se cachea el
+  // resultado por unos segundos, ya que no necesita ser al instante.
+  return cached(
+    `sales:stats:${JSON.stringify(baseWhere)}`,
+    SALES_STATS_CACHE_TTL_MS,
+    async () => {
+      const [statusCounts, confirmedTotal, debt] = await Promise.all([
+        prisma.sale.groupBy({
+          by: ["status"],
+          where: baseWhere,
+          _count: { _all: true },
+        }),
+        prisma.sale.aggregate({ where: confirmedWhere, _sum: { total: true } }),
+        prisma.sale.aggregate({
+          where: confirmedWhere,
+          _sum: { accountDebtAmount: true },
+        }),
+      ]);
 
-  return {
-    totalCount,
-    pendingCount,
-    completedCount,
-    cancelledCount,
-    confirmedTotal: round2(Number(confirmedTotal._sum.total ?? 0)),
-    debt: round2(Number(debt._sum.accountDebtAmount ?? 0)),
-  };
+      const countByStatus = new Map(
+        statusCounts.map((row) => [row.status, row._count._all])
+      );
+      const totalCount = statusCounts.reduce(
+        (sum, row) => sum + row._count._all,
+        0
+      );
+
+      return {
+        totalCount,
+        pendingCount: countByStatus.get(SaleStatus.PENDING) ?? 0,
+        completedCount: countByStatus.get(SaleStatus.COMPLETED) ?? 0,
+        cancelledCount: countByStatus.get(SaleStatus.CANCELLED) ?? 0,
+        confirmedTotal: round2(Number(confirmedTotal._sum.total ?? 0)),
+        debt: round2(Number(debt._sum.accountDebtAmount ?? 0)),
+      };
+    }
+  );
 }
 
 export const saleService = {

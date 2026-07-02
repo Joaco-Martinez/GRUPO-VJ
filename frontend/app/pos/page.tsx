@@ -379,7 +379,7 @@ async function fetchPosData() {
   const [p, c, cl, bl] = await Promise.all([
     api.get("/products"),
     api.get("/categories"),
-    api.get("/clients"),
+    api.get("/clients?light=true"),
     api.get("/business-locations"),
   ]);
 

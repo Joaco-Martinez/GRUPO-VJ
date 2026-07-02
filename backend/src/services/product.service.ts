@@ -523,11 +523,6 @@ const productInclude = {
       },
     },
   },
-  usedIn: {
-    include: {
-      composite: true,
-    },
-  },
 };
 
 export const productService = {

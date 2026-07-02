@@ -389,7 +389,13 @@ export const clientService = {
     return { ok: true };
   },
 
-  async getClients() {
+  async getClients(options?: { light?: boolean }) {
+    if (options?.light) {
+      return prisma.client.findMany({
+        orderBy: { createdAt: "desc" },
+      });
+    }
+
     return prisma.client.findMany({
       orderBy: { createdAt: "desc" },
       include: {

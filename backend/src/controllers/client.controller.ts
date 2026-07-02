@@ -47,7 +47,8 @@ export const clientController = {
 
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const clients = await clientService.getClients();
+      const light = req.query.light === "true" || req.query.light === "1";
+      const clients = await clientService.getClients({ light });
 
       res.json({
         ok: true,

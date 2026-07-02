@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 import { saleService } from "./sale.service";
 import { whatsappService } from "./whatsapp.service";
+import { cached } from "../utils/simpleCache";
 
 type CatalogFilters = {
   userId?: string;
@@ -350,6 +351,9 @@ function buildWhatsappMessage(params: {
     .join("\n");
 }
 
+const CATALOG_PRODUCTS_CACHE_TTL_MS = 10_000;
+const CATALOG_CATEGORIES_CACHE_TTL_MS = 60_000;
+
 export const catalogService = {
   async getCustomerContext(userId?: string): Promise<CustomerContext> {
     if (!userId) {
@@ -390,17 +394,22 @@ export const catalogService = {
   },
 
   async getCategories() {
-    const categories = await prisma.productCategory.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      include: {
-        _count: {
-          select: {
-            products: { where: { isActive: true } },
+    const categories = await cached(
+      "catalog:categories",
+      CATALOG_CATEGORIES_CACHE_TTL_MS,
+      () =>
+        prisma.productCategory.findMany({
+          where: { isActive: true },
+          orderBy: { name: "asc" },
+          include: {
+            _count: {
+              select: {
+                products: { where: { isActive: true } },
+              },
+            },
           },
-        },
-      },
-    });
+        })
+    );
 
     return categories.map((category: any) => ({
       id: category.id,
@@ -434,14 +443,19 @@ export const catalogService = {
       ];
     }
 
-    const products: any[] = await prisma.product.findMany({
-      where,
-      orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
-      include: {
-        category: true,
-        components: { include: { component: true } },
-      },
-    });
+    const products: any[] = await cached(
+      `catalog:products:${JSON.stringify(where)}`,
+      CATALOG_PRODUCTS_CACHE_TTL_MS,
+      () =>
+        prisma.product.findMany({
+          where,
+          orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
+          include: {
+            category: true,
+            components: { include: { component: true } },
+          },
+        })
+    );
 
     const mappedProducts = products
       .map((product: any) => mapProduct(product, customer))

@@ -1,4 +1,5 @@
 import prisma from "../prisma";
+import { invalidateCache } from "../utils/simpleCache";
 
 function slugify(value: string): string {
   return value
@@ -110,7 +111,7 @@ export const categoryService = {
     const slug = await generateUniqueSlug(name);
 
     try {
-      return await prisma.productCategory.create({
+      const created = await prisma.productCategory.create({
         data: {
           name,
           slug,
@@ -125,6 +126,8 @@ export const categoryService = {
           },
         },
       });
+      invalidateCache("catalog:categories");
+      return created;
     } catch (err: any) {
       if (err?.code === "P2002") {
         return {
@@ -179,7 +182,7 @@ export const categoryService = {
     }
 
     try {
-      return await prisma.productCategory.update({
+      const updated = await prisma.productCategory.update({
         where: { id },
         data: prismaData,
         include: {
@@ -190,6 +193,8 @@ export const categoryService = {
           },
         },
       });
+      invalidateCache("catalog:categories");
+      return updated;
     } catch (err: any) {
       if (err?.code === "P2002") {
         return {
@@ -220,6 +225,8 @@ export const categoryService = {
         message: "Categoría no encontrada",
       };
     }
+
+    invalidateCache("catalog:categories");
 
     if (existing._count.products > 0) {
       return prisma.productCategory.update({
@@ -254,7 +261,7 @@ export const categoryService = {
       };
     }
 
-    return prisma.productCategory.update({
+    const restored = await prisma.productCategory.update({
       where: { id },
       data: {
         isActive: true,
@@ -267,5 +274,7 @@ export const categoryService = {
         },
       },
     });
+    invalidateCache("catalog:categories");
+    return restored;
   },
 };

@@ -150,6 +150,7 @@ model Product {
   @@index([categoryId])
   @@index([type])
   @@index([isActive])
+  @@index([name])
 }
 
 model ProductComponent {

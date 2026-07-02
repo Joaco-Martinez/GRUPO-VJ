@@ -1113,6 +1113,23 @@ function buildSaleInclude() {
   };
 }
 
+// Include liviano para listados sin paginar (dashboard/finanzas/storefront):
+// evita traer relaciones profundas que esas vistas no usan.
+function buildSaleListInclude() {
+  return {
+    client: true,
+    items: {
+      include: {
+        product: {
+          select: { id: true, name: true },
+        },
+      },
+    },
+  };
+}
+
+const UNPAGINATED_LIST_CAP = 300;
+
 function queueSalePdfGeneration(saleId: string) {
   setImmediate(() => {
     void (async () => {
@@ -1265,14 +1282,17 @@ export const saleService = {
       hasCreditNote: Boolean(sale.invoiceAfip?.creditNotes?.length),
     });
 
-    // Compatibilidad: si no viene page/limit, devuelve todo como antes.
+    // Compatibilidad: si no viene page/limit, devuelve un listado liviano
+    // (usado por dashboard/finanzas/storefront), acotado para no degradar
+    // con el crecimiento de la tabla.
     if (!page || !limit) {
       const sales = await prisma.sale.findMany({
         where,
-        include: buildSaleInclude(),
+        include: buildSaleListInclude(),
         orderBy: {
           createdAt: "desc",
         },
+        take: UNPAGINATED_LIST_CAP,
       });
 
       return sales.map(mapSale);
@@ -1311,7 +1331,9 @@ export const saleService = {
     };
   },
 
-  async getPending() {
+  async getPending(params: { limit?: number } = {}) {
+    const limit = normalizePositiveInt(params.limit, UNPAGINATED_LIST_CAP);
+
     return prisma.sale.findMany({
       where: {
         status: SaleStatus.PENDING,
@@ -1339,6 +1361,7 @@ export const saleService = {
       orderBy: {
         createdAt: "desc",
       },
+      take: limit,
     });
   },
 

@@ -142,7 +142,13 @@ function getAuthUserId(req: Request) {
 export const saleController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const sales = await saleService.getAll();
+      const { page, limit, search, status } = req.query;
+      const sales = await saleService.getAll({
+        page: page !== undefined ? Number(page) : undefined,
+        limit: limit !== undefined ? Number(limit) : undefined,
+        search: typeof search === "string" ? search : undefined,
+        status: typeof status === "string" ? status : undefined,
+      });
       res.json(safeJson(sales));
     } catch (err) {
       next(err);
@@ -151,7 +157,10 @@ export const saleController = {
 
   async getPending(req: Request, res: Response, next: NextFunction) {
     try {
-      const sales = await saleService.getPending();
+      const { limit } = req.query;
+      const sales = await saleService.getPending({
+        limit: limit !== undefined ? Number(limit) : undefined,
+      });
       res.json(safeJson(sales));
     } catch (err) {
       next(err);

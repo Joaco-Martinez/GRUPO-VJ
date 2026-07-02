@@ -384,6 +384,11 @@ export default function TiendaPage() {
   }, []);
 
   useEffect(() => {
+    // Esperamos a saber si hay sesión antes de pedir el catálogo: así
+    // evitamos un primer fetch "anónimo" que se descarta apenas resuelve
+    // el chequeo de auth y dispara un segundo fetch con la categoría real.
+    if (!authChecked) return;
+
     let alive = true;
 
     setLoading(true);
@@ -440,7 +445,7 @@ export default function TiendaPage() {
     return () => {
       alive = false;
     };
-  }, [category, search, currentPage, sortMode, authUser?.client?.category]);
+  }, [category, search, currentPage, sortMode, authChecked, authUser?.client?.category]);
 
   useEffect(() => {
     if (currentPage > totalPages) {

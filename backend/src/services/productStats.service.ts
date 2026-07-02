@@ -3,12 +3,10 @@ import {
   AccountMovementType,
   CategoryFinance,
   FinanceType,
-  PrismaClient,
   SaleStatus,
   SaleUnit,
 } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "../prisma";
 
 type SaleItemStatInput = {
   productId: string;

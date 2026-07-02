@@ -122,10 +122,22 @@ export const purchaseService = {
 
       let totalAmount = 0;
 
-      for (const item of data.items) {
+      const productIds = data.items.map((item) => {
         if (!item.productId) throw new Error("Cada item debe tener productId");
+        return item.productId;
+      });
 
-        const product = await tx.product.findUnique({ where: { id: item.productId } });
+      const products = await tx.product.findMany({
+        where: { id: { in: productIds } },
+      });
+
+      const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+      const movements: any[] = [];
+      const purchaseItems: any[] = [];
+
+      for (const item of data.items) {
+        const product = productById.get(item.productId);
         if (!product) throw new Error(`Producto no encontrado: ${item.productId}`);
         if (!product.isActive) throw new Error(`El producto "${product.name}" está inactivo`);
         if ((product as any).isService) throw new Error(`"${product.name}" es un servicio, no puede ingresar stock`);
@@ -164,18 +176,16 @@ export const purchaseService = {
             } as any,
           });
 
-          await tx.stockMovement.create({
-            data: {
-              productId: product.id,
-              userId,
-              purchaseId: purchase.id,
-              type: MovementType.INGRESS,
-              from: null,
-              to,
-              quantity,
-              reason: "Compra de mercadería",
-              reference: `[purchase:${purchase.id}]`,
-            } as any,
+          movements.push({
+            productId: product.id,
+            userId,
+            purchaseId: purchase.id,
+            type: MovementType.INGRESS,
+            from: null,
+            to,
+            quantity,
+            reason: "Compra de mercadería",
+            reference: `[purchase:${purchase.id}]`,
           });
         }
 
@@ -196,35 +206,39 @@ export const purchaseService = {
             } as any,
           });
 
-          await tx.stockMovement.create({
-            data: {
-              productId: product.id,
-              userId,
-              purchaseId: purchase.id,
-              type: MovementType.INGRESS,
-              from: null,
-              to,
-              quantityKg,
-              reason: "Compra de mercadería",
-              reference: `[purchase:${purchase.id}]`,
-            } as any,
+          movements.push({
+            productId: product.id,
+            userId,
+            purchaseId: purchase.id,
+            type: MovementType.INGRESS,
+            from: null,
+            to,
+            quantityKg,
+            reason: "Compra de mercadería",
+            reference: `[purchase:${purchase.id}]`,
           });
         }
 
         totalAmount += subtotal;
 
-        await tx.purchaseItem.create({
-          data: {
-            purchaseId: purchase.id,
-            productId: product.id,
-            quantity,
-            quantityKg,
-            unitCost,
-            subtotal,
-            productNameSnapshot: product.name,
-            productSkuSnapshot: product.sku,
-          },
+        purchaseItems.push({
+          purchaseId: purchase.id,
+          productId: product.id,
+          quantity,
+          quantityKg,
+          unitCost,
+          subtotal,
+          productNameSnapshot: product.name,
+          productSkuSnapshot: product.sku,
         });
+      }
+
+      if (movements.length > 0) {
+        await tx.stockMovement.createMany({ data: movements });
+      }
+
+      if (purchaseItems.length > 0) {
+        await tx.purchaseItem.createMany({ data: purchaseItems });
       }
 
       const total = roundMoney(totalAmount);
@@ -258,6 +272,12 @@ export const purchaseService = {
                   stockLocalKg: true,
                   stockDepositoKg: true,
                   purchasePrice: true,
+                  isService: true,
+                  isActive: true,
+                  minStock: true,
+                  minStockKg: true,
+                  minStockDeposito: true,
+                  minStockDepositoKg: true,
                 },
               },
             },
@@ -268,7 +288,9 @@ export const purchaseService = {
     });
 
     for (const item of createdPurchase.items) {
-      await alertService.checkProductStock(item.productId).catch(() => undefined);
+      await alertService
+        .checkProductStockFromData(item.product as any)
+        .catch(() => undefined);
     }
 
     return createdPurchase;
@@ -415,7 +437,9 @@ export const purchaseService = {
     });
 
     for (const item of cancelled.items) {
-      await alertService.checkProductStock(item.productId).catch(() => undefined);
+      await alertService
+        .checkProductStockFromData(item.product as any)
+        .catch(() => undefined);
     }
 
     return cancelled;

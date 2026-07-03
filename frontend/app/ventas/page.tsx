@@ -2843,7 +2843,11 @@ export default function VentasPage() {
                       </span>
                       <div>
                         <b>Imprimir ticket</b>
-                        <small>Enviar ticket no fiscal a impresión</small>
+                        <small>
+                          {isSaleInvoiced(s)
+                            ? 'Enviar ticket fiscal (con CAE) a impresión'
+                            : 'Enviar ticket no fiscal a impresión'}
+                        </small>
                       </div>
                     </button>
 

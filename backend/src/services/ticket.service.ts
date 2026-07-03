@@ -209,6 +209,31 @@ function getShippingPayload(sale: any) {
   };
 }
 
+function getTipoComprobanteLabel(tipoComprobante: number) {
+  switch (tipoComprobante) {
+    case 1:
+      return "FACTURA A";
+    case 6:
+      return "FACTURA B";
+    case 11:
+      return "FACTURA C";
+    case 3:
+      return "NOTA DE CRÉDITO A";
+    case 8:
+      return "NOTA DE CRÉDITO B";
+    case 13:
+      return "NOTA DE CRÉDITO C";
+    default:
+      return "COMPROBANTE FISCAL";
+  }
+}
+
+function formatComprobanteNumero(puntoVenta: number, numero: number) {
+  const pv = String(puntoVenta).padStart(4, "0");
+  const nro = String(numero).padStart(8, "0");
+  return `${pv}-${nro}`;
+}
+
 function buildTicketPayload(sale: any) {
   const subtotal = numberOrZero(sale.subtotal);
   const total = numberOrZero(sale.total);
@@ -218,9 +243,38 @@ function buildTicketPayload(sale: any) {
   const sellerEmail = getSellerEmail(sale);
   const shipping = getShippingPayload(sale);
 
+  const invoiceAfip = sale.isInvoiced ? sale.invoiceAfip : null;
+
+  const saleId = invoiceAfip
+    ? formatComprobanteNumero(invoiceAfip.puntoVenta, invoiceAfip.numero)
+    : `TICKET-${String(sale.id).slice(0, 8).toUpperCase()}`;
+
+  const receiptType = invoiceAfip
+    ? getTipoComprobanteLabel(invoiceAfip.tipoComprobante)
+    : "TICKET NO FISCAL";
+
+  const footer = invoiceAfip
+    ? `CAE: ${invoiceAfip.cae ?? "-"} | Vto. CAE: ${
+        invoiceAfip.caeVto ? formatFechaTicket(invoiceAfip.caeVto) : "-"
+      }`
+    : "Ticket no fiscal - Gracias por su compra";
+
   return {
-    saleId: `TICKET-${String(sale.id).slice(0, 8).toUpperCase()}`,
-    receiptType: "TICKET NO FISCAL",
+    saleId,
+    receiptType,
+    fiscal: Boolean(invoiceAfip),
+    ...(invoiceAfip
+      ? {
+          cae: invoiceAfip.cae ?? "",
+          caeVto: invoiceAfip.caeVto
+            ? formatFechaTicket(invoiceAfip.caeVto)
+            : "",
+          puntoVenta: invoiceAfip.puntoVenta,
+          numeroComprobante: invoiceAfip.numero,
+          tipoComprobante: invoiceAfip.tipoComprobante,
+          urlQR: invoiceAfip.urlQR ?? "",
+        }
+      : {}),
     paymentMethod: getMetodoPago(sale),
     createdAt: formatFechaTicket(sale.createdAt ?? new Date()),
 
@@ -296,7 +350,7 @@ function buildTicketPayload(sale: any) {
     discount,
     total,
 
-    footer: "Ticket no fiscal - Gracias por su compra",
+    footer,
   };
 }
 
@@ -343,6 +397,7 @@ export const ticketService = {
           },
         },
         payments: true,
+        invoiceAfip: true,
       },
     });
 

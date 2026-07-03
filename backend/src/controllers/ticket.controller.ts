@@ -14,14 +14,17 @@ export const ticketController = {
       }
 
       const result = await ticketService.printSaleTicket(saleId);
+      const isFiscal = Boolean(result.payload?.fiscal);
 
       return res.status(200).json({
         ok: true,
-        message: "Ticket no fiscal enviado a impresión.",
+        message: isFiscal
+          ? "Ticket fiscal enviado a impresión."
+          : "Ticket no fiscal enviado a impresión.",
         data: result,
       });
     } catch (err: any) {
-      console.error("❌ Error imprimiendo ticket no fiscal:", err);
+      console.error("❌ Error imprimiendo ticket:", err);
 
       return res.status(500).json({
         ok: false,

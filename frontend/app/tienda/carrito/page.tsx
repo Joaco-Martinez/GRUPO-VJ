@@ -150,7 +150,24 @@ function adaptCartItemForCustomer<
 }
 
 function normalizeWhatsappNumber(value: string) {
-  return String(value || "").replace(/\D/g, "");
+  let digits = String(value || "").replace(/\D/g, "");
+
+  if (!digits) return "";
+
+  // 00354... => 354...
+  if (digits.startsWith("00")) digits = digits.slice(2);
+
+  // Ya viene en formato internacional argentino.
+  if (digits.startsWith("549")) return digits;
+  if (digits.startsWith("54")) return `549${digits.slice(2)}`;
+
+  // Teléfonos locales tipo 3512254247 => 5493512254247
+  if (digits.startsWith("0")) digits = digits.slice(1);
+
+  // Si cargaron 15 después del código de área: 35115xxxxxxx => 351xxxxxxx
+  digits = digits.replace(/^(\d{2,4})15/, "$1");
+
+  return `549${digits}`;
 }
 
 function buildFrontendWhatsappUrl(message: string) {

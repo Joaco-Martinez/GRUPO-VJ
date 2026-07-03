@@ -284,12 +284,8 @@ function mapProduct(product: any, customer: CustomerContext) {
   };
 }
 
-function normalizeWhatsappNumber(value?: string | null) {
-  return String(value || "").replace(/\D/g, "");
-}
-
 function buildWhatsappUrl(message: string) {
-  const phone = normalizeWhatsappNumber(
+  const phone = whatsappService.normalizePhone(
     process.env.STORE_WHATSAPP_NUMBER ||
       process.env.WHATSAPP_PHONE ||
       process.env.BUSINESS_WHATSAPP_NUMBER ||

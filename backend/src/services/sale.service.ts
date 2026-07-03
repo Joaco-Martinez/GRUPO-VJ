@@ -21,7 +21,12 @@ import { productStatsService } from "./productStats.service";
 import { generarTicketPedidoPDF } from "../utils/generarReciboPDF";
 import { generarCotizacionPDF } from "../utils/generarCotizacionPDF";
 import { generarComprobanteVentaPDF } from "../utils/generarComprobanteVentaPDF";
-import { cached } from "../utils/simpleCache";
+import { cached, invalidateCache } from "../utils/simpleCache";
+
+// Mismo prefijo que PRODUCTS_LIST_CACHE_PREFIX en product.service.ts. Las
+// ventas modifican stock directo con tx.product.update (no pasan por
+// productService), así que ese cache no se invalidaba solo al vender.
+const PRODUCTS_LIST_CACHE_PREFIX = "products:list:";
 
 type CreateSaleInput = {
   userId?: string;
@@ -854,6 +859,8 @@ function queueStockAlerts(productIds: string[]) {
   const uniqueProductIds = [...new Set(productIds)];
 
   if (uniqueProductIds.length === 0) return;
+
+  invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
 
   void Promise.all(
     uniqueProductIds.map(async (productId) => {

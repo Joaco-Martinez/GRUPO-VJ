@@ -11,6 +11,13 @@ import {
 } from "@prisma/client";
 import alertService from "./alert.service";
 import { parseDateInputAR } from "../utils/dateAR";
+import { invalidateCache } from "../utils/simpleCache";
+
+// Mismo prefijo que PRODUCTS_LIST_CACHE_PREFIX en product.service.ts. Las
+// compras modifican stock directo con tx.product.update (no pasan por
+// productService), así que ese cache no se invalidaba solo al recibir
+// o cancelar una compra.
+const PRODUCTS_LIST_CACHE_PREFIX = "products:list:";
 
 type PurchaseItemInput = {
   productId: string;
@@ -287,6 +294,8 @@ export const purchaseService = {
       });
     });
 
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
     for (const item of createdPurchase.items) {
       await alertService
         .checkProductStockFromData(item.product as any)
@@ -435,6 +444,8 @@ export const purchaseService = {
         include: { finance: true, items: { include: { product: true } }, stockMovements: true },
       });
     });
+
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
 
     for (const item of cancelled.items) {
       await alertService

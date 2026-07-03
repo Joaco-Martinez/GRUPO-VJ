@@ -1,5 +1,9 @@
 import prisma from "../prisma";
 import { BusinessLocationType } from "@prisma/client";
+import { cached, invalidateCache } from "../utils/simpleCache";
+
+const BUSINESS_LOCATIONS_CACHE_TTL_MS = 30_000;
+const BUSINESS_LOCATIONS_CACHE_PREFIX = "business-locations:list:";
 
 function cleanString(value?: string | null) {
   const text = String(value || "").trim();
@@ -130,26 +134,35 @@ export const businessLocationService = {
           isDefault: existingCount === 0 ? true : cleanData.isDefault,
         },
       });
+    }).then((created) => {
+      invalidateCache(BUSINESS_LOCATIONS_CACHE_PREFIX);
+      return created;
     });
   },
 
   async getAll(options?: { onlyActive?: boolean }) {
-    return prisma.businessLocation.findMany({
-      where:
-        options?.onlyActive === true
-          ? {
-              isActive: true,
-            }
-          : undefined,
-      orderBy: [
-        {
-          isDefault: "desc",
-        },
-        {
-          createdAt: "desc",
-        },
-      ],
-    });
+    const cacheKey = `${BUSINESS_LOCATIONS_CACHE_PREFIX}${
+      options?.onlyActive === true ? "active" : "all"
+    }`;
+
+    return cached(cacheKey, BUSINESS_LOCATIONS_CACHE_TTL_MS, () =>
+      prisma.businessLocation.findMany({
+        where:
+          options?.onlyActive === true
+            ? {
+                isActive: true,
+              }
+            : undefined,
+        orderBy: [
+          {
+            isDefault: "desc",
+          },
+          {
+            createdAt: "desc",
+          },
+        ],
+      }),
+    );
   },
 
   async getById(id: string) {
@@ -200,6 +213,9 @@ export const businessLocationService = {
         },
         data: cleanData,
       });
+    }).then((updated) => {
+      invalidateCache(BUSINESS_LOCATIONS_CACHE_PREFIX);
+      return updated;
     });
   },
 
@@ -239,6 +255,9 @@ export const businessLocationService = {
           isDefault: true,
         },
       });
+    }).then((updated) => {
+      invalidateCache(BUSINESS_LOCATIONS_CACHE_PREFIX);
+      return updated;
     });
   },
 
@@ -259,6 +278,8 @@ export const businessLocationService = {
     if (!existing) {
       throw new Error("Sucursal/depósito no encontrado");
     }
+
+    invalidateCache(BUSINESS_LOCATIONS_CACHE_PREFIX);
 
     if (existing._count.sales > 0) {
       return prisma.businessLocation.update({

@@ -1,5 +1,13 @@
 import prisma from "../prisma";
-import { invalidateCache } from "../utils/simpleCache";
+import { cached, invalidateCache } from "../utils/simpleCache";
+
+const CATEGORIES_LIST_CACHE_TTL_MS = 30_000;
+const CATEGORIES_LIST_CACHE_PREFIX = "categories:list:";
+
+function invalidateCategoriesCache() {
+  invalidateCache("catalog:categories");
+  invalidateCache(CATEGORIES_LIST_CACHE_PREFIX);
+}
 
 function slugify(value: string): string {
   return value
@@ -38,19 +46,25 @@ async function generateUniqueSlug(name: string, currentId?: string) {
 
 export const categoryService = {
   async getAll(options?: { includeInactive?: boolean }) {
-    return prisma.productCategory.findMany({
-      where: options?.includeInactive ? {} : { isActive: true },
-      include: {
-        _count: {
-          select: {
-            products: true,
+    const cacheKey = `${CATEGORIES_LIST_CACHE_PREFIX}${
+      options?.includeInactive ? "all" : "active"
+    }`;
+
+    return cached(cacheKey, CATEGORIES_LIST_CACHE_TTL_MS, () =>
+      prisma.productCategory.findMany({
+        where: options?.includeInactive ? {} : { isActive: true },
+        include: {
+          _count: {
+            select: {
+              products: true,
+            },
           },
         },
-      },
-      orderBy: {
-        name: "asc",
-      },
-    });
+        orderBy: {
+          name: "asc",
+        },
+      }),
+    );
   },
 
   async getById(id: string) {
@@ -126,7 +140,7 @@ export const categoryService = {
           },
         },
       });
-      invalidateCache("catalog:categories");
+      invalidateCategoriesCache();
       return created;
     } catch (err: any) {
       if (err?.code === "P2002") {
@@ -193,7 +207,7 @@ export const categoryService = {
           },
         },
       });
-      invalidateCache("catalog:categories");
+      invalidateCategoriesCache();
       return updated;
     } catch (err: any) {
       if (err?.code === "P2002") {
@@ -226,7 +240,7 @@ export const categoryService = {
       };
     }
 
-    invalidateCache("catalog:categories");
+    invalidateCategoriesCache();
 
     if (existing._count.products > 0) {
       return prisma.productCategory.update({
@@ -274,7 +288,7 @@ export const categoryService = {
         },
       },
     });
-    invalidateCache("catalog:categories");
+    invalidateCategoriesCache();
     return restored;
   },
 };

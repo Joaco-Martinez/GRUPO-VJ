@@ -11,6 +11,10 @@ import type { Express } from "express";
 import cloudinary from "../config/cloudinary";
 import fs from "fs";
 import alertService from "./alert.service";
+import { cached, invalidateCache } from "../utils/simpleCache";
+
+const PRODUCTS_LIST_CACHE_TTL_MS = 10_000;
+const PRODUCTS_LIST_CACHE_PREFIX = "products:list:";
 
 function normalizeSku(raw: string): string {
   return raw.trim().replace(/['"]/g, "").replace(/\s+/g, "");
@@ -525,124 +529,134 @@ const productInclude = {
   },
 };
 
+async function fetchProducts(options?: GetProductsOptions) {
+  const page = Number(options?.page);
+  const limit = Number(options?.limit);
+
+  const hasPagination =
+    Number.isFinite(page) && Number.isFinite(limit) && page > 0 && limit > 0;
+
+  const search = options?.search?.trim();
+  const categoryId = options?.categoryId?.trim();
+  const sort = options?.sort ?? "default";
+
+  const where: any = {
+    isActive: true,
+  };
+
+  if (search) {
+    where.OR = [
+      {
+        name: {
+          contains: search,
+          mode: "insensitive",
+        },
+      },
+      {
+        sku: {
+          contains: search,
+          mode: "insensitive",
+        },
+      },
+      {
+        description: {
+          contains: search,
+          mode: "insensitive",
+        },
+      },
+    ];
+  }
+
+  if (categoryId) {
+    where.categoryId = categoryId;
+  }
+
+  let orderBy: any = {
+    createdAt: "desc",
+  };
+
+  if (sort === "name-asc") {
+    orderBy = {
+      name: "asc",
+    };
+  }
+
+  if (sort === "name-desc") {
+    orderBy = {
+      name: "desc",
+    };
+  }
+
+  if (sort === "category-asc") {
+    orderBy = [
+      {
+        category: {
+          name: "asc",
+        },
+      },
+      {
+        name: "asc",
+      },
+    ];
+  }
+
+  if (sort === "category-desc") {
+    orderBy = [
+      {
+        category: {
+          name: "desc",
+        },
+      },
+      {
+        name: "asc",
+      },
+    ];
+  }
+
+  if (!hasPagination) {
+    return prisma.product.findMany({
+      where,
+      include: productInclude,
+      orderBy,
+    });
+  }
+
+  const safePage = Math.max(1, page);
+  const safeLimit = Math.min(Math.max(1, limit), 100);
+  const skip = (safePage - 1) * safeLimit;
+
+  const [data, total] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      include: productInclude,
+      orderBy,
+      skip,
+      take: safeLimit,
+    }),
+
+    prisma.product.count({
+      where,
+    }),
+  ]);
+
+  return {
+    data,
+    total,
+    page: safePage,
+    limit: safeLimit,
+    totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+  };
+}
+
 export const productService = {
   async getAll(options?: GetProductsOptions) {
-    const page = Number(options?.page);
-    const limit = Number(options?.limit);
+    const cacheKey = `${PRODUCTS_LIST_CACHE_PREFIX}${JSON.stringify(
+      options ?? {},
+    )}`;
 
-    const hasPagination =
-      Number.isFinite(page) && Number.isFinite(limit) && page > 0 && limit > 0;
-
-    const search = options?.search?.trim();
-    const categoryId = options?.categoryId?.trim();
-    const sort = options?.sort ?? "default";
-
-    const where: any = {
-      isActive: true,
-    };
-
-    if (search) {
-      where.OR = [
-        {
-          name: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-        {
-          sku: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-        {
-          description: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-      ];
-    }
-
-    if (categoryId) {
-      where.categoryId = categoryId;
-    }
-
-    let orderBy: any = {
-      createdAt: "desc",
-    };
-
-    if (sort === "name-asc") {
-      orderBy = {
-        name: "asc",
-      };
-    }
-
-    if (sort === "name-desc") {
-      orderBy = {
-        name: "desc",
-      };
-    }
-
-    if (sort === "category-asc") {
-      orderBy = [
-        {
-          category: {
-            name: "asc",
-          },
-        },
-        {
-          name: "asc",
-        },
-      ];
-    }
-
-    if (sort === "category-desc") {
-      orderBy = [
-        {
-          category: {
-            name: "desc",
-          },
-        },
-        {
-          name: "asc",
-        },
-      ];
-    }
-
-    if (!hasPagination) {
-      return prisma.product.findMany({
-        where,
-        include: productInclude,
-        orderBy,
-      });
-    }
-
-    const safePage = Math.max(1, page);
-    const safeLimit = Math.min(Math.max(1, limit), 100);
-    const skip = (safePage - 1) * safeLimit;
-
-    const [data, total] = await Promise.all([
-      prisma.product.findMany({
-        where,
-        include: productInclude,
-        orderBy,
-        skip,
-        take: safeLimit,
-      }),
-
-      prisma.product.count({
-        where,
-      }),
-    ]);
-
-    return {
-      data,
-      total,
-      page: safePage,
-      limit: safeLimit,
-      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
-    };
+    return cached(cacheKey, PRODUCTS_LIST_CACHE_TTL_MS, () =>
+      fetchProducts(options),
+    );
   },
 
   async getBySku(rawSku: string) {
@@ -794,6 +808,8 @@ export const productService = {
       });
 
       await alertService.checkProductStock(created.id);
+
+      invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
 
       return created;
     } catch (err: any) {
@@ -1042,6 +1058,8 @@ export const productService = {
 
       await alertService.checkProductStock(updated.id);
 
+      invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
       return updated;
     } catch (err: any) {
       if (err?.code === "P2002" && err?.meta?.target?.includes("sku")) {
@@ -1098,10 +1116,14 @@ export const productService = {
   },
 
   async delete(id: string) {
-    return prisma.product.update({
+    const deleted = await prisma.product.update({
       where: { id },
       data: { isActive: false },
     });
+
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
+    return deleted;
   },
 
   async transferStock(
@@ -1175,6 +1197,8 @@ export const productService = {
     });
 
     await alertService.checkProductStock(updated.id);
+
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
 
     return updated;
   },
@@ -1251,6 +1275,8 @@ export const productService = {
 
     await alertService.checkProductStock(updated.id);
 
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
     return updated;
   },
 
@@ -1310,6 +1336,8 @@ export const productService = {
 
     await alertService.checkProductStock(updated.id);
 
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
     return updated;
   },
 
@@ -1368,6 +1396,8 @@ export const productService = {
     });
 
     await alertService.checkProductStock(updated.id);
+
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
 
     return updated;
   },

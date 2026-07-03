@@ -1129,6 +1129,41 @@ function buildSaleListInclude() {
   };
 }
 
+// Include para el listado paginado de /ventas (admin). A diferencia de
+// buildSaleInclude(), no trae items.boxContents ni items.product.category
+// (no se usan en la tabla/modal de detalle de ventas) y recorta
+// invoiceAfip.creditNotes a los campos que efectivamente se leen
+// (getCreditNoteSaleId solo necesita id/saleId). El resto de los campos
+// (items, payments, invoiceAfip, client, user, businessLocation) se
+// mantiene completo porque el modal de detalle reutiliza este mismo
+// objeto sin volver a pedirlo al backend.
+function buildSalePaginatedListInclude() {
+  return {
+    payments: true,
+    businessLocation: {
+      select: { id: true, name: true },
+    },
+    items: {
+      include: {
+        product: {
+          select: { id: true, name: true, sku: true, saleUnit: true },
+        },
+      },
+    },
+    user: {
+      select: { id: true, name: true, email: true },
+    },
+    client: true,
+    invoiceAfip: {
+      include: {
+        creditNotes: {
+          select: { id: true, saleId: true },
+        },
+      },
+    },
+  };
+}
+
 const UNPAGINATED_LIST_CAP = 300;
 
 function queueSalePdfGeneration(saleId: string) {
@@ -1322,7 +1357,7 @@ export const saleService = {
     const [items, totalItems, stats] = await Promise.all([
       prisma.sale.findMany({
         where,
-        include: buildSaleInclude(),
+        include: buildSalePaginatedListInclude(),
         orderBy: {
           createdAt: "desc",
         },

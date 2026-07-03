@@ -835,13 +835,27 @@ router.get("/pending-afip", async (_req, res) => {
       },
       take: 20,
       include: {
-        client: true,
-        items: {
-          include: {
-            product: true,
+        client: {
+          select: {
+            id: true,
+            nombre: true,
+            apellido: true,
+            dni: true,
+            telefono: true,
+            gmail: true,
+            category: true,
           },
         },
-        payments: true,
+        items: {
+          include: {
+            product: {
+              select: { name: true, sku: true },
+            },
+          },
+        },
+        payments: {
+          select: { id: true, method: true, amount: true },
+        },
       },
     });
 

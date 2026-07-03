@@ -456,6 +456,7 @@ model Sale {
   @@index([businessLocationId])
   @@index([status])
   @@index([createdAt])
+  @@index([invoiceStatus, isInvoiced])
 }
 
 model SaleItem {

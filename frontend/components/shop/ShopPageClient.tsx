@@ -2,7 +2,8 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -15,6 +16,9 @@ import {
   ChevronDown,
   Store,
   ArrowUpDown,
+  ScanBarcode,
+  X,
+  AlertTriangle,
 } from "lucide-react";
 import {
   CatalogCategory,
@@ -69,6 +73,7 @@ type CatalogSortMode =
   | "category-desc";
 
 const SHOP_PRODUCTS_PAGE_SIZE = 28;
+const SHOP_SKU_SCANNER_ELEMENT_ID = "grupo-vj-shop-sku-scanner";
 
 async function getCurrentUser(): Promise<ShopAuthUser | null> {
   try {
@@ -308,6 +313,12 @@ export default function TiendaPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const scannerInstanceRef = useRef<any>(null);
+  const scannerHandledRef = useRef(false);
 
   const cartItems = useCartStore((state) => state.items);
   const cartCount = useCartStore((state) => state.count());
@@ -605,6 +616,123 @@ export default function TiendaPage() {
     }
   };
 
+  const stopSkuScanner = async () => {
+    const scanner = scannerInstanceRef.current;
+
+    scannerHandledRef.current = false;
+
+    if (!scanner) return;
+
+    try {
+      const state = scanner.getState?.();
+
+      if (state === 2) {
+        await scanner.stop();
+      }
+    } catch (e) {
+      console.warn("No se pudo detener el scanner", e);
+    }
+
+    try {
+      await scanner.clear?.();
+    } catch {
+      // html5-qrcode puede tirar error si el contenedor ya fue desmontado.
+    }
+
+    scannerInstanceRef.current = null;
+  };
+
+  const openSkuScanner = () => {
+    setScannerError("");
+    setScannerLoading(true);
+    scannerHandledRef.current = false;
+    setShowScanner(true);
+  };
+
+  const closeSkuScanner = async () => {
+    await stopSkuScanner();
+    setScannerError("");
+    setScannerLoading(false);
+    setShowScanner(false);
+  };
+
+  useEffect(() => {
+    if (!showScanner) return;
+
+    let cancelled = false;
+
+    const startScanner = async () => {
+      setScannerLoading(true);
+      setScannerError("");
+
+      try {
+        if (typeof window === "undefined") return;
+
+        const { Html5Qrcode } = await import("html5-qrcode");
+
+        if (cancelled) return;
+
+        const scanner = new Html5Qrcode(SHOP_SKU_SCANNER_ELEMENT_ID);
+        scannerInstanceRef.current = scanner;
+
+        await scanner.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+              const size = Math.floor(
+                Math.min(viewfinderWidth, viewfinderHeight) * 0.72,
+              );
+
+              return {
+                width: Math.max(220, Math.min(size, 340)),
+                height: Math.max(120, Math.min(Math.floor(size * 0.55), 220)),
+              };
+            },
+            aspectRatio: 1.777,
+          },
+          async (decodedText: string) => {
+            const sku = decodedText.trim();
+
+            if (!sku || scannerHandledRef.current) return;
+
+            scannerHandledRef.current = true;
+
+            handleSearchChange(sku);
+            toast.success(`Buscando SKU: ${sku}`);
+            await closeSkuScanner();
+          },
+          () => {
+            // Ignoramos lecturas fallidas mientras la cámara sigue buscando un código.
+          },
+        );
+
+        if (!cancelled) {
+          setScannerLoading(false);
+        }
+      } catch (e: any) {
+        console.error(e);
+
+        if (!cancelled) {
+          setScannerLoading(false);
+          setScannerError(
+            e?.message?.includes("Permission")
+              ? "No se pudo acceder a la cámara. Revisá los permisos del navegador."
+              : "No se pudo iniciar la cámara. Probá con HTTPS, otro navegador o escribí el SKU manualmente.",
+          );
+        }
+      }
+    };
+
+    const timeoutId = window.setTimeout(startScanner, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      void stopSkuScanner();
+    };
+  }, [showScanner]);
+
   return (
     <>
       <style>{`
@@ -740,7 +868,7 @@ export default function TiendaPage() {
           border: 1px solid var(--line);
           background: #f9fafb;
           border-radius: 999px;
-          padding: 0 18px 0 46px;
+          padding: 0 52px 0 46px;
           outline: none;
           font-size: 14px;
           color: var(--text);
@@ -765,6 +893,30 @@ export default function TiendaPage() {
           color: var(--soft);
           width: 18px;
           height: 18px;
+        }
+
+        .search-scan-btn {
+          position: absolute;
+          right: 6px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 36px;
+          height: 36px;
+          border-radius: 999px;
+          border: 1px solid var(--line);
+          background: var(--white);
+          color: var(--muted);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: 0.16s ease;
+        }
+
+        .search-scan-btn:hover {
+          color: var(--text);
+          border-color: var(--line-strong);
+          background: #f9fafb;
         }
 
         .header-actions {
@@ -1615,6 +1767,140 @@ export default function TiendaPage() {
           color: var(--text);
         }
 
+        .shop-scanner-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 3000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          background: rgba(15, 23, 42, 0.5);
+        }
+
+        .shop-scanner-modal {
+          width: min(480px, calc(100vw - 32px));
+          max-height: calc(100dvh - 36px);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          background: var(--white);
+          border-radius: 22px;
+          border: 1px solid var(--line);
+          box-shadow: var(--shadow);
+        }
+
+        .shop-scanner-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 18px;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .shop-scanner-header b {
+          font-size: 15px;
+          color: var(--text);
+        }
+
+        .shop-scanner-close {
+          border: none;
+          background: transparent;
+          color: var(--muted);
+          cursor: pointer;
+          display: inline-flex;
+        }
+
+        .shop-scanner-body {
+          padding: 16px 18px;
+          display: grid;
+          gap: 12px;
+          overflow-y: auto;
+        }
+
+        .shop-scanner-info {
+          display: flex;
+          gap: 10px;
+          align-items: flex-start;
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          background: #f9fafb;
+          padding: 12px;
+        }
+
+        .shop-scanner-info b {
+          display: block;
+          color: var(--text);
+          font-size: 13px;
+          margin-bottom: 4px;
+        }
+
+        .shop-scanner-info small {
+          display: block;
+          color: var(--muted);
+          font-size: 12px;
+        }
+
+        .shop-scanner-frame {
+          position: relative;
+          min-height: 280px;
+          border-radius: 16px;
+          overflow: hidden;
+          background: #000;
+          border: 1px solid var(--line);
+        }
+
+        .shop-scanner-reader {
+          width: 100%;
+          min-height: 280px;
+        }
+
+        .shop-scanner-reader :global(video) {
+          width: 100% !important;
+          height: 280px !important;
+          object-fit: cover !important;
+        }
+
+        .shop-scanner-loading {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          gap: 10px;
+          background: rgba(0, 0, 0, 0.7);
+          color: #fff;
+        }
+
+        .shop-scanner-loading p {
+          margin: 0;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .shop-scanner-error {
+          display: flex;
+          gap: 8px;
+          align-items: flex-start;
+          border: 1px solid rgba(225, 29, 72, 0.2);
+          border-radius: 13px;
+          background: var(--red-soft);
+          color: var(--red);
+          padding: 10px 12px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .shop-scanner-note {
+          margin: 0;
+          color: var(--muted);
+          font-size: 12px;
+        }
+
+        .shop-scanner-footer {
+          padding: 12px 18px;
+          border-top: 1px solid var(--line);
+        }
+
         @media (max-width: 980px) {
           .topbar-inner {
             height: auto;
@@ -1831,6 +2117,16 @@ export default function TiendaPage() {
                 onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Buscar productos, marcas o categorías..."
               />
+
+              <button
+                type="button"
+                className="search-scan-btn"
+                onClick={openSkuScanner}
+                title="Escanear código de producto"
+                aria-label="Escanear código de producto"
+              >
+                <ScanBarcode size={18} />
+              </button>
             </div>
 
             <div className="header-actions">
@@ -2187,6 +2483,74 @@ export default function TiendaPage() {
             </div>
           </div>
         </footer>
+
+        {showScanner &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div className="shop-scanner-overlay">
+              <div className="shop-scanner-modal">
+                <div className="shop-scanner-header">
+                  <b>Escanear producto</b>
+                  <button
+                    type="button"
+                    className="shop-scanner-close"
+                    onClick={closeSkuScanner}
+                    aria-label="Cerrar"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="shop-scanner-body">
+                  <div className="shop-scanner-info">
+                    <ScanBarcode size={18} />
+                    <div>
+                      <b>Apuntá al código del producto</b>
+                      <small>
+                        Cuando lo detecte, se busca automáticamente por SKU.
+                      </small>
+                    </div>
+                  </div>
+
+                  <div className="shop-scanner-frame">
+                    <div
+                      id={SHOP_SKU_SCANNER_ELEMENT_ID}
+                      className="shop-scanner-reader"
+                    />
+
+                    {scannerLoading && (
+                      <div className="shop-scanner-loading">
+                        <span className="spinner" />
+                        <p>Iniciando cámara...</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {scannerError ? (
+                    <div className="shop-scanner-error">
+                      <AlertTriangle size={16} />
+                      <span>{scannerError}</span>
+                    </div>
+                  ) : (
+                    <p className="shop-scanner-note">
+                      Tip: acercá el código, evitá reflejos y usá buena luz.
+                    </p>
+                  )}
+                </div>
+
+                <div className="shop-scanner-footer">
+                  <button
+                    type="button"
+                    className="shop-pagination-btn"
+                    onClick={closeSkuScanner}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
       </div>
     </>
   );

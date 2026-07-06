@@ -14,6 +14,7 @@ import {
   Plus,
   Minus,
   AlertTriangle,
+  CheckCircle2,
   X,
 } from "lucide-react";
 import { CatalogProduct, formatMoney, shopApi } from "@/lib/shop";
@@ -219,6 +220,12 @@ type ConfirmState = {
   onConfirm: () => Promise<void> | void;
 } | null;
 
+type SuccessState = {
+  whatsappUrl: string;
+  total: number;
+  itemsCount: number;
+} | null;
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
 
@@ -255,6 +262,7 @@ export default function TiendaCarritoPage() {
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [successModal, setSuccessModal] = useState<SuccessState>(null);
 
   const storeSuffix = useMemo(() => {
     return isWholesaleCategory(customerCategory)
@@ -329,15 +337,15 @@ export default function TiendaCarritoPage() {
       return;
     }
 
-    // Abrimos una pestaña en blanco dentro del gesto de click para no perder
-    // el permiso del navegador, pero NO la navegamos a WhatsApp todavía: el
-    // pedido recién es real (con stock validado) después de checkoutWhatsapp.
-    const whatsappWindow = window.open("about:blank", "_blank");
-
     setSaving(true);
     setError("");
 
     const toastId = toast.loading("Validando stock y registrando pedido...");
+    const orderSnapshot = {
+      items: cartItems,
+      total,
+      itemsCount: cartItems.length,
+    };
 
     try {
       const result = await shopApi.checkoutWhatsapp({
@@ -354,27 +362,26 @@ export default function TiendaCarritoPage() {
       const whatsappUrl =
         result.whatsappUrl ||
         buildFrontendWhatsappUrl(
-          buildFrontendCartMessage({ items: cartItems, total, notes, storeSuffix }),
+          buildFrontendCartMessage({
+            items: orderSnapshot.items,
+            total: orderSnapshot.total,
+            notes,
+            storeSuffix,
+          }),
         );
 
-      if (whatsappUrl) {
-        if (whatsappWindow) {
-          whatsappWindow.location.href = whatsappUrl;
-        } else {
-          window.location.href = whatsappUrl;
-        }
-      } else if (whatsappWindow) {
-        whatsappWindow.close();
-      }
-
       clear();
+      setNotes("");
       toast.success("Pedido registrado en el sistema", { id: toastId });
+
+      setSuccessModal({
+        whatsappUrl,
+        total: orderSnapshot.total,
+        itemsCount: orderSnapshot.itemsCount,
+      });
+
       return;
     } catch (err: unknown) {
-      // El pedido NO se creó (sin stock real, precio inválido, etc): cerramos
-      // la pestaña en blanco para no dar la impresión de que el pedido salió.
-      whatsappWindow?.close();
-
       const message = getErrorMessage(err, "No se pudo registrar el pedido");
 
       if (
@@ -414,8 +421,8 @@ export default function TiendaCarritoPage() {
 
     setConfirmModal({
       title: "Finalizar pedido",
-      message: `¿Confirmás el pedido por ${formatMoney(total)}? Primero validamos el stock y lo registramos en el sistema, y después te redirigimos a WhatsApp.`,
-      confirmText: "Finalizar por WhatsApp",
+      message: `¿Confirmás el pedido por ${formatMoney(total)}? Primero validamos el stock y lo registramos en el sistema, y después te mostramos un botón para avisarle a tu vendedor por WhatsApp.`,
+      confirmText: "Confirmar pedido",
       danger: false,
       onConfirm: checkout,
     });
@@ -503,6 +510,15 @@ export default function TiendaCarritoPage() {
   function handleRemove(productId: string) {
     remove(productId);
     toast.success("Producto quitado del carrito");
+  }
+
+  function closeSuccessModal() {
+    setSuccessModal(null);
+  }
+
+  function goShopFromSuccess() {
+    setSuccessModal(null);
+    router.push("/tienda");
   }
 
   return (
@@ -1260,6 +1276,11 @@ export default function TiendaCarritoPage() {
           background: var(--blue-soft);
         }
 
+        .modal-icon-success {
+          background: var(--green-soft);
+          color: var(--green);
+        }
+
         .modal-spinner {
           width: 18px;
           height: 18px;
@@ -1281,6 +1302,37 @@ export default function TiendaCarritoPage() {
           font-size: 13px;
           line-height: 1.55;
           font-weight: 650;
+        }
+
+        .modal-message strong {
+          color: var(--text);
+        }
+
+        .success-summary {
+          margin-top: 14px;
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          background: #f9fafb;
+          padding: 12px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .success-summary small {
+          display: block;
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 800;
+          margin-bottom: 3px;
+        }
+
+        .success-summary strong {
+          color: var(--text);
+          font-size: 18px;
+          font-weight: 950;
+          letter-spacing: -0.03em;
         }
 
         .modal-footer {
@@ -1311,6 +1363,21 @@ export default function TiendaCarritoPage() {
           background: #25D366;
           color: var(--white);
           border: 1px solid #25D366;
+          text-decoration: none;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .modal-primary:hover {
+          background: #1fb85a;
+        }
+
+        .modal-primary-disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+          pointer-events: none;
         }
 
         .modal-secondary:disabled,
@@ -2023,8 +2090,8 @@ export default function TiendaCarritoPage() {
                 <div className="secure-note">
                   <ShieldCheck size={16} />
                   <span>
-                    Al finalizar, se crea la venta en el ERP y se abre WhatsApp
-                    con el detalle del pedido.
+                    Al finalizar, se crea la venta en el ERP y te mostramos un
+                    botón para avisarle a tu vendedor por WhatsApp.
                   </span>
                 </div>
               </aside>
@@ -2064,8 +2131,8 @@ export default function TiendaCarritoPage() {
                   <p className="modal-message">
                     <strong>Estamos validando el stock y creando tu pedido.</strong>
                     <br />
-                    No cierres ni recargues esta página — en unos segundos vas
-                    a ser redirigido automáticamente a WhatsApp.
+                    No cierres ni recargues esta página, en unos segundos vas a
+                    poder avisarle a tu vendedor por WhatsApp.
                   </p>
                 </div>
               ) : (
@@ -2097,6 +2164,78 @@ export default function TiendaCarritoPage() {
                   ? "Creando pedido..."
                   : (confirmModal.confirmText ?? "Confirmar")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {successModal && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeSuccessModal();
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <b>¡Gracias por tu pedido!</b>
+
+              <button className="modal-close" onClick={closeSuccessModal}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-message-row">
+                <span className="modal-icon modal-icon-success">
+                  <CheckCircle2 size={18} />
+                </span>
+
+                <p className="modal-message">
+                  Tu pedido quedó <strong>registrado en el sistema</strong>{" "}
+                  como pendiente. Para coordinar el pago y la entrega,
+                  avisale a tu vendedor por WhatsApp.
+                </p>
+              </div>
+
+              <div className="success-summary">
+                <div>
+                  <small>Total del pedido</small>
+                  <strong>{formatMoney(successModal.total)}</strong>
+                </div>
+
+                <div>
+                  <small>Productos</small>
+                  <strong>{successModal.itemsCount}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="modal-secondary" onClick={goShopFromSuccess}>
+                Seguir comprando
+              </button>
+
+              {successModal.whatsappUrl ? (
+                <a
+                  className="modal-primary"
+                  href={successModal.whatsappUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={closeSuccessModal}
+                >
+                  <MessageCircle size={16} />
+                  Avisar a mi vendedor
+                </a>
+              ) : (
+                <span
+                  className="modal-primary modal-primary-disabled"
+                  title="No hay un número de WhatsApp configurado"
+                >
+                  <MessageCircle size={16} />
+                  WhatsApp no disponible
+                </span>
+              )}
             </div>
           </div>
         </div>

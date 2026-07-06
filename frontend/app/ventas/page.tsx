@@ -252,7 +252,7 @@ type DeliveryCalculation = {
   deliveryCost: number;
   durationMinutes?: number | null;
   straightDistanceKm?: number | null;
-  source?: 'GOOGLE_ROUTES' | 'COORDINATES_FALLBACK';
+  source?: 'ROUTING_SERVICE' | 'COORDINATES_FALLBACK';
   businessLocationId: string;
   businessLocationName: string;
   clientId: string;
@@ -661,7 +661,7 @@ function buildClientAddress(client?: any | null) {
 }
 
 function deliverySourceLabel(source?: DeliveryCalculation['source'] | null) {
-  if (source === 'GOOGLE_ROUTES') return 'Google Routes';
+  if (source === 'ROUTING_SERVICE') return 'Ruta calculada';
   if (source === 'COORDINATES_FALLBACK') return 'Estimado';
   return 'Calculado';
 }
@@ -1822,7 +1822,7 @@ export default function VentasPage() {
       applyDeliveryToEditLines(calculation);
 
       toast.success(
-        calculation.source === 'GOOGLE_ROUTES'
+        calculation.source === 'ROUTING_SERVICE'
           ? `Envío calculado por ruta real: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`
           : `Envío estimado: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`,
         { id: toastId }
@@ -3785,7 +3785,7 @@ export default function VentasPage() {
                   <div className={editDeliveryCalculation.source === 'COORDINATES_FALLBACK' ? 'sales-edit-delivery-ok fallback' : 'sales-edit-delivery-ok'}>
                     <div className="sales-edit-delivery-ok-head">
                       <b>Envío: {fmtMoney(editDeliveryCalculation.deliveryCost)}</b>
-                      <span className={editDeliveryCalculation.source === 'GOOGLE_ROUTES' ? 'sales-route-source google' : 'sales-route-source fallback'}>
+                      <span className={editDeliveryCalculation.source === 'ROUTING_SERVICE' ? 'sales-route-source calculated' : 'sales-route-source fallback'}>
                         {deliverySourceLabel(editDeliveryCalculation.source)}
                       </span>
                     </div>
@@ -4928,7 +4928,7 @@ export default function VentasPage() {
           text-transform: uppercase;
         }
 
-        .sales-route-source.google {
+        .sales-route-source.calculated {
           background: rgba(34, 197, 94, 0.13);
           color: var(--accent);
           border: 1px solid rgba(34, 197, 94, 0.25);

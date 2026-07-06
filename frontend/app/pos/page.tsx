@@ -73,7 +73,7 @@ type DeliveryCalculation = {
   deliveryCost: number;
   durationMinutes?: number | null;
   straightDistanceKm?: number | null;
-  source?: "GOOGLE_ROUTES" | "COORDINATES_FALLBACK";
+  source?: "ROUTING_SERVICE" | "COORDINATES_FALLBACK";
   businessLocationId: string;
   businessLocationName: string;
   clientId: string;
@@ -346,7 +346,7 @@ function clientCategoryLabel(category?: string | null) {
 }
 
 function deliverySourceLabel(source?: DeliveryCalculation["source"] | null) {
-  if (source === "GOOGLE_ROUTES") return "Google Routes";
+  if (source === "ROUTING_SERVICE") return "Ruta calculada";
   if (source === "COORDINATES_FALLBACK") return "Estimado";
   return "Calculado";
 }
@@ -1134,7 +1134,7 @@ export default function POSPage() {
       setDeliveryCalculation(calculation);
       applyDeliveryToCart(calculation);
       toast.success(
-        calculation.source === "GOOGLE_ROUTES"
+        calculation.source === "ROUTING_SERVICE"
           ? `Envío calculado por ruta real: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`
           : `Envío estimado: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`,
         { id: toastId },
@@ -1939,7 +1939,7 @@ export default function POSPage() {
                                 <div className={deliveryCalculation.source === "COORDINATES_FALLBACK" ? "pos-delivery-ok fallback" : "pos-delivery-ok"}>
                                   <div className="pos-delivery-ok-head">
                                     <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
-                                    <span className={deliveryCalculation.source === "GOOGLE_ROUTES" ? "pos-route-source google" : "pos-route-source fallback"}>
+                                    <span className={deliveryCalculation.source === "ROUTING_SERVICE" ? "pos-route-source calculated" : "pos-route-source fallback"}>
                                       {deliverySourceLabel(deliveryCalculation.source)}
                                     </span>
                                   </div>
@@ -2230,7 +2230,7 @@ export default function POSPage() {
                                 <div className={deliveryCalculation.source === "COORDINATES_FALLBACK" ? "pos-delivery-ok fallback" : "pos-delivery-ok"}>
                                   <div className="pos-delivery-ok-head">
                                     <b>Envío: {fmtMoney(deliveryCalculation.deliveryCost)}</b>
-                                    <span className={deliveryCalculation.source === "GOOGLE_ROUTES" ? "pos-route-source google" : "pos-route-source fallback"}>
+                                    <span className={deliveryCalculation.source === "ROUTING_SERVICE" ? "pos-route-source calculated" : "pos-route-source fallback"}>
                                       {deliverySourceLabel(deliveryCalculation.source)}
                                     </span>
                                   </div>
@@ -3139,7 +3139,7 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
   flex-shrink: 0; border-radius: 999px; padding: 4px 7px;
   font-size: 10px; font-weight: 950; letter-spacing: .04em; text-transform: uppercase;
 }
-.pos-route-source.google  { background: rgba(34,197,94,.13); color: var(--success); border: 1px solid rgba(34,197,94,.25); }
+.pos-route-source.calculated  { background: rgba(34,197,94,.13); color: var(--success); border: 1px solid rgba(34,197,94,.25); }
 .pos-route-source.fallback{ background: rgba(245,158,11,.13); color: var(--warn);    border: 1px solid rgba(245,158,11,.25); }
 
 /* Cart footer */

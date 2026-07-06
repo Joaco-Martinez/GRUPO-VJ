@@ -34,8 +34,13 @@ import {
 type Modal = 'product-create' | 'product-edit' | 'category' | 'sku-scanner' | 'stock-notice' | null;
 type ProductFormStep = 'basico' | 'precios' | 'componentes';
 type ProductSortMode = 'default' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
-type SkuScannerMode = 'form' | 'search';
-type ComponentForm = { componentId: string; quantity: string; quantityKg: string };
+type SkuScannerMode = 'form' | 'search' | 'component';
+type ComponentForm = {
+  componentId: string;
+  quantity: string;
+  quantityKg: string;
+  search: string;
+};
 
 type ToastState = {
   type: 'success' | 'error';
@@ -65,6 +70,7 @@ const emptyProductForm = {
   type: 'SIMPLE',
   categoryId: '',
   isService: 'false',
+  isVisibleToPublic: 'true',
   saleUnit: 'UNIT',
   price: '',
   clientPrice: '',
@@ -96,6 +102,7 @@ const SKU_SCANNER_ELEMENT_ID = 'grupo-vj-sku-scanner';
 const MAX_PRODUCT_IMAGE_SIZE_MB = 5;
 const MAX_PRODUCT_IMAGE_SIZE_BYTES = MAX_PRODUCT_IMAGE_SIZE_MB * 1024 * 1024;
 const PRODUCT_IMAGE_ACCEPT = 'image/*,.heic,.heif';
+const COMPONENT_SEARCH_RESULTS_LIMIT = 8;
 
 function num(value: unknown, fallback = 0): number {
   if (value === null || value === undefined || value === '') return fallback;
@@ -330,6 +337,7 @@ export default function ProductosPage() {
   const [form, setForm] = useState<Record<string, string>>(emptyProductForm);
   const [productFormStep, setProductFormStep] = useState<ProductFormStep>('basico');
   const [components, setComponents] = useState<ComponentForm[]>([]);
+  const [openComponentIndex, setOpenComponentIndex] = useState<number | null>(null);
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
   const [profitCalc, setProfitCalc] = useState(getInitialProfitCalculator);
   const [showProfitCalculator, setShowProfitCalculator] = useState(false);
@@ -457,6 +465,20 @@ export default function ProductosPage() {
     [componentProductsSource]
   );
 
+  const getFilteredSimpleProducts = (query: string) => {
+    const q = query.trim().toLowerCase();
+
+    if (!q) return simpleProducts.slice(0, COMPONENT_SEARCH_RESULTS_LIMIT);
+
+    return simpleProducts
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          String(p.sku ?? '').toLowerCase().includes(q)
+      )
+      .slice(0, COMPONENT_SEARCH_RESULTS_LIMIT);
+  };
+
   const paginatedProducts = products;
 
   const pageStart = totalProducts ? (currentPage - 1) * PRODUCTS_PAGE_SIZE + 1 : 0;
@@ -521,6 +543,7 @@ export default function ProductosPage() {
     setEditing(null);
     setForm({ ...emptyProductForm, categoryId: categories[0]?.id ?? '' });
     setComponents([]);
+    setOpenComponentIndex(null);
     resetImage();
     setProductFormStep('basico');
     setModal('product-create');
@@ -536,6 +559,7 @@ export default function ProductosPage() {
       type: product.type,
       categoryId: product.categoryId ?? '',
       isService: String(Boolean((product as any).isService)),
+      isVisibleToPublic: String((product as any).isVisibleToPublic !== false),
       saleUnit: product.saleUnit,
 
       price: String(product.price ?? ''),
@@ -563,8 +587,10 @@ export default function ProductosPage() {
         componentId: c.componentId,
         quantity: String(c.quantity ?? ''),
         quantityKg: String(c.quantityKg ?? ''),
+        search: c.component?.name ?? '',
       }))
     );
+    setOpenComponentIndex(null);
 
     setImageFile(null);
     setImagePreview(product.imageUrl ?? '');
@@ -624,6 +650,7 @@ export default function ProductosPage() {
       ...form,
 
       isService,
+      isVisibleToPublic: form.isVisibleToPublic === 'true',
       type: isService ? 'SIMPLE' : form.type,
       saleUnit: isService ? 'UNIT' : form.saleUnit,
 
@@ -795,8 +822,11 @@ export default function ProductosPage() {
   const addComponent = () =>
     setComponents((prev) => [
       ...prev,
-      { componentId: '', quantity: '1', quantityKg: '' },
+      { componentId: '', quantity: '1', quantityKg: '', search: '' },
     ]);
+
+  const removeComponent = (idx: number) =>
+    setComponents((prev) => prev.filter((_, i) => i !== idx));
 
   const setComponent = (
     idx: number,
@@ -806,6 +836,35 @@ export default function ProductosPage() {
     setComponents((prev) =>
       prev.map((c, i) => (i === idx ? { ...c, [key]: value } : c))
     );
+
+  const selectComponentProduct = (idx: number, product: Product) => {
+    setComponents((prev) =>
+      prev.map((c, i) =>
+        i === idx
+          ? { ...c, componentId: product.id, search: product.name }
+          : c
+      )
+    );
+    setOpenComponentIndex(null);
+  };
+
+  const clearComponentSelection = (idx: number) => {
+    setComponents((prev) =>
+      prev.map((c, i) => (i === idx ? { ...c, componentId: '', search: '' } : c))
+    );
+  };
+
+  const addComponentFromScannedProduct = (product: Product) => {
+    setComponents((prev) => [
+      ...prev,
+      {
+        componentId: product.id,
+        quantity: '1',
+        quantityKg: '',
+        search: product.name,
+      },
+    ]);
+  };
 
   const stopSkuScanner = async () => {
     const scanner = scannerInstanceRef.current;
@@ -852,7 +911,8 @@ export default function ProductosPage() {
 
   const openSkuScanner = (mode: SkuScannerMode = 'form') => {
     skuScannerModeRef.current = mode;
-    productModalBeforeScannerRef.current = mode === 'form' ? modal : null;
+    productModalBeforeScannerRef.current =
+      mode === 'form' || mode === 'component' ? modal : null;
     setScannerError('');
     setScannerLoading(true);
     scannerHandledRef.current = false;
@@ -897,15 +957,36 @@ export default function ProductosPage() {
 
             if (!sku || scannerHandledRef.current) return;
 
-            scannerHandledRef.current = true;
-
             if (skuScannerModeRef.current === 'search') {
+              scannerHandledRef.current = true;
               setSearch(sku);
               setCurrentPage(1);
               showToast('success', `Buscando SKU: ${sku}`);
               await closeSkuScanner();
               return;
             }
+
+            if (skuScannerModeRef.current === 'component') {
+              const matched = simpleProducts.find(
+                (p) =>
+                  String(p.sku ?? '').trim().toLowerCase() === sku.toLowerCase()
+              );
+
+              if (!matched) {
+                setScannerError(
+                  `No se encontró ningún producto simple con SKU "${sku}".`
+                );
+                return;
+              }
+
+              scannerHandledRef.current = true;
+              addComponentFromScannedProduct(matched);
+              showToast('success', `Agregado como componente: ${matched.name}`);
+              await closeSkuScanner();
+              return;
+            }
+
+            scannerHandledRef.current = true;
 
             setForm((prev) => ({
               ...prev,
@@ -1389,6 +1470,11 @@ export default function ProductosPage() {
                       >
                         {(p as any).isService ? 'SERVICIO' : p.type === 'COMPUESTO' ? 'PROMO' : 'SIMPLE'}
                       </span>
+                      {(p as any).isVisibleToPublic === false && (
+                        <span className="badge badge-gray" style={{ marginLeft: 6 }}>
+                          SOLO INTERNO
+                        </span>
+                      )}
                     </td>
 
                     <td style={{ fontSize: 12, color: 'var(--text2)' }}>
@@ -1474,6 +1560,9 @@ export default function ProductosPage() {
                         >
                           {typeLabel}
                         </span>
+                        {(p as any).isVisibleToPublic === false && (
+                          <span className="badge badge-gray">SOLO INTERNO</span>
+                        )}
                       </div>
 
                       <span>{p.sku ?? 'SIN-SKU'} · {categoryName(p)}</span>
@@ -2061,6 +2150,19 @@ export default function ProductosPage() {
                 </div>
 
                 <div className="form-group">
+                  <label className="form-label">Mostrar al público</label>
+                  <select
+                    value={form.isVisibleToPublic}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, isVisibleToPublic: e.target.value }))
+                    }
+                  >
+                    <option value="true">Sí, visible en la tienda</option>
+                    <option value="false">No, solo uso interno</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
                   <label className="form-label">Unidad de venta</label>
                   <select
                     value={form.saleUnit}
@@ -2282,56 +2384,138 @@ export default function ProductosPage() {
 
               {form.isService !== 'true' && form.type === 'COMPUESTO' && (
                 <div className="card products-components-card" style={{ padding: 14, marginTop: 10 }}>
-                  <div
-                    className="products-components-head"
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginBottom: 10,
-                    }}
-                  >
+                  <div className="products-components-head">
                     <b>
                       <Layers size={14} /> Componentes de la promo
                     </b>
 
-                    <button className="btn btn-secondary btn-sm" onClick={addComponent}>
-                      <Plus size={13} /> Agregar
-                    </button>
+                    <div className="products-components-head-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => openSkuScanner('component')}
+                      >
+                        <ScanBarcode size={13} /> Escanear
+                      </button>
+
+                      <button className="btn btn-secondary btn-sm" onClick={addComponent}>
+                        <Plus size={13} /> Agregar
+                      </button>
+                    </div>
                   </div>
 
-                  {components.map((c, idx) => (
-                    <div key={idx} className="form-row products-form-row">
-                      <div className="form-group">
-                        <select
-                          value={c.componentId}
-                          onChange={(e) =>
-                            setComponent(idx, 'componentId', e.target.value)
-                          }
-                        >
-                          <option value="">
-                            {loadingAllProducts
-                              ? 'Cargando productos...'
-                              : 'Seleccionar producto simple...'}
-                          </option>
-                          {simpleProducts.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} · stock {stockLabel(p, getProductStockMayorista(p))}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                  {components.map((c, idx) => {
+                    const selectedProduct = simpleProducts.find(
+                      (p) => p.id === c.componentId
+                    );
+                    const filtered = getFilteredSimpleProducts(c.search);
 
-                      <div className="form-group">
-                        <input
-                          placeholder="Cantidad"
-                          value={c.quantity}
-                          onChange={(e) =>
-                            setComponent(idx, 'quantity', e.target.value)
-                          }
-                        />
+                    return (
+                      <div key={idx} className="products-component-row">
+                        <div className="form-group products-component-search-group">
+                          <div className="products-component-search-wrap">
+                            <input
+                              value={c.search}
+                              onChange={(e) => {
+                                const value = e.target.value;
+
+                                setComponents((prev) =>
+                                  prev.map((comp, i) =>
+                                    i === idx
+                                      ? { ...comp, search: value, componentId: '' }
+                                      : comp
+                                  )
+                                );
+                                setOpenComponentIndex(idx);
+                              }}
+                              onFocus={() => setOpenComponentIndex(idx)}
+                              onBlur={() => {
+                                window.setTimeout(() => {
+                                  setOpenComponentIndex((current) =>
+                                    current === idx ? null : current
+                                  );
+                                }, 150);
+                              }}
+                              placeholder={
+                                loadingAllProducts
+                                  ? 'Cargando productos...'
+                                  : 'Buscar producto simple por nombre o SKU...'
+                              }
+                            />
+
+                            {c.componentId && (
+                              <button
+                                type="button"
+                                className="products-component-clear-btn"
+                                onClick={() => clearComponentSelection(idx)}
+                                title="Quitar selección"
+                                aria-label="Quitar selección"
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
+                          </div>
+
+                          {openComponentIndex === idx && !c.componentId && (
+                            <div className="products-component-dropdown">
+                              {filtered.length === 0 ? (
+                                <div className="products-component-dropdown-empty">
+                                  Sin resultados
+                                </div>
+                              ) : (
+                                filtered.map((p) => (
+                                  <button
+                                    type="button"
+                                    key={p.id}
+                                    className="products-component-dropdown-item"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => selectComponentProduct(idx, p)}
+                                  >
+                                    <span>{p.name}</span>
+                                    <small>
+                                      {p.sku ?? 'SIN-SKU'} · stock{' '}
+                                      {stockLabel(p, getProductStockMayorista(p))}
+                                    </small>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )}
+
+                          {c.componentId && (
+                            <small className="products-component-selected-hint">
+                              {selectedProduct
+                                ? `${selectedProduct.sku ?? 'SIN-SKU'} · stock ${stockLabel(
+                                    selectedProduct,
+                                    getProductStockMayorista(selectedProduct)
+                                  )}`
+                                : 'Producto seleccionado'}
+                            </small>
+                          )}
+                        </div>
+
+                        <div className="form-group products-component-qty-group">
+                          <input
+                            placeholder="Cantidad"
+                            value={c.quantity}
+                            onChange={(e) =>
+                              setComponent(idx, 'quantity', e.target.value)
+                            }
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm products-component-remove-btn"
+                          onClick={() => removeComponent(idx)}
+                          title="Quitar componente"
+                          aria-label="Quitar componente"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               </section>
@@ -2361,7 +2545,13 @@ export default function ProductosPage() {
         <div className="modal-overlay">
           <div className="modal products-scanner-modal">
             <div className="modal-header">
-              <b>{skuScannerModeRef.current === 'search' ? 'Escanear SKU para buscar' : 'Escanear SKU'}</b>
+              <b>
+                {skuScannerModeRef.current === 'search'
+                  ? 'Escanear SKU para buscar'
+                  : skuScannerModeRef.current === 'component'
+                    ? 'Escanear componente'
+                    : 'Escanear SKU'}
+              </b>
 
               <button className="btn btn-ghost btn-sm" onClick={closeSkuScanner}>
                 <X size={16} />
@@ -2375,12 +2565,16 @@ export default function ProductosPage() {
                   <b>
                     {skuScannerModeRef.current === 'search'
                       ? 'Apuntá al código del producto'
-                      : 'Apuntá al código de barras o QR'}
+                      : skuScannerModeRef.current === 'component'
+                        ? 'Apuntá al código del producto simple'
+                        : 'Apuntá al código de barras o QR'}
                   </b>
                   <small>
                     {skuScannerModeRef.current === 'search'
                       ? 'Cuando lo detecte, se busca automáticamente por SKU.'
-                      : 'Cuando lo detecte, se carga automáticamente en el campo SKU.'}
+                      : skuScannerModeRef.current === 'component'
+                        ? 'Cuando lo detecte, se agrega automáticamente como componente de la promo.'
+                        : 'Cuando lo detecte, se carga automáticamente en el campo SKU.'}
                   </small>
                 </div>
               </div>
@@ -3047,6 +3241,135 @@ export default function ProductosPage() {
           font-weight: 800;
           line-height: 1.4;
           padding: 11px 12px;
+        }
+
+        .products-components-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-bottom: 12px;
+        }
+
+        .products-components-head-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .products-component-row {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+
+        .products-component-row:last-child {
+          margin-bottom: 0;
+        }
+
+        .products-component-search-group {
+          position: relative;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .products-component-qty-group {
+          width: 120px;
+          flex-shrink: 0;
+        }
+
+        .products-component-search-wrap {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
+        .products-component-search-wrap input {
+          width: 100%;
+          padding-right: 32px;
+        }
+
+        .products-component-clear-btn {
+          position: absolute;
+          right: 6px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 22px;
+          height: 22px;
+          border: 0;
+          border-radius: 7px;
+          background: var(--surface2);
+          color: var(--text3);
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+        }
+
+        .products-component-clear-btn:hover {
+          color: var(--text);
+        }
+
+        .products-component-dropdown {
+          position: absolute;
+          top: calc(100% + 4px);
+          left: 0;
+          right: 0;
+          z-index: 30;
+          max-height: 220px;
+          overflow-y: auto;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--surface);
+          box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+        }
+
+        .products-component-dropdown-item {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 2px;
+          padding: 8px 10px;
+          border: 0;
+          background: transparent;
+          cursor: pointer;
+          text-align: left;
+        }
+
+        .products-component-dropdown-item:hover {
+          background: var(--surface2);
+        }
+
+        .products-component-dropdown-item span {
+          font-size: 13px;
+          font-weight: 800;
+          color: var(--text);
+        }
+
+        .products-component-dropdown-item small {
+          font-size: 11px;
+          color: var(--text3);
+        }
+
+        .products-component-dropdown-empty {
+          padding: 10px;
+          font-size: 12px;
+          color: var(--text3);
+        }
+
+        .products-component-selected-hint {
+          display: block;
+          margin-top: 4px;
+          color: var(--text3);
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .products-component-remove-btn {
+          flex-shrink: 0;
+          margin-top: 2px;
         }
 
 
@@ -3893,6 +4216,30 @@ export default function ProductosPage() {
             align-items: center;
             gap: 6px;
             font-size: 13px;
+          }
+
+          .products-components-head-actions {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .products-components-head-actions button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .products-component-row {
+            flex-wrap: wrap;
+          }
+
+          .products-component-search-group {
+            flex: 1 1 100%;
+          }
+
+          .products-component-qty-group {
+            width: auto;
+            flex: 1;
           }
 
           .modal-footer {

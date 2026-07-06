@@ -117,6 +117,7 @@ export interface Product {
   imageId?: string | null;
 isService?: boolean;
   isActive?: boolean;
+  isVisibleToPublic?: boolean;
 
   components?: ProductComponent[];
   usedIn?: ProductComponent[];

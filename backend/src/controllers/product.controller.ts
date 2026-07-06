@@ -183,6 +183,7 @@ export const productController = {
 
           type: req.body.type,
           isService: normalizeBoolean(req.body.isService),
+          isVisibleToPublic: normalizeBoolean(req.body.isVisibleToPublic),
 
           categoryId: req.body.categoryId,
           category: req.body.category,
@@ -255,6 +256,10 @@ export const productController = {
 
       if (body.isService !== undefined) {
         cleanBody.isService = normalizeBoolean(body.isService);
+      }
+
+      if (body.isVisibleToPublic !== undefined) {
+        cleanBody.isVisibleToPublic = normalizeBoolean(body.isVisibleToPublic);
       }
 
       if (body.price !== undefined) {

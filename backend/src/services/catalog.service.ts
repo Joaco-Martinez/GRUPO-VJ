@@ -400,7 +400,7 @@ export const catalogService = {
           include: {
             _count: {
               select: {
-                products: { where: { isActive: true } },
+                products: { where: { isActive: true, isVisibleToPublic: true } },
               },
             },
           },
@@ -422,7 +422,7 @@ export const catalogService = {
     const page = cleanPage(filters.page);
     const search = normalizeSearch(filters.search);
 
-    const where: any = { isActive: true };
+    const where: any = { isActive: true, isVisibleToPublic: true };
 
     if (filters.categorySlug) {
       where.category = {

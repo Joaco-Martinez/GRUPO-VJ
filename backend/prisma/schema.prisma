@@ -121,6 +121,7 @@ model Product {
   imageUrl            String?
   imageId             String?
   isActive            Boolean            @default(true)
+  isVisibleToPublic   Boolean            @default(true)
   sku                 String?            @unique
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
@@ -150,6 +151,7 @@ model Product {
   @@index([categoryId])
   @@index([type])
   @@index([isActive])
+  @@index([isVisibleToPublic])
   @@index([name])
 }
 

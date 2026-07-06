@@ -1,22 +1,23 @@
 import prisma from "../prisma";
 
 const DEFAULT_PRICE_PER_KM = Number(process.env.DELIVERY_PRICE_PER_KM ?? 8000);
-const GOOGLE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
-const GOOGLE_ROUTES_TIMEOUT_MS = Number(process.env.GOOGLE_ROUTES_TIMEOUT_MS ?? 8000);
+const ORS_DIRECTIONS_URL = "https://api.heigit.org/v2/directions/driving-car/json";
+const ORS_TIMEOUT_MS = Number(process.env.ORS_TIMEOUT_MS ?? 8000);
 const DELIVERY_FALLBACK_MULTIPLIER = Number(process.env.DELIVERY_FALLBACK_MULTIPLIER ?? 1.4);
 
-// Google no tiene una opción directa de "ruta más larga".
+// OpenRouteService no tiene una opción directa de "ruta más larga".
 // Entonces pedimos rutas alternativas y elegimos la de mayor distancia.
-const GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE =
-  String(process.env.GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE ?? "true").toLowerCase() !==
-  "false";
+const ORS_USE_LONGEST_ALTERNATIVE =
+  String(process.env.ORS_USE_LONGEST_ALTERNATIVE ?? "true").toLowerCase() !== "false";
 
-type DeliveryRouteSource = "GOOGLE_ROUTES" | "COORDINATES_FALLBACK";
+type DeliveryRouteSource = "ROUTING_SERVICE" | "COORDINATES_FALLBACK";
 
-type GoogleRoutesResponse = {
+type OrsRoutesResponse = {
   routes?: {
-    distanceMeters?: number;
-    duration?: string;
+    summary?: {
+      distance?: number;
+      duration?: number;
+    };
   }[];
 };
 
@@ -40,16 +41,6 @@ function isValidCoordinate(lat: unknown, lng: unknown) {
     longitude >= -180 &&
     longitude <= 180
   );
-}
-
-function parseGoogleDurationSeconds(duration?: string | null) {
-  if (!duration) return null;
-
-  const match = duration.match(/^(\d+(?:\.\d+)?)s$/);
-  if (!match) return null;
-
-  const seconds = Number(match[1]);
-  return Number.isFinite(seconds) ? seconds : null;
 }
 
 function haversineKm(params: {
@@ -118,15 +109,15 @@ function buildLocationAddress(location: {
   return [street, city, location.addressNotes].filter(Boolean).join(" - ");
 }
 
-function selectGoogleRoute(routes?: GoogleRoutesResponse["routes"]) {
+function selectOrsRoute(routes?: OrsRoutesResponse["routes"]) {
   const validRoutes = (routes ?? []).filter((route) => {
-    const distanceMeters = Number(route.distanceMeters);
+    const distanceMeters = Number(route.summary?.distance);
     return Number.isFinite(distanceMeters) && distanceMeters > 0;
   });
 
   if (!validRoutes.length) return null;
 
-  if (!GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE) {
+  if (!ORS_USE_LONGEST_ALTERNATIVE) {
     return {
       route: validRoutes[0],
       routeIndex: 0,
@@ -140,7 +131,7 @@ function selectGoogleRoute(routes?: GoogleRoutesResponse["routes"]) {
   let longestRouteIndex = 0;
 
   validRoutes.forEach((route, index) => {
-    if (Number(route.distanceMeters) > Number(longestRoute.distanceMeters)) {
+    if (Number(route.summary?.distance) > Number(longestRoute.summary?.distance)) {
       longestRoute = route;
       longestRouteIndex = index;
     }
@@ -155,96 +146,80 @@ function selectGoogleRoute(routes?: GoogleRoutesResponse["routes"]) {
   };
 }
 
-async function getGoogleRoute(params: {
+async function getOrsRoute(params: {
   originLat: number;
   originLng: number;
   destinationLat: number;
   destinationLng: number;
 }) {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  const apiKey = process.env.OPENROUTESERVICE_API_KEY;
 
   if (!apiKey) return null;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GOOGLE_ROUTES_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), ORS_TIMEOUT_MS);
 
   try {
-    const response = await fetch(GOOGLE_ROUTES_URL, {
+    const response = await fetch(ORS_DIRECTIONS_URL, {
       method: "POST",
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+        Authorization: apiKey,
       },
       body: JSON.stringify({
-        origin: {
-          location: {
-            latLng: {
-              latitude: params.originLat,
-              longitude: params.originLng,
-            },
-          },
-        },
-        destination: {
-          location: {
-            latLng: {
-              latitude: params.destinationLat,
-              longitude: params.destinationLng,
-            },
-          },
-        },
-        travelMode: "DRIVE",
-
-        // Importante: TRAFFIC_UNAWARE evita pedir features Pro de tráfico.
-        // Para cobrar envíos por km real, alcanza con la ruta por calles.
-        routingPreference: "TRAFFIC_UNAWARE",
-
-        // Esto hace que Google devuelva alternativas.
-        // Después nosotros elegimos la de mayor cantidad de metros.
-        computeAlternativeRoutes: GOOGLE_ROUTES_USE_LONGEST_ALTERNATIVE,
-
-        units: "METRIC",
-        languageCode: "es-AR",
+        coordinates: [
+          [params.originLng, params.originLat],
+          [params.destinationLng, params.destinationLat],
+        ],
+        ...(ORS_USE_LONGEST_ALTERNATIVE
+          ? {
+              alternative_routes: {
+                target_count: 3,
+                weight_factor: 1.6,
+                share_factor: 0.6,
+              },
+            }
+          : {}),
       }),
     });
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      console.error("Google Routes API error:", response.status, text);
+      console.error("OpenRouteService API error:", response.status, text);
       return null;
     }
 
-    const json = (await response.json()) as GoogleRoutesResponse;
-    const selectedRoute = selectGoogleRoute(json.routes);
+    const json = (await response.json()) as OrsRoutesResponse;
+    const selectedRoute = selectOrsRoute(json.routes);
 
     if (!selectedRoute) return null;
 
-    const distanceMeters = Number(selectedRoute.route.distanceMeters);
+    const distanceMeters = Number(selectedRoute.route.summary?.distance);
 
     if (!distanceMeters || !Number.isFinite(distanceMeters)) return null;
 
-    const durationSeconds = parseGoogleDurationSeconds(selectedRoute.route.duration);
+    const durationSeconds = Number(selectedRoute.route.summary?.duration);
 
     const alternatives = selectedRoute.allRoutes.map((route) => {
-      const meters = Number(route.distanceMeters);
-      const seconds = parseGoogleDurationSeconds(route.duration);
+      const meters = Number(route.summary?.distance);
+      const seconds = Number(route.summary?.duration);
       return {
         distanceKm: meters / 1000,
-        durationMinutes: seconds !== null ? round2(seconds / 60) : null,
+        durationMinutes: Number.isFinite(seconds) ? round2(seconds / 60) : null,
       };
     });
 
     return {
       distanceKm: distanceMeters / 1000,
-      durationMinutes: durationSeconds !== null ? round2(durationSeconds / 60) : null,
+      durationMinutes: Number.isFinite(durationSeconds) ? round2(durationSeconds / 60) : null,
       routeIndex: selectedRoute.routeIndex,
       alternativesCount: selectedRoute.alternativesCount,
       routeStrategy: selectedRoute.routeStrategy,
       alternatives,
     };
   } catch (error) {
-    console.error("Google Routes API request failed:", error);
+    console.error("OpenRouteService API request failed:", error);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -334,7 +309,7 @@ export const deliveryService = {
     let alternativesCount: number | null = null;
     let routeStrategy: "LONGEST_ALTERNATIVE" | "DEFAULT_ROUTE" | "FALLBACK" = "FALLBACK";
 
-    const googleRoute = await getGoogleRoute({
+    const orsRoute = await getOrsRoute({
       originLat,
       originLng,
       destinationLat,
@@ -347,16 +322,16 @@ export const deliveryService = {
     let shortDurationMinutes: number | null = null;
     let longDurationMinutes: number | null = null;
 
-    if (googleRoute) {
-      source = "GOOGLE_ROUTES";
-      distanceKm = googleRoute.distanceKm;
-      durationMinutes = googleRoute.durationMinutes;
-      routeIndex = googleRoute.routeIndex;
-      alternativesCount = googleRoute.alternativesCount;
-      routeStrategy = googleRoute.routeStrategy;
+    if (orsRoute) {
+      source = "ROUTING_SERVICE";
+      distanceKm = orsRoute.distanceKm;
+      durationMinutes = orsRoute.durationMinutes;
+      routeIndex = orsRoute.routeIndex;
+      alternativesCount = orsRoute.alternativesCount;
+      routeStrategy = orsRoute.routeStrategy;
 
-      const alternatives = googleRoute.alternatives.length ? googleRoute.alternatives : [
-        { distanceKm: googleRoute.distanceKm, durationMinutes: googleRoute.durationMinutes },
+      const alternatives = orsRoute.alternatives.length ? orsRoute.alternatives : [
+        { distanceKm: orsRoute.distanceKm, durationMinutes: orsRoute.durationMinutes },
       ];
 
       const shortest = alternatives.reduce((a, b) => (b.distanceKm < a.distanceKm ? b : a));

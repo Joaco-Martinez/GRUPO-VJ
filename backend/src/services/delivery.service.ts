@@ -1,7 +1,7 @@
 import prisma from "../prisma";
 
 const DEFAULT_PRICE_PER_KM = Number(process.env.DELIVERY_PRICE_PER_KM ?? 8000);
-const ORS_DIRECTIONS_URL = "https://api.heigit.org/v2/directions/driving-car/json";
+const ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/json";
 const ORS_TIMEOUT_MS = Number(process.env.ORS_TIMEOUT_MS ?? 8000);
 const DELIVERY_FALLBACK_MULTIPLIER = Number(process.env.DELIVERY_FALLBACK_MULTIPLIER ?? 1.4);
 

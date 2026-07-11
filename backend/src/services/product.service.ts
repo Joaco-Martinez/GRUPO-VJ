@@ -297,6 +297,7 @@
     clientPrice?: number | string;
     purchasePrice?: number | string;
     isService?: boolean | string;
+    isVisibleToPublic?: boolean | string;
 
     categoryId?: string;
     category?: string;
@@ -750,6 +751,10 @@
           saleUnit,
           sku,
           isService: isTrue(data.isService),
+          isVisibleToPublic:
+            data.isVisibleToPublic === undefined
+              ? true
+              : isTrue(data.isVisibleToPublic),
           minStock: toNumberOrNull(data.minStock),
           minStockDeposito: toNumberOrNull(data.minStockDeposito),
           minStockKg: toNumberOrNull(data.minStockKg),

@@ -1455,7 +1455,7 @@ export default function VentasPage() {
 
 
   const loadProductsForSaleEdit = async () => {
-    if ((products.length && businessLocations.length) || loadingProducts) {
+    if (loadingProducts) {
       return { products, businessLocations };
     }
 
@@ -1463,7 +1463,7 @@ export default function VentasPage() {
 
     try {
       const [productsResponse, locationsResponse] = await Promise.all([
-        products.length ? Promise.resolve({ data: products }) : api.get('/products'),
+        api.get('/products'),
         businessLocations.length
           ? Promise.resolve({ data: businessLocations })
           : api.get('/business-locations'),

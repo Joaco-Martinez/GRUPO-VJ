@@ -40,6 +40,15 @@ type UpdatePurchaseProviderInput = {
   providerName?: string | null;
 };
 
+type UpdatePurchaseInput = {
+  providerName?: string | null;
+  invoiceNumber?: string | null;
+  description?: string | null;
+  paymentMethod?: PaymentMethod;
+  date?: string | Date;
+  items: PurchaseItemInput[];
+};
+
 function toNumber(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? n : NaN;
@@ -341,6 +350,316 @@ export const purchaseService = {
 
       return updated;
     });
+
+    return updatedPurchase;
+  },
+
+  async update(id: string, data: UpdatePurchaseInput, userId?: string) {
+    if (!userId) throw new Error("Falta userId para editar la compra");
+    if (!Array.isArray(data.items) || data.items.length === 0) {
+      throw new Error("La compra debe tener al menos un producto");
+    }
+
+    const paymentMethod = validatePaymentMethod(data.paymentMethod);
+    const date = parseDate(data.date);
+
+    const updatedPurchase = await prisma.$transaction(async (tx) => {
+      const purchase = await tx.purchase.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!purchase) throw new Error("Compra no encontrada");
+      if (purchase.status === PurchaseStatus.CANCELLED) {
+        throw new Error("No se puede editar una compra cancelada");
+      }
+
+      const to = purchase.to;
+
+      const oldQtyByProduct = new Map<string, { quantity: number; quantityKg: number }>();
+      for (const item of purchase.items) {
+        oldQtyByProduct.set(item.productId, {
+          quantity: item.quantity ?? 0,
+          quantityKg: item.quantityKg ?? 0,
+        });
+      }
+
+      const newProductIds = data.items.map((item) => {
+        if (!item.productId) throw new Error("Cada item debe tener productId");
+        return item.productId;
+      });
+
+      const allProductIds = Array.from(
+        new Set<string>([...newProductIds, ...oldQtyByProduct.keys()])
+      );
+
+      const products = await tx.product.findMany({ where: { id: { in: allProductIds } } });
+      const productById = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+      const movements: any[] = [];
+      const purchaseItems: any[] = [];
+      let totalAmount = 0;
+
+      for (const item of data.items) {
+        const product = productById.get(item.productId);
+        if (!product) throw new Error(`Producto no encontrado: ${item.productId}`);
+        if (!product.isActive) throw new Error(`El producto "${product.name}" está inactivo`);
+        if ((product as any).isService) throw new Error(`"${product.name}" es un servicio, no puede ingresar stock`);
+        if (product.type === ProductType.COMPUESTO) {
+          throw new Error(`No se puede comprar stock directo de "${product.name}" porque es un producto compuesto`);
+        }
+
+        const rawUnitCost =
+          item.unitCost !== undefined && item.unitCost !== null && item.unitCost !== ""
+            ? item.unitCost
+            : (product as any).purchasePrice ?? 0;
+
+        const unitCost = toNumber(rawUnitCost);
+        if (!Number.isFinite(unitCost) || unitCost < 0) {
+          throw new Error(`El costo unitario de "${product.name}" debe ser válido`);
+        }
+
+        const old = oldQtyByProduct.get(item.productId) ?? { quantity: 0, quantityKg: 0 };
+
+        let quantity: number | null = null;
+        let quantityKg: number | null = null;
+        let subtotal = 0;
+
+        if (product.saleUnit === SaleUnit.UNIT) {
+          const qty = toNumber(item.quantity);
+          if (!Number.isFinite(qty) || qty <= 0) throw new Error(`Cantidad inválida para "${product.name}"`);
+
+          quantity = Math.trunc(qty);
+          subtotal = roundMoney(quantity * unitCost);
+
+          const delta = quantity - old.quantity;
+
+          if (delta !== 0) {
+            if (delta < 0) {
+              const currentStock = to === Location.LOCAL ? product.stockLocal : product.stockDeposito;
+              if (currentStock < Math.abs(delta)) {
+                throw new Error(`No hay stock suficiente de "${product.name}" para reducir la cantidad de esta compra`);
+              }
+            }
+
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                ...(to === Location.LOCAL
+                  ? { stockLocal: { increment: delta } }
+                  : { stockDeposito: { increment: delta } }),
+              } as any,
+            });
+
+            movements.push({
+              productId: product.id,
+              userId,
+              purchaseId: purchase.id,
+              type: delta > 0 ? MovementType.INGRESS : MovementType.ADJUSTMENT,
+              from: delta > 0 ? null : to,
+              to: delta > 0 ? to : null,
+              quantity: Math.abs(delta),
+              reason: "Modificación de compra",
+              reference: `[purchase-edit:${purchase.id}]`,
+            });
+          }
+        }
+
+        if (product.saleUnit === SaleUnit.KG) {
+          const qtyKg = toNumber(item.quantityKg);
+          if (!Number.isFinite(qtyKg) || qtyKg <= 0) throw new Error(`Cantidad KG inválida para "${product.name}"`);
+
+          quantityKg = qtyKg;
+          subtotal = roundMoney(quantityKg * unitCost);
+
+          const deltaKg = roundMoney(quantityKg - old.quantityKg);
+
+          if (deltaKg !== 0) {
+            if (deltaKg < 0) {
+              const currentStockKg = to === Location.LOCAL ? product.stockLocalKg : product.stockDepositoKg;
+              if (currentStockKg < Math.abs(deltaKg)) {
+                throw new Error(`No hay stock KG suficiente de "${product.name}" para reducir la cantidad de esta compra`);
+              }
+            }
+
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                ...(to === Location.LOCAL
+                  ? { stockLocalKg: { increment: deltaKg } }
+                  : { stockDepositoKg: { increment: deltaKg } }),
+              } as any,
+            });
+
+            movements.push({
+              productId: product.id,
+              userId,
+              purchaseId: purchase.id,
+              type: deltaKg > 0 ? MovementType.INGRESS : MovementType.ADJUSTMENT,
+              from: deltaKg > 0 ? null : to,
+              to: deltaKg > 0 ? to : null,
+              quantityKg: Math.abs(deltaKg),
+              reason: "Modificación de compra",
+              reference: `[purchase-edit:${purchase.id}]`,
+            });
+          }
+        }
+
+        totalAmount += subtotal;
+
+        purchaseItems.push({
+          purchaseId: purchase.id,
+          productId: product.id,
+          quantity,
+          quantityKg,
+          unitCost,
+          subtotal,
+          productNameSnapshot: product.name,
+          productSkuSnapshot: product.sku,
+        });
+      }
+
+      // Productos que estaban en la compra original y fueron quitados: revertir su stock por completo.
+      for (const [productId, old] of oldQtyByProduct.entries()) {
+        if (newProductIds.includes(productId)) continue;
+
+        const product = productById.get(productId);
+        if (!product) continue;
+
+        if (old.quantity > 0) {
+          const currentStock = to === Location.LOCAL ? product.stockLocal : product.stockDeposito;
+          if (currentStock < old.quantity) {
+            throw new Error(`No hay stock suficiente de "${product.name}" para quitarlo de esta compra`);
+          }
+
+          await tx.product.update({
+            where: { id: productId },
+            data:
+              to === Location.LOCAL
+                ? { stockLocal: { decrement: old.quantity } }
+                : { stockDeposito: { decrement: old.quantity } },
+          });
+
+          movements.push({
+            productId,
+            userId,
+            purchaseId: purchase.id,
+            type: MovementType.ADJUSTMENT,
+            from: to,
+            to: null,
+            quantity: old.quantity,
+            reason: "Modificación de compra",
+            reference: `[purchase-edit:${purchase.id}]`,
+          });
+        }
+
+        if (old.quantityKg > 0) {
+          const currentStockKg = to === Location.LOCAL ? product.stockLocalKg : product.stockDepositoKg;
+          if (currentStockKg < old.quantityKg) {
+            throw new Error(`No hay stock KG suficiente de "${product.name}" para quitarlo de esta compra`);
+          }
+
+          await tx.product.update({
+            where: { id: productId },
+            data:
+              to === Location.LOCAL
+                ? { stockLocalKg: { decrement: old.quantityKg } }
+                : { stockDepositoKg: { decrement: old.quantityKg } },
+          });
+
+          movements.push({
+            productId,
+            userId,
+            purchaseId: purchase.id,
+            type: MovementType.ADJUSTMENT,
+            from: to,
+            to: null,
+            quantityKg: old.quantityKg,
+            reason: "Modificación de compra",
+            reference: `[purchase-edit:${purchase.id}]`,
+          });
+        }
+      }
+
+      await tx.purchaseItem.deleteMany({ where: { purchaseId: purchase.id } });
+
+      if (purchaseItems.length > 0) {
+        await tx.purchaseItem.createMany({ data: purchaseItems });
+      }
+
+      if (movements.length > 0) {
+        await tx.stockMovement.createMany({ data: movements });
+      }
+
+      const total = roundMoney(totalAmount);
+
+      const providerName =
+        data.providerName !== undefined ? data.providerName?.trim() || null : purchase.providerName;
+      const invoiceNumber =
+        data.invoiceNumber !== undefined ? data.invoiceNumber?.trim() || null : purchase.invoiceNumber;
+      const description =
+        data.description !== undefined ? data.description?.trim() || null : purchase.description;
+
+      if (purchase.financeId) {
+        await tx.finance.update({
+          where: { id: purchase.financeId },
+          data: {
+            amount: total,
+            paymentMethod: paymentMethod ?? purchase.paymentMethod,
+            date,
+            description: `[purchase:${purchase.id}] Compra de mercadería${providerName ? ` - ${providerName}` : ""}`,
+          },
+        });
+      }
+
+      return tx.purchase.update({
+        where: { id: purchase.id },
+        data: {
+          providerName,
+          invoiceNumber,
+          description,
+          paymentMethod: paymentMethod ?? purchase.paymentMethod,
+          date,
+          totalAmount: total,
+        },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          finance: true,
+          items: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  sku: true,
+                  saleUnit: true,
+                  stockLocal: true,
+                  stockDeposito: true,
+                  stockLocalKg: true,
+                  stockDepositoKg: true,
+                  purchasePrice: true,
+                  isService: true,
+                  isActive: true,
+                  minStock: true,
+                  minStockKg: true,
+                  minStockDeposito: true,
+                  minStockDepositoKg: true,
+                },
+              },
+            },
+          },
+          stockMovements: true,
+        },
+      });
+    });
+
+    invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
+    for (const item of updatedPurchase.items) {
+      await alertService
+        .checkProductStockFromData(item.product as any)
+        .catch(() => undefined);
+    }
 
     return updatedPurchase;
   },

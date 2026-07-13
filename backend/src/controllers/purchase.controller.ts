@@ -30,6 +30,17 @@ export const purchaseController = {
     }
   },
 
+  async update(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamAsString(req.params.id, "id");
+      const userId = (req as any).user?.id;
+      const purchase = await purchaseService.update(id, req.body, userId);
+      res.json(purchase);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async updateProvider(req: Request, res: Response, next: NextFunction) {
     try {
       const id = getParamAsString(req.params.id, "id");

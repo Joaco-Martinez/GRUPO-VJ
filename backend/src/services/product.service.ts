@@ -949,6 +949,12 @@
         "isService",
         data.isService !== undefined ? isTrue(data.isService) : undefined,
       );
+      setIfDefined(
+        "isVisibleToPublic",
+        data.isVisibleToPublic !== undefined
+          ? isTrue(data.isVisibleToPublic)
+          : undefined,
+      );
       setIfDefined("saleUnit", data.saleUnit);
 
       setIfDefined(

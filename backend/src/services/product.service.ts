@@ -701,6 +701,32 @@
       let imageId: string | undefined;
 
       try {
+        const existingBySku = await prisma.product.findUnique({
+          where: { sku },
+          select: { id: true, sku: true, isActive: true },
+        });
+
+        if (existingBySku) {
+          if (existingBySku.isActive) {
+            safeDeleteLocalFile(data.file?.path);
+
+            return {
+              statusCode: 409,
+              message: "Ya existe un producto con ese SKU",
+            };
+          }
+
+          // El producto inactivo (eliminado) sigue ocupando el SKU por la
+          // constraint unique de la DB. Se lo renombra para liberar el SKU
+          // original y poder crear el producto nuevo.
+          await prisma.product.update({
+            where: { id: existingBySku.id },
+            data: {
+              sku: `${existingBySku.sku}-DEL-${existingBySku.id.slice(0, 8)}`,
+            },
+          });
+        }
+
         await validateCategory(data.categoryId);
 
         validatePricesBySaleUnit({

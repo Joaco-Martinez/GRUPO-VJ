@@ -17,5 +17,7 @@ router.get("/", authMiddleware, clientController.getAll);
 router.get("/:id", authMiddleware, clientController.getOne);
 router.put("/:id", authMiddleware, requireRole("ADMIN"), clientController.update);
 router.delete("/:id", authMiddleware, requireRole("ADMIN"), clientController.remove);
+router.patch("/:id/deactivate", authMiddleware, requireRole("ADMIN"), clientController.deactivate);
+router.patch("/:id/activate", authMiddleware, requireRole("ADMIN"), clientController.activate);
 
 export default router;

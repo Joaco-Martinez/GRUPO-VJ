@@ -37,10 +37,11 @@ model Client {
   id                String            @id @default(uuid())
   nombre            String
   apellido          String
-  dni               String            @unique
+  dni               String?           @unique
   telefono          String?
   gmail             String?           @unique
   category          CategoryClient    @default(Price)
+  isActive          Boolean           @default(true)
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   userId            String?           @unique
@@ -66,6 +67,7 @@ model Client {
   @@index([gmail])
   @@index([category])
   @@index([userId])
+  @@index([isActive])
 }
 
 model BusinessLocation {

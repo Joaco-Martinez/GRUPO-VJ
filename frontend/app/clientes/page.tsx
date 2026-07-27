@@ -28,6 +28,7 @@ import {
   KeyRound,
   Mail,
   Plus,
+  RotateCcw,
   Search,
   Trash2,
   Users,
@@ -174,6 +175,10 @@ function hasStoreAccess(c?: ClientWithAddress | null) {
   return Boolean(c && ((c as any).userId || c.user));
 }
 
+function isClientActive(c?: ClientWithAddress | null) {
+  return c?.isActive !== false;
+}
+
 function mustChangePassword(c?: ClientWithAddress | null) {
   return Boolean(c?.user?.mustChangePassword);
 }
@@ -197,9 +202,15 @@ export default function ClientesPage() {
   const [saving, setSaving] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [resetToDefaultPassword, setResetToDefaultPassword] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [deactivateOffer, setDeactivateOffer] = useState<{
+    client: ClientWithAddress;
+    reason: string;
+  } | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
   const [mobileClientSheet, setMobileClientSheet] =
     useState<ClientWithAddress | null>(null);
   const [mobileCurrentPage, setMobileCurrentPage] = useState(1);
@@ -211,7 +222,7 @@ export default function ClientesPage() {
     setLoading(true);
 
     try {
-      const r = await api.get("/clients");
+      const r = await api.get("/clients?includeInactive=true");
       setClients(normalizeArray<ClientWithAddress>(r.data));
 
       if (showSuccess) {
@@ -229,7 +240,7 @@ export default function ClientesPage() {
     let alive = true;
 
     api
-      .get("/clients")
+      .get("/clients?includeInactive=true")
       .then((r) => {
         if (!alive) return;
         setClients(normalizeArray<ClientWithAddress>(r.data));
@@ -249,31 +260,36 @@ export default function ClientesPage() {
     };
   }, []);
 
-  const totalDebt = clients.reduce(
+  const activeClients = clients.filter((c) => isClientActive(c));
+  const inactiveCount = clients.length - activeClients.length;
+
+  const totalDebt = activeClients.reduce(
     (a, c) => a + Math.max(0, num(c.currentBalance)),
     0,
   );
-  const debtors = clients.filter((c) => num(c.currentBalance) > 0).length;
-  const clientsWithAddress = clients.filter((c) => clientAddress(c)).length;
+  const debtors = activeClients.filter((c) => num(c.currentBalance) > 0).length;
+  const clientsWithAddress = activeClients.filter((c) => clientAddress(c)).length;
 
   const filtered = useMemo(
     () =>
-      clients.filter((c) => {
-        const q = search.trim().toLowerCase();
-        const address = clientAddress(c).toLowerCase();
+      clients
+        .filter((c) => showInactive || isClientActive(c))
+        .filter((c) => {
+          const q = search.trim().toLowerCase();
+          const address = clientAddress(c).toLowerCase();
 
-        return (
-          !q ||
-          clientName(c).toLowerCase().includes(q) ||
-          String(c.dni ?? "").includes(q) ||
-          String(c.telefono ?? "").includes(q) ||
-          String(c.gmail ?? "")
-            .toLowerCase()
-            .includes(q) ||
-          address.includes(q)
-        );
-      }),
-    [clients, search],
+          return (
+            !q ||
+            clientName(c).toLowerCase().includes(q) ||
+            String(c.dni ?? "").includes(q) ||
+            String(c.telefono ?? "").includes(q) ||
+            String(c.gmail ?? "")
+              .toLowerCase()
+              .includes(q) ||
+            address.includes(q)
+          );
+        }),
+    [clients, search, showInactive],
   );
 
   const mobileTotalPages = Math.max(
@@ -552,10 +568,24 @@ export default function ClientesPage() {
     }
   };
 
+  const deactivateClient = async (c: ClientWithAddress) => {
+    const toastId = toast.loading("Desactivando cliente...");
+
+    try {
+      await api.patch(`/clients/${c.id}/deactivate`);
+      await load();
+      toast.success("Cliente desactivado correctamente", { id: toastId });
+    } catch (e: unknown) {
+      toast.error(getErrorMessage(e, "No se pudo desactivar"), {
+        id: toastId,
+      });
+    }
+  };
+
   const deleteClient = async (c: ClientWithAddress) => {
     setConfirmModal({
       title: "Eliminar cliente",
-      message: `¿Eliminar ${clientName(c)}? Esta acción no se puede deshacer.`,
+      message: `¿Eliminar ${clientName(c)}? Esta acción no se puede deshacer. Si el cliente tiene ventas o movimientos de cuenta corriente no se va a poder eliminar y se te va a ofrecer desactivarlo en su lugar.`,
       confirmText: "Eliminar",
       danger: true,
       onConfirm: async () => {
@@ -566,12 +596,48 @@ export default function ClientesPage() {
           await load();
           toast.success("Cliente eliminado correctamente", { id: toastId });
         } catch (e: unknown) {
-          toast.error(getErrorMessage(e, "No se pudo eliminar"), {
+          toast.dismiss(toastId);
+          setDeactivateOffer({
+            client: c,
+            reason: getErrorMessage(e, "No se pudo eliminar."),
+          });
+        }
+      },
+    });
+  };
+
+  const reactivateClient = async (c: ClientWithAddress) => {
+    setConfirmModal({
+      title: "Reactivar cliente",
+      message: `¿Reactivar a ${clientName(c)}? Vas a tener que volver a cargar su DNI/CUIT, email y demás datos.`,
+      confirmText: "Reactivar",
+      onConfirm: async () => {
+        const toastId = toast.loading("Reactivando cliente...");
+
+        try {
+          await api.patch(`/clients/${c.id}/activate`);
+          await load();
+          toast.success("Cliente reactivado correctamente", { id: toastId });
+        } catch (e: unknown) {
+          toast.error(getErrorMessage(e, "No se pudo reactivar"), {
             id: toastId,
           });
         }
       },
     });
+  };
+
+  const confirmDeactivateOffer = async () => {
+    if (!deactivateOffer) return;
+
+    setDeactivating(true);
+
+    try {
+      await deactivateClient(deactivateOffer.client);
+      setDeactivateOffer(null);
+    } finally {
+      setDeactivating(false);
+    }
   };
 
   const confirmAction = async () => {
@@ -615,7 +681,7 @@ export default function ClientesPage() {
         }}
       >
         <div className="stat-card">
-          <div className="stat-value">{clients.length}</div>
+          <div className="stat-value">{activeClients.length}</div>
           <div className="stat-label">Clientes</div>
         </div>
 
@@ -650,7 +716,7 @@ export default function ClientesPage() {
           }}
         >
           <div className="stat-value">
-            {clients.filter((c) => c.category === "Mayorista").length}
+            {activeClients.filter((c) => c.category === "Mayorista").length}
           </div>
           <div className="stat-label">Mayoristas</div>
         </div>
@@ -658,8 +724,16 @@ export default function ClientesPage() {
 
       <div
         style={{
-          position: "relative",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 12,
           marginBottom: 18,
+        }}
+      >
+      <div
+        style={{
+          position: "relative",
           maxWidth: isMobile ? "100%" : 520,
           width: "100%",
         }}
@@ -685,6 +759,28 @@ export default function ClientesPage() {
           }
           style={{ paddingLeft: 34, width: "100%" }}
         />
+      </div>
+
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          fontSize: 12,
+          fontWeight: 700,
+          color: "var(--text2)",
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={showInactive}
+          onChange={(e) => setShowInactive(e.target.checked)}
+        />
+        Mostrar desactivados
+        {inactiveCount > 0 ? ` (${inactiveCount})` : ""}
+      </label>
       </div>
 
       <div className="card">
@@ -764,20 +860,30 @@ export default function ClientesPage() {
                         </div>
                       </div>
 
-                      <span
-                        className={`badge ${
-                          c.category === "Mayorista"
-                            ? "badge-blue"
-                            : "badge-green"
-                        }`}
-                        style={{
-                          flexShrink: 0,
-                          fontSize: 9,
-                          padding: "3px 6px",
-                        }}
-                      >
-                        {clientCategoryLabel(c.category)}
-                      </span>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                        {!isClientActive(c) && (
+                          <span
+                            className="badge badge-red"
+                            style={{ flexShrink: 0, fontSize: 9, padding: "3px 6px" }}
+                          >
+                            Desactivado
+                          </span>
+                        )}
+                        <span
+                          className={`badge ${
+                            c.category === "Mayorista"
+                              ? "badge-blue"
+                              : "badge-green"
+                          }`}
+                          style={{
+                            flexShrink: 0,
+                            fontSize: 9,
+                            padding: "3px 6px",
+                          }}
+                        >
+                          {clientCategoryLabel(c.category)}
+                        </span>
+                      </div>
                     </div>
 
                     <div
@@ -992,17 +1098,31 @@ export default function ClientesPage() {
                         Ver más
                       </button>
 
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => openEdit(c)}
-                        style={{
-                          width: "100%",
-                          justifyContent: "center",
-                          minHeight: 31,
-                        }}
-                      >
-                        <Edit2 size={12} /> Editar
-                      </button>
+                      {isClientActive(c) ? (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => openEdit(c)}
+                          style={{
+                            width: "100%",
+                            justifyContent: "center",
+                            minHeight: 31,
+                          }}
+                        >
+                          <Edit2 size={12} /> Editar
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => reactivateClient(c)}
+                          style={{
+                            width: "100%",
+                            justifyContent: "center",
+                            minHeight: 31,
+                          }}
+                        >
+                          <RotateCcw size={12} /> Reactivar
+                        </button>
+                      )}
                     </div>
                   </article>
                 );
@@ -1029,15 +1149,22 @@ export default function ClientesPage() {
                   const address = clientAddress(c);
 
                   return (
-                    <tr key={c.id}>
+                    <tr key={c.id} style={{ opacity: isClientActive(c) ? 1 : 0.6 }}>
                       <td>
-                        <b>{clientName(c)}</b>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <b>{clientName(c)}</b>
+                          {!isClientActive(c) && (
+                            <span className="badge badge-red" style={{ fontSize: 9 }}>
+                              Desactivado
+                            </span>
+                          )}
+                        </div>
                         <div style={{ color: "var(--text3)", fontSize: 11 }}>
                           {c.gmail ?? "Sin email"}
                         </div>
                       </td>
 
-                      <td style={{ fontFamily: "var(--mono)" }}>{c.dni}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{c.dni ?? "—"}</td>
 
                       <td>{c.telefono ?? "—"}</td>
 
@@ -1156,34 +1283,54 @@ export default function ClientesPage() {
                         <div
                           style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
                         >
-                          <button
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => openPayment(c)}
-                            disabled={num(c.currentBalance) <= 0}
-                          >
-                            <Wallet size={13} /> Abono
-                          </button>
+                          {isClientActive(c) ? (
+                            <>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => openPayment(c)}
+                                disabled={num(c.currentBalance) <= 0}
+                              >
+                                <Wallet size={13} /> Abono
+                              </button>
 
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => openHistory(c)}
-                          >
-                            <CreditCard size={13} />
-                          </button>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => openHistory(c)}
+                              >
+                                <CreditCard size={13} />
+                              </button>
 
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => openEdit(c)}
-                          >
-                            <Edit2 size={13} />
-                          </button>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => openEdit(c)}
+                              >
+                                <Edit2 size={13} />
+                              </button>
 
-                          <button
-                            className="btn btn-danger btn-sm"
-                            onClick={() => deleteClient(c)}
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                              <button
+                                className="btn btn-danger btn-sm"
+                                onClick={() => deleteClient(c)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => openHistory(c)}
+                              >
+                                <CreditCard size={13} />
+                              </button>
+
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => reactivateClient(c)}
+                              >
+                                <RotateCcw size={13} /> Reactivar
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1635,60 +1782,89 @@ export default function ClientesPage() {
                   background: "var(--surface)",
                 }}
               >
-                {num(mobileClientSheet.currentBalance) > 0 && (
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      const client = mobileClientSheet;
-                      setMobileClientSheet(null);
-                      openPayment(client);
-                    }}
-                    style={{ width: "100%", justifyContent: "center" }}
-                  >
-                    <Wallet size={15} /> Abono
-                  </button>
+                {isClientActive(mobileClientSheet) ? (
+                  <>
+                    {num(mobileClientSheet.currentBalance) > 0 && (
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          const client = mobileClientSheet;
+                          setMobileClientSheet(null);
+                          openPayment(client);
+                        }}
+                        style={{ width: "100%", justifyContent: "center" }}
+                      >
+                        <Wallet size={15} /> Abono
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        const client = mobileClientSheet;
+                        setMobileClientSheet(null);
+                        openEdit(client);
+                      }}
+                      style={{ width: "100%", justifyContent: "center" }}
+                    >
+                      <Edit2 size={15} /> Editar
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        const client = mobileClientSheet;
+                        setMobileClientSheet(null);
+                        openHistory(client);
+                      }}
+                      style={{
+                        width: "100%",
+                        justifyContent: "center",
+                        gridColumn: "1 / -1",
+                      }}
+                    >
+                      <CreditCard size={15} /> Cuenta corriente
+                    </button>
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => {
+                        const client = mobileClientSheet;
+                        setMobileClientSheet(null);
+                        deleteClient(client);
+                      }}
+                      style={{
+                        width: "100%",
+                        justifyContent: "center",
+                        gridColumn: "1 / -1",
+                      }}
+                    >
+                      <Trash2 size={15} /> Eliminar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        const client = mobileClientSheet;
+                        setMobileClientSheet(null);
+                        openHistory(client);
+                      }}
+                      style={{ width: "100%", justifyContent: "center" }}
+                    >
+                      <CreditCard size={15} /> Cuenta corriente
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        const client = mobileClientSheet;
+                        setMobileClientSheet(null);
+                        reactivateClient(client);
+                      }}
+                      style={{ width: "100%", justifyContent: "center" }}
+                    >
+                      <RotateCcw size={15} /> Reactivar
+                    </button>
+                  </>
                 )}
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    const client = mobileClientSheet;
-                    setMobileClientSheet(null);
-                    openEdit(client);
-                  }}
-                  style={{ width: "100%", justifyContent: "center" }}
-                >
-                  <Edit2 size={15} /> Editar
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    const client = mobileClientSheet;
-                    setMobileClientSheet(null);
-                    openHistory(client);
-                  }}
-                  style={{
-                    width: "100%",
-                    justifyContent: "center",
-                    gridColumn: "1 / -1",
-                  }}
-                >
-                  <CreditCard size={15} /> Cuenta corriente
-                </button>
-                <button
-                  className="btn btn-danger"
-                  onClick={() => {
-                    const client = mobileClientSheet;
-                    setMobileClientSheet(null);
-                    deleteClient(client);
-                  }}
-                  style={{
-                    width: "100%",
-                    justifyContent: "center",
-                    gridColumn: "1 / -1",
-                  }}
-                >
-                  <Trash2 size={15} /> Eliminar
-                </button>
               </div>
             </div>
           </div>,
@@ -2745,6 +2921,101 @@ export default function ClientesPage() {
                 ) : (
                   (confirmModal.confirmText ?? "Confirmar")
                 )}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {deactivateOffer &&
+        typeof document !== "undefined" &&
+        createPortal(
+        <div
+          className="modal-overlay confirm-modal-overlay"
+          onClick={(e) => {
+            if (deactivating) return;
+            if (e.target === e.currentTarget) setDeactivateOffer(null);
+          }}
+        >
+          <div
+            className="modal"
+            style={{
+              maxWidth: isMobile ? "calc(100vw - 24px)" : 460,
+              width: isMobile ? "calc(100vw - 24px)" : undefined,
+            }}
+          >
+            <div className="modal-header">
+              <b>No se pudo eliminar</b>
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => !deactivating && setDeactivateOffer(null)}
+                disabled={deactivating}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div
+                style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
+              >
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    background: "rgba(239,68,68,0.12)",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertTriangle size={18} style={{ color: "var(--danger)" }} />
+                </span>
+
+                <p
+                  style={{
+                    color: "var(--text2)",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    margin: 0,
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {deactivateOffer.reason} ¿Querés desactivar a{" "}
+                  <b>{clientName(deactivateOffer.client)}</b> en su lugar? Se
+                  van a borrar sus datos de contacto (DNI/CUIT, email,
+                  teléfono y dirección) para poder reutilizarlos en otro
+                  cliente. El nombre y el historial de ventas / cuenta
+                  corriente se conservan.
+                </p>
+              </div>
+            </div>
+
+            <div
+              className="modal-footer"
+              style={{
+                flexDirection: isMobile ? "column-reverse" : undefined,
+              }}
+            >
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDeactivateOffer(null)}
+                disabled={deactivating}
+                style={{ width: isMobile ? "100%" : undefined }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className="btn btn-danger"
+                onClick={confirmDeactivateOffer}
+                disabled={deactivating}
+                style={{ width: isMobile ? "100%" : undefined }}
+              >
+                {deactivating ? <span className="spinner" /> : "Desactivar"}
               </button>
             </div>
           </div>

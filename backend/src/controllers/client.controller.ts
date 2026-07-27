@@ -48,7 +48,9 @@ export const clientController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
       const light = req.query.light === "true" || req.query.light === "1";
-      const clients = await clientService.getClients({ light });
+      const includeInactive =
+        req.query.includeInactive === "true" || req.query.includeInactive === "1";
+      const clients = await clientService.getClients({ light, includeInactive });
 
       res.json({
         ok: true,
@@ -157,6 +159,36 @@ export const clientController = {
       res.json({
         ok: true,
         message: "Cliente eliminado correctamente",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async deactivate(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const client = await clientService.deactivateClient(getParamAsString(id, "id"));
+
+      res.json({
+        ok: true,
+        message: "Cliente desactivado correctamente",
+        client,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async activate(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const client = await clientService.reactivateClient(getParamAsString(id, "id"));
+
+      res.json({
+        ok: true,
+        message: "Cliente reactivado correctamente",
+        client,
       });
     } catch (error) {
       next(error);

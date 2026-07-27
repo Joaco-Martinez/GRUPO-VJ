@@ -152,9 +152,10 @@ export interface Client {
   id: string;
   nombre: string;
   apellido: string;
-  dni: string;
+  dni?: string | null;
   telefono?: string | null;
   gmail?: string | null;
+  isActive?: boolean;
 
 
   addressStreet?: string | null;

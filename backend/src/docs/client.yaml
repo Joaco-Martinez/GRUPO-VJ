@@ -104,6 +104,47 @@ paths:
         200:
           description: Cliente eliminado
 
+  /clients/{id}/deactivate:
+    patch:
+      summary: Desactivar cliente
+      description: >
+        Desactiva el cliente (isActive = false) y borra sus datos de contacto
+        (DNI/CUIT, email, teléfono, dirección) para que puedan reutilizarse en
+        otro cliente. Se conserva el nombre y el historial de ventas / cuenta
+        corriente. A diferencia del delete, siempre se puede aplicar aunque el
+        cliente tenga ventas o saldo.
+      tags: [Clients]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: Cliente desactivado
+
+  /clients/{id}/activate:
+    patch:
+      summary: Reactivar cliente
+      description: Vuelve a marcar el cliente como activo (isActive = true).
+      tags: [Clients]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: Cliente reactivado
+
 components:
   schemas:
     ClientInput:
@@ -120,6 +161,7 @@ components:
           type: string
         dni:
           type: string
+          nullable: true
         telefono:
           type: string
           nullable: true
@@ -145,6 +187,7 @@ components:
           type: string
         dni:
           type: string
+          nullable: true
         telefono:
           type: string
           nullable: true
@@ -172,6 +215,7 @@ components:
           type: string
         dni:
           type: string
+          nullable: true
         telefono:
           type: string
           nullable: true
@@ -187,6 +231,8 @@ components:
           type: number
           nullable: true
         isAccountEnabled:
+          type: boolean
+        isActive:
           type: boolean
         createdAt:
           type: string

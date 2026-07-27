@@ -389,14 +389,18 @@ export const clientService = {
     return { ok: true };
   },
 
-  async getClients(options?: { light?: boolean }) {
+  async getClients(options?: { light?: boolean; includeInactive?: boolean }) {
+    const where = options?.includeInactive ? {} : { isActive: true };
+
     if (options?.light) {
       return prisma.client.findMany({
+        where,
         orderBy: { createdAt: "desc" },
       });
     }
 
     return prisma.client.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       include: {
         user: {
@@ -626,5 +630,89 @@ export const clientService = {
     }
 
     return prisma.client.delete({ where: { id } });
+  },
+
+  async deactivateClient(id: string) {
+    const existing = await prisma.client.findUnique({
+      where: { id },
+      select: { id: true, userId: true, isActive: true },
+    });
+
+    if (!existing) throw new Error("Cliente no encontrado");
+    if (!existing.isActive) throw new Error("El cliente ya está desactivado");
+
+    return prisma.$transaction(async (tx) => {
+      if (existing.userId) {
+        // Se libera el email de login para que pueda reutilizarse en otro cliente/usuario.
+        await tx.user.update({
+          where: { id: existing.userId },
+          data: {
+            isActive: false,
+            email: `baja-${existing.userId}@grupovj.local`,
+          },
+        });
+      }
+
+      return tx.client.update({
+        where: { id },
+        data: {
+          isActive: false,
+          userId: null,
+          dni: null,
+          telefono: null,
+          gmail: null,
+          category: CategoryClient.Price,
+          creditLimit: null,
+          isAccountEnabled: false,
+          addressStreet: null,
+          addressNumber: null,
+          addressFloor: null,
+          addressApartment: null,
+          addressCity: null,
+          addressProvince: null,
+          addressPostalCode: null,
+          addressNotes: null,
+          latitude: null,
+          longitude: null,
+        },
+        include: {
+          user: {
+            select: clientUserSelect,
+          },
+          _count: {
+            select: {
+              sales: true,
+              accountMovements: true,
+            },
+          },
+        },
+      });
+    });
+  },
+
+  async reactivateClient(id: string) {
+    const existing = await prisma.client.findUnique({
+      where: { id },
+      select: { id: true, isActive: true },
+    });
+
+    if (!existing) throw new Error("Cliente no encontrado");
+    if (existing.isActive) throw new Error("El cliente ya está activo");
+
+    return prisma.client.update({
+      where: { id },
+      data: { isActive: true },
+      include: {
+        user: {
+          select: clientUserSelect,
+        },
+        _count: {
+          select: {
+            sales: true,
+            accountMovements: true,
+          },
+        },
+      },
+    });
   },
 };

@@ -383,7 +383,7 @@ export const catalogService = {
           .filter(Boolean)
           .join(" ")
           .trim() || user.name,
-      dni: user.client.dni,
+      dni: user.client.dni ?? undefined,
       phone: user.client.telefono,
       email: user.client.gmail || user.email,
     };

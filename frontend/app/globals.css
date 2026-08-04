@@ -118,6 +118,7 @@ button { cursor: pointer; font-family: var(--sans); }
 .badge-gray { background: rgba(96,96,112,0.15); color: var(--text2); border: 1px solid var(--border); }
 
 .table-wrap { overflow-x: auto; }
+.table-wrap::-webkit-scrollbar { height: 8px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 thead tr { border-bottom: 1px solid var(--border); }
 th { text-align: left; padding: 10px 16px; color: var(--text3); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; font-family: var(--mono); font-weight: 500; }

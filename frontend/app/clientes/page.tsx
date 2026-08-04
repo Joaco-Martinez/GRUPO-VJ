@@ -1140,7 +1140,13 @@ export default function ClientesPage() {
                   <th>Acceso tienda</th>
                   <th>Cuenta corriente</th>
                   <th>Límite</th>
-                  <th></th>
+                  <th
+                    style={{
+                      position: "sticky",
+                      right: 0,
+                      background: "var(--surface)",
+                    }}
+                  ></th>
                 </tr>
               </thead>
 
@@ -1279,7 +1285,14 @@ export default function ClientesPage() {
                         {c.creditLimit ? fmtMoney(c.creditLimit) : "Sin límite"}
                       </td>
 
-                      <td>
+                      <td
+                        style={{
+                          position: "sticky",
+                          right: 0,
+                          background: "var(--surface)",
+                          boxShadow: "-6px 0 8px -6px rgba(0,0,0,0.25)",
+                        }}
+                      >
                         <div
                           style={{ display: "flex", gap: 6, flexWrap: "wrap" }}
                         >

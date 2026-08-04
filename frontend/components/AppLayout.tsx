@@ -97,6 +97,7 @@ useEffect(() => {
         id="main-content"
         style={{
           minHeight: '100vh',
+          minWidth: 0,
           width: '100%',
           transition: 'margin-left 0.2s ease, width 0.2s ease',
         }}
@@ -192,6 +193,7 @@ useEffect(() => {
         <main
           style={{
             flex: 1,
+            minWidth: 0,
             padding: '24px 20px',
             maxWidth: 1400,
             width: '100%',

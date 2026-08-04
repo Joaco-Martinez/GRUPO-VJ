@@ -1133,13 +1133,10 @@ export default function ClientesPage() {
               <thead>
                 <tr>
                   <th>Cliente</th>
-                  <th>DNI/CUIT</th>
-                  <th>Contacto</th>
                   <th>Dirección</th>
                   <th>Categoría</th>
                   <th>Acceso tienda</th>
                   <th>Cuenta corriente</th>
-                  <th>Límite</th>
                   <th
                     style={{
                       position: "sticky",
@@ -1166,15 +1163,14 @@ export default function ClientesPage() {
                           )}
                         </div>
                         <div style={{ color: "var(--text3)", fontSize: 11 }}>
+                          {c.dni ?? "Sin DNI"} · {c.telefono ?? "Sin teléfono"}
+                        </div>
+                        <div style={{ color: "var(--text3)", fontSize: 11 }}>
                           {c.gmail ?? "Sin email"}
                         </div>
                       </td>
 
-                      <td style={{ fontFamily: "var(--mono)" }}>{c.dni ?? "—"}</td>
-
-                      <td>{c.telefono ?? "—"}</td>
-
-                      <td style={{ minWidth: 230 }}>
+                      <td style={{ minWidth: 190 }}>
                         {address ? (
                           <div
                             style={{
@@ -1279,10 +1275,10 @@ export default function ClientesPage() {
                             ? "Deshabilitada"
                             : "Habilitada"}
                         </div>
-                      </td>
-
-                      <td>
-                        {c.creditLimit ? fmtMoney(c.creditLimit) : "Sin límite"}
+                        <div style={{ color: "var(--text3)", fontSize: 11 }}>
+                          Límite:{" "}
+                          {c.creditLimit ? fmtMoney(c.creditLimit) : "sin límite"}
+                        </div>
                       </td>
 
                       <td

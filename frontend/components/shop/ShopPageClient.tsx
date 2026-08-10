@@ -19,6 +19,9 @@ import {
   ScanBarcode,
   X,
   AlertTriangle,
+  Trash2,
+  Plus,
+  Minus,
 } from "lucide-react";
 import {
   CatalogCategory,
@@ -322,9 +325,13 @@ export default function TiendaPage() {
 
   const cartItems = useCartStore((state) => state.items);
   const cartCount = useCartStore((state) => state.count());
+  const cartTotal = useCartStore((state) => state.total());
   const add = useCartStore((state) => state.add);
+  const removeFromCart = useCartStore((state) => state.remove);
+  const setCartItemQuantity = useCartStore((state) => state.setQuantity);
 
   const [addingProductId, setAddingProductId] = useState<string | null>(null);
+  const [miniCartOpen, setMiniCartOpen] = useState(false);
 
   const storeSuffix = useMemo(() => {
     return isWholesaleCategory(customerCategory)
@@ -604,6 +611,7 @@ export default function TiendaPage() {
       }
 
       toast.success("Producto agregado al carrito");
+      setMiniCartOpen(true);
     } catch (err: unknown) {
       const message = getErrorMessage(
         err,
@@ -982,6 +990,292 @@ export default function TiendaPage() {
           font-size: 11px;
           font-weight: 900;
           padding: 0 6px;
+        }
+
+        .mini-cart {
+          position: fixed;
+          left: 22px;
+          bottom: 22px;
+          z-index: 9998;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .mini-cart-fab {
+          width: 58px;
+          height: 58px;
+          border-radius: 999px;
+          background: var(--primary);
+          color: var(--white);
+          border: 1px solid rgba(255, 255, 255, 0.4);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          box-shadow: 0 16px 34px rgba(17, 24, 39, 0.28);
+          transition: transform 0.18s ease, box-shadow 0.18s ease;
+          position: relative;
+        }
+
+        .mini-cart-fab:hover {
+          transform: translateY(-2px) scale(1.03);
+          box-shadow: 0 20px 42px rgba(17, 24, 39, 0.36);
+        }
+
+        .mini-cart-fab-badge {
+          position: absolute;
+          top: -4px;
+          right: -4px;
+          min-width: 22px;
+          height: 22px;
+          border-radius: 999px;
+          background: var(--green);
+          color: var(--white);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: 900;
+          padding: 0 6px;
+          border: 2px solid var(--white);
+        }
+
+        .mini-cart-panel {
+          width: 320px;
+          max-width: calc(100vw - 44px);
+          max-height: min(70vh, 520px);
+          background: var(--white);
+          border: 1px solid var(--line);
+          border-radius: 20px;
+          box-shadow: 0 24px 70px rgba(15, 23, 42, 0.2);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+
+        .mini-cart-panel-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 14px 16px;
+          border-bottom: 1px solid var(--line);
+          flex-shrink: 0;
+        }
+
+        .mini-cart-panel-header b {
+          font-size: 14px;
+          font-weight: 900;
+          color: var(--text);
+        }
+
+        .mini-cart-close {
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          border: none;
+          background: #f3f4f6;
+          color: var(--muted);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+
+        .mini-cart-close:hover {
+          background: var(--line);
+          color: var(--text);
+        }
+
+        .mini-cart-empty {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          padding: 32px 20px;
+          color: var(--soft);
+          text-align: center;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .mini-cart-list {
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          padding: 6px;
+        }
+
+        .mini-cart-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px;
+          border-radius: 14px;
+        }
+
+        .mini-cart-item:hover {
+          background: #f9fafb;
+        }
+
+        .mini-cart-item-thumb {
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+          background: #f3f4f6;
+          border: 1px solid var(--line);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          flex-shrink: 0;
+          color: var(--soft);
+        }
+
+        .mini-cart-item-thumb img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
+
+        .mini-cart-item-info {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .mini-cart-item-name {
+          font-size: 12.5px;
+          font-weight: 700;
+          color: var(--text);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .mini-cart-item-price {
+          font-size: 12px;
+          font-weight: 800;
+          color: var(--green);
+        }
+
+        .mini-cart-item-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-shrink: 0;
+        }
+
+        .mini-cart-stepper {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          background: #f3f4f6;
+          border-radius: 999px;
+          padding: 3px;
+        }
+
+        .mini-cart-stepper button {
+          width: 22px;
+          height: 22px;
+          border-radius: 999px;
+          border: none;
+          background: var(--white);
+          color: var(--text);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+        }
+
+        .mini-cart-stepper span {
+          min-width: 20px;
+          text-align: center;
+          font-size: 12px;
+          font-weight: 800;
+          color: var(--text);
+        }
+
+        .mini-cart-remove {
+          width: 26px;
+          height: 26px;
+          border-radius: 999px;
+          border: none;
+          background: none;
+          color: var(--soft);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+
+        .mini-cart-remove:hover {
+          color: var(--red);
+          background: var(--red-soft);
+        }
+
+        .mini-cart-panel-footer {
+          border-top: 1px solid var(--line);
+          padding: 12px 16px 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          flex-shrink: 0;
+        }
+
+        .mini-cart-total {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--muted);
+        }
+
+        .mini-cart-total b {
+          font-size: 17px;
+          font-weight: 900;
+          color: var(--text);
+        }
+
+        .mini-cart-checkout-btn {
+          height: 44px;
+          border-radius: 999px;
+          background: var(--green);
+          color: var(--white);
+          text-decoration: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 13px;
+          font-weight: 800;
+          transition: 0.18s ease;
+        }
+
+        .mini-cart-checkout-btn:hover {
+          background: #0fa25c;
+          transform: translateY(-1px);
+        }
+
+        @media (max-width: 640px) {
+          .mini-cart {
+            left: 16px;
+            bottom: 16px;
+          }
+
+          .mini-cart-fab {
+            width: 54px;
+            height: 54px;
+          }
+
+          .mini-cart-panel {
+            width: calc(100vw - 32px);
+          }
         }
 
         .location-bar {
@@ -2483,6 +2777,135 @@ export default function TiendaPage() {
             </div>
           </div>
         </footer>
+
+        {isLoggedIn && (
+          <div className="mini-cart">
+            {miniCartOpen && (
+              <div className="mini-cart-panel">
+                <div className="mini-cart-panel-header">
+                  <b>Tu carrito</b>
+                  <button
+                    type="button"
+                    className="mini-cart-close"
+                    onClick={() => setMiniCartOpen(false)}
+                    aria-label="Cerrar carrito"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {cartItems.length === 0 ? (
+                  <div className="mini-cart-empty">
+                    <ShoppingCart size={22} />
+                    <span>Todavía no agregaste productos</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mini-cart-list">
+                      {cartItems.map((item) => {
+                        const isKg = item.product.saleUnit === "KG";
+                        const step = isKg ? 0.1 : 1;
+                        const qty = item.quantity;
+                        const lineTotal = item.product.price * qty;
+
+                        return (
+                          <div className="mini-cart-item" key={item.product.id}>
+                            <div className="mini-cart-item-thumb">
+                              {item.product.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={item.product.imageUrl} alt={item.product.name} />
+                              ) : (
+                                <Package size={18} />
+                              )}
+                            </div>
+
+                            <div className="mini-cart-item-info">
+                              <span className="mini-cart-item-name">
+                                {item.product.name}
+                              </span>
+                              <span className="mini-cart-item-price">
+                                {formatMoney(lineTotal)}
+                              </span>
+                            </div>
+
+                            <div className="mini-cart-item-actions">
+                              <div className="mini-cart-stepper">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = Number((qty - step).toFixed(2));
+
+                                    if (next <= 0) {
+                                      removeFromCart(item.product.id);
+                                    } else {
+                                      setCartItemQuantity(item.product.id, next);
+                                    }
+                                  }}
+                                  aria-label="Quitar unidad"
+                                >
+                                  <Minus size={12} />
+                                </button>
+                                <span>
+                                  {isKg ? qty.toLocaleString("es-AR") : qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCartItemQuantity(
+                                      item.product.id,
+                                      Number((qty + step).toFixed(2)),
+                                    )
+                                  }
+                                  aria-label="Agregar unidad"
+                                >
+                                  <Plus size={12} />
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                className="mini-cart-remove"
+                                onClick={() => removeFromCart(item.product.id)}
+                                aria-label={`Quitar ${item.product.name} del carrito`}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mini-cart-panel-footer">
+                      <div className="mini-cart-total">
+                        <span>Total</span>
+                        <b>{formatMoney(cartTotal)}</b>
+                      </div>
+
+                      <Link
+                        href="/tienda/carrito"
+                        className="mini-cart-checkout-btn"
+                        onClick={() => setMiniCartOpen(false)}
+                      >
+                        Ver carrito y finalizar compra
+                      </Link>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="mini-cart-fab"
+              onClick={() => setMiniCartOpen((open) => !open)}
+              aria-label="Ver carrito"
+            >
+              <ShoppingCart size={22} />
+              {cartCount > 0 && <span className="mini-cart-fab-badge">{cartCount}</span>}
+            </button>
+          </div>
+        )}
 
         {showScanner &&
           typeof document !== "undefined" &&

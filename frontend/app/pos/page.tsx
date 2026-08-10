@@ -33,6 +33,7 @@ import {
   Minus,
   Package,
   Plus,
+  Printer,
   RefreshCcw,
   ScanBarcode,
   Search,
@@ -430,6 +431,8 @@ export default function POSPage() {
   const [submitting, setSubmitting] = useState(false);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [postSaleTicket, setPostSaleTicket] = useState<{ saleId: string } | null>(null);
+  const [printingPostSaleTicket, setPrintingPostSaleTicket] = useState(false);
   const [pendingProductAdd, setPendingProductAdd] = useState<PendingProductAdd>(null);
   const [clientGateMode, setClientGateMode] = useState<ClientGateMode>(null);
   const [consumerFinalConfirmed, setConsumerFinalConfirmed] = useState(false);
@@ -1318,7 +1321,7 @@ export default function POSPage() {
       };
 
       console.log("🧾 Payload venta POS:", payload);
-      await api.post("/sales", payload);
+      const { data: createdSale } = await api.post("/sales", payload);
 
       setCart([]);
       setPayments([{ method: "EFECTIVO", amount: 0 }]);
@@ -1329,6 +1332,11 @@ export default function POSPage() {
       setConsumerFinalConfirmed(false);
 
       toast.success("Venta registrada correctamente", { id: toastId });
+
+      if (createdSale?.id) {
+        setPostSaleTicket({ saleId: createdSale.id });
+      }
+
       await load();
     } catch (e: unknown) {
       toast.error(getErrorMessage(e, "Error al registrar venta"), { id: toastId });
@@ -1359,6 +1367,23 @@ export default function POSPage() {
       setConfirmModal(null);
     } finally {
       setConfirmLoading(false);
+    }
+  };
+
+  const printPostSaleTicket = async () => {
+    if (!postSaleTicket) return;
+
+    setPrintingPostSaleTicket(true);
+    const toastId = toast.loading("Enviando ticket a impresión...");
+
+    try {
+      await api.post(`/tickets/sale/${postSaleTicket.saleId}/print`);
+      toast.success("Ticket enviado a impresión", { id: toastId });
+      setPostSaleTicket(null);
+    } catch (e: unknown) {
+      toast.error(getErrorMessage(e, "No se pudo imprimir el ticket"), { id: toastId });
+    } finally {
+      setPrintingPostSaleTicket(false);
     }
   };
 
@@ -2449,6 +2474,31 @@ export default function POSPage() {
               <div className="modal-footer pos-confirm-footer">
                 <button className="btn btn-secondary" onClick={() => setConfirmModal(null)} disabled={confirmLoading}>Cancelar</button>
                 <button className={confirmModal.danger ? "btn btn-danger" : "btn btn-primary"} onClick={confirmAction} disabled={confirmLoading}>{confirmLoading ? <span className="spinner" /> : (confirmModal.confirmText ?? "Confirmar")}</button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {postSaleTicket && mounted && typeof document !== "undefined" &&
+        createPortal(
+          <div className="modal-overlay">
+            <div className="modal pos-confirm-modal">
+              <div className="modal-header">
+                <b>Venta registrada</b>
+                <button className="btn btn-ghost btn-sm" onClick={() => !printingPostSaleTicket && setPostSaleTicket(null)} disabled={printingPostSaleTicket}><X size={16} /></button>
+              </div>
+              <div className="modal-body">
+                <div className="confirm-box">
+                  <span className="info-icon"><Printer size={18} /></span>
+                  <p>¿Querés imprimir el ticket no fiscal de esta venta?</p>
+                </div>
+              </div>
+              <div className="modal-footer pos-confirm-footer">
+                <button className="btn btn-secondary" onClick={() => setPostSaleTicket(null)} disabled={printingPostSaleTicket}>No, gracias</button>
+                <button className="btn btn-primary" onClick={printPostSaleTicket} disabled={printingPostSaleTicket}>
+                  {printingPostSaleTicket ? <span className="spinner" /> : (<><Printer size={14} /> Imprimir ticket</>)}
+                </button>
               </div>
             </div>
           </div>,

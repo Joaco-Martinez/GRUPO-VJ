@@ -127,6 +127,14 @@ function clientDefaultPriceType(client?: Client | null): CartItem["priceType"] {
   return client?.category === "Mayorista" ? WHOLESALE_PRICE_TYPE : RETAIL_PRICE_TYPE;
 }
 
+function matchingBusinessLocationForStock(
+  stockLocation: StockLocation,
+  locations: BusinessLocation[],
+) {
+  const label = stockLocationLabel(stockLocation).toUpperCase();
+  return locations.find((location) => normalizeText(location.name).includes(label)) ?? null;
+}
+
 function normalizeText(value?: string | null) {
   return String(value ?? "")
     .trim()
@@ -472,6 +480,16 @@ export default function POSPage() {
     }
   }, [me]);
 
+  // "Sale desde" tiene que reflejar el depósito Minorista/Mayorista elegido en
+  // "Stock" (ej: "Deposito Minorista" / "Deposito Mayorista"), si no el cajero
+  // tiene que elegirlo dos veces: una en Stock y otra a mano acá.
+  useEffect(() => {
+    const match = matchingBusinessLocationForStock(stockLocation, businessLocations);
+    if (match && match.id !== businessLocationId) {
+      setBusinessLocationId(match.id);
+    }
+  }, [stockLocation, businessLocations]);
+
   const saveOwnPreferences = async () => {
     try {
       await api.put("/users/me/preferences", {
@@ -496,7 +514,9 @@ export default function POSPage() {
       setBusinessLocations(data.businessLocations);
 
       const defaultLocation =
-        data.businessLocations.find((x) => x.isDefault) ?? data.businessLocations[0];
+        matchingBusinessLocationForStock(stockLocation, data.businessLocations) ??
+        data.businessLocations.find((x) => x.isDefault) ??
+        data.businessLocations[0];
 
       if (defaultLocation) {
         setBusinessLocationId((prev) => prev || defaultLocation.id);
@@ -668,13 +688,24 @@ export default function POSPage() {
       return;
     }
 
-    setConfirmModal({
-      title: "Actualizar precios del carrito",
-      message: `Cliente ${clientName(nextClient)} es ${clientCategoryLabel(nextClient.category)}. ¿Querés que todos los productos usen precio ${priceTypeLabelLower(nextPriceType)}?`,
-      confirmText: `Usar precios ${priceTypeLabelLower(nextPriceType)}`,
-      danger: false,
-      onConfirm: () => applyPriceTypeToCart(nextPriceType),
-    });
+    // El precio por defecto para los PRÓXIMOS productos siempre se actualiza acá.
+    // El modal solo pregunta si también hay que pisar los precios de lo que ya
+    // estaba cargado en el carrito antes de elegir este cliente.
+    setDefaultPriceType(nextPriceType);
+
+    const hasPriceableCartItems = cart.some(
+      (item) => !item.isDeliveryItem && !isDeliveryProduct(item.product) && !item.product.isService,
+    );
+
+    if (hasPriceableCartItems) {
+      setConfirmModal({
+        title: "Actualizar precios del carrito",
+        message: `Cliente ${clientName(nextClient)} es ${clientCategoryLabel(nextClient.category)}. ¿Querés que todos los productos usen precio ${priceTypeLabelLower(nextPriceType)}?`,
+        confirmText: `Usar precios ${priceTypeLabelLower(nextPriceType)}`,
+        danger: false,
+        onConfirm: () => applyPriceTypeToCart(nextPriceType),
+      });
+    }
   };
 
   const filtered = useMemo(() => {

@@ -1528,11 +1528,9 @@ export const saleService = {
     discountAmount = round2(discountAmount);
 
     if ((data.deliveryMethod ?? DeliveryMethod.PICKUP) === DeliveryMethod.LOCAL_DELIVERY) {
-      if (deliveryCost <= 0) {
-        throw new Error("El costo de envío debe ser mayor a 0");
-      }
+      const hasDeliveryLine = itemsWithPrices.some(isDeliverySaleItem);
 
-      if (deliveryLineSubtotal <= 0) {
+      if (!hasDeliveryLine) {
         throw new Error(
           `El envío debe venir cargado como item (${DELIVERY_SKU}) en la venta`
         );
@@ -1816,11 +1814,9 @@ export const saleService = {
     discountAmount = round2(discountAmount);
 
     if (deliveryMethod === DeliveryMethod.LOCAL_DELIVERY) {
-      if (deliveryCost <= 0) {
-        throw new Error("El costo de envío debe ser mayor a 0");
-      }
+      const hasDeliveryLine = itemsWithPrices.some(isDeliverySaleItem);
 
-      if (deliveryLineSubtotal <= 0) {
+      if (!hasDeliveryLine) {
         throw new Error(
           `El envío debe venir cargado como item (${DELIVERY_SKU}) en la venta`
         );

@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
-import type { BusinessLocation, PaymentMethod, Product, Sale } from '@/types';
+import type { BusinessLocation, DiscountType, PaymentMethod, Product, Sale } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
 import { remitoApi, type Remito } from '@/service/remito.service';
 import toast from 'react-hot-toast';
@@ -756,6 +756,8 @@ export default function VentasPage() {
   const [editBusinessLocationId, setEditBusinessLocationId] = useState('');
   const [editDeliveryCalculation, setEditDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
   const [editCalculatingDelivery, setEditCalculatingDelivery] = useState(false);
+  const [editDiscountType, setEditDiscountType] = useState<DiscountType | ''>('');
+  const [editDiscountValue, setEditDiscountValue] = useState('');
 
   const [payments, setPayments] = useState<PaymentView[]>([]);
 
@@ -1505,6 +1507,12 @@ export default function VentasPage() {
 
     setEditItemsSale(sale);
     setEditProductSearch('');
+    setEditDiscountType((saleExtra.discountType as DiscountType) ?? '');
+    setEditDiscountValue(
+      saleExtra.discountValue !== null && saleExtra.discountValue !== undefined
+        ? String(saleExtra.discountValue)
+        : ''
+    );
     const deliveryCost = num(saleExtra.deliveryCost);
     const hasDeliveryData =
       String(saleExtra.deliveryMethod ?? '').toUpperCase() === 'LOCAL_DELIVERY' || deliveryCost > 0;
@@ -1860,10 +1868,23 @@ export default function VentasPage() {
     return `${totalQty} cargado${totalQty === 1 ? '' : 's'}`;
   };
 
-  const editItemsTotal = editLines.reduce((acc, line) => {
+  const editItemsSubtotal = editLines.reduce((acc, line) => {
     const qty = line.saleUnit === 'KG' ? num(line.quantityKg) : num(line.quantity);
     return acc + qty * num(line.price);
   }, 0);
+
+  const editDeliverySubtotal = editLines.reduce((acc, line) => {
+    if (!line.isDelivery) return acc;
+    return acc + num(line.price) * num(line.quantity || 1);
+  }, 0);
+
+  const editDiscountAmount = editDiscountType
+    ? editDiscountType === 'PERCENTAGE'
+      ? (editItemsSubtotal - editDeliverySubtotal) * (num(editDiscountValue) / 100)
+      : num(editDiscountValue)
+    : 0;
+
+  const editItemsTotal = editItemsSubtotal - editDiscountAmount;
 
   const saveSaleItems = async () => {
     if (!editItemsSale) return;
@@ -1915,6 +1936,8 @@ export default function VentasPage() {
           : null,
         deliveryPricePerKm: deliveryLine ? num(editDeliveryPricePerKm, DEFAULT_DELIVERY_PRICE_PER_KM) : null,
         deliveryCost,
+        discountType: editDiscountType || null,
+        discountValue: editDiscountType ? num(editDiscountValue) : 0,
         items: editLines.map((line) => ({
           productId: line.productId,
           quantity: line.saleUnit === 'KG' ? undefined : Math.max(1, num(line.quantity)),
@@ -1931,6 +1954,8 @@ export default function VentasPage() {
       setEditDeliveryPricePerKm(String(DEFAULT_DELIVERY_PRICE_PER_KM));
       setEditBusinessLocationId('');
       setEditDeliveryCalculation(null);
+      setEditDiscountType('');
+      setEditDiscountValue('');
       await load();
       toast.success('Productos de la venta actualizados', { id: toastId });
     } catch (error: unknown) {
@@ -3839,6 +3864,40 @@ export default function VentasPage() {
                     Para usar envío, tiene que existir el producto con SKU {DELIVERY_SKU}.
                   </small>
                 )}
+              </div>
+
+              <div className="sales-edit-delivery-card">
+                <div className="sales-edit-lines-head" style={{ position: 'static', margin: 0, padding: 0, borderBottom: 'none' }}>
+                  <b>Descuento</b>
+                  <span>{editDiscountType ? fmtMoney(editDiscountAmount) : 'Sin descuento'}</span>
+                </div>
+
+                <div className="sales-edit-delivery-grid">
+                  <label>
+                    <span>Tipo</span>
+                    <select
+                      value={editDiscountType}
+                      onChange={(e) => setEditDiscountType(e.target.value as DiscountType | '')}
+                    >
+                      <option value="">Sin descuento</option>
+                      <option value="PERCENTAGE">%</option>
+                      <option value="FIXED">$</option>
+                    </select>
+                  </label>
+
+                  {editDiscountType && (
+                    <label>
+                      <span>Valor</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={editDiscountValue}
+                        onChange={(e) => setEditDiscountValue(e.target.value)}
+                        placeholder="Valor"
+                      />
+                    </label>
+                  )}
+                </div>
               </div>
 
               <div className="sales-edit-lines">

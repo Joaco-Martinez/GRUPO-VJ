@@ -1923,6 +1923,9 @@ export default function VentasPage() {
       const deliveryCost = deliveryLine ? num(deliveryLine.price) : 0;
 
       await api.patch(`/sales/${editItemsSale.id}/items`, {
+        stockLocation: String((editItemsSale as SaleExtra).stockLocation ?? 'LOCAL').toUpperCase() === 'DEPOSITO'
+          ? 'DEPOSITO'
+          : 'LOCAL',
         businessLocationId: deliveryLine ? editBusinessLocationId || null : editBusinessLocationId || null,
         deliveryMethod: deliveryLine ? 'LOCAL_DELIVERY' : 'PICKUP',
         deliveryStatus: deliveryLine ? 'PENDING' : 'NONE',
@@ -4699,7 +4702,7 @@ export default function VentasPage() {
           min-height: 0;
           display: grid;
           grid-template-columns: minmax(340px, 430px) minmax(560px, 1fr);
-          grid-template-rows: auto minmax(0, 1fr);
+          grid-template-rows: auto auto minmax(0, 1fr);
           gap: 16px;
           padding: 16px !important;
           overflow: hidden !important;
@@ -4720,7 +4723,7 @@ export default function VentasPage() {
         }
 
         .sales-edit-products-picker {
-          grid-row: 1 / span 2;
+          grid-row: 1 / span 3;
           min-height: 0;
           max-height: none;
           overflow: hidden;

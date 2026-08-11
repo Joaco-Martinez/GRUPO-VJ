@@ -256,10 +256,21 @@ export const saleController = {
         return res.status(normalized.error.status).json(normalized.error.body);
       }
 
+      const payload: any = { ...(normalized.payload as any) };
+
+      // normalizeSaleBody siempre completa stockLocation con "LOCAL" cuando
+      // no viene en el body (correcto para crear una venta nueva). Acá
+      // editamos una venta existente: si no mandaron stockLocation explícito,
+      // no lo pisemos — dejamos que el service conserve el depósito original
+      // de la venta en vez de moverla a LOCAL/Mayorista sin que nadie lo pida.
+      if (req.body.stockLocation === undefined && req.body.stockSource === undefined) {
+        delete payload.stockLocation;
+      }
+
       const updated = await saleService.updateItems(
         getParamAsString(req.params.id, "id"),
         {
-          ...(normalized.payload as any),
+          ...payload,
           userId: getAuthUserId(req) ?? undefined,
         }
       );

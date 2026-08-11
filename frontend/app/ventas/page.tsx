@@ -276,6 +276,7 @@ type SaleEditLine = {
   priceType?: string | null;
   sku?: string | null;
   isDelivery?: boolean;
+  imageUrl?: string | null;
 };
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -563,6 +564,11 @@ function isDeliveryProduct(product: Product | any) {
   return String((product as any)?.sku ?? '').trim().toUpperCase() === DELIVERY_SKU;
 }
 
+function getProductImageUrl(product?: Product | any | null) {
+  const imageUrl = (product as { imageUrl?: string | null } | null)?.imageUrl;
+  return imageUrl?.trim() || null;
+}
+
 function normalizeEditPriceType(value?: string | null) {
   const raw = String(value ?? '').trim().toUpperCase();
 
@@ -579,16 +585,6 @@ function normalizeEditPriceType(value?: string | null) {
   }
 
   return null;
-}
-
-function getEditSaleDefaultPriceType(sale?: Sale | null) {
-  const stockLocation = String((sale as SaleExtra | null)?.stockLocation ?? '').toUpperCase();
-
-  if (stockLocation === 'LOCAL') return 'WHOLESALE_PRICE';
-  if (stockLocation === 'DEPOSITO') return 'PRICE';
-
-  const category = String((sale as SaleExtra | null)?.client?.category ?? '').toLowerCase();
-  return category.includes('mayorista') ? 'WHOLESALE_PRICE' : 'PRICE';
 }
 
 function getProductEditPrice(product: Product, priceType: string | null = 'PRICE') {
@@ -758,6 +754,7 @@ export default function VentasPage() {
   const [editCalculatingDelivery, setEditCalculatingDelivery] = useState(false);
   const [editDiscountType, setEditDiscountType] = useState<DiscountType | ''>('');
   const [editDiscountValue, setEditDiscountValue] = useState('');
+  const [editStockLocation, setEditStockLocation] = useState<'LOCAL' | 'DEPOSITO'>('LOCAL');
 
   const [payments, setPayments] = useState<PaymentView[]>([]);
 
@@ -1513,6 +1510,9 @@ export default function VentasPage() {
         ? String(saleExtra.discountValue)
         : ''
     );
+    setEditStockLocation(
+      String(saleExtra.stockLocation ?? 'LOCAL').toUpperCase() === 'DEPOSITO' ? 'DEPOSITO' : 'LOCAL'
+    );
     const deliveryCost = num(saleExtra.deliveryCost);
     const hasDeliveryData =
       String(saleExtra.deliveryMethod ?? '').toUpperCase() === 'LOCAL_DELIVERY' || deliveryCost > 0;
@@ -1561,6 +1561,7 @@ export default function VentasPage() {
             priceType: normalizeEditPriceType((item as any).priceType) || 'MANUAL',
             sku: productSku || null,
             isDelivery,
+            imageUrl: getProductImageUrl(item.product),
           };
         })
         .filter((line) => line.productId)
@@ -1581,7 +1582,8 @@ export default function VentasPage() {
       .slice(0, 24);
   }, [products, editProductSearch]);
 
-  const editSaleStockLocation = useMemo(() => {
+  // Depósito con el que se creó originalmente la venta (antes de tocar el selector de Stock).
+  const editOriginalStockLocation = useMemo(() => {
     const loc = String((editItemsSale as SaleExtra | null)?.stockLocation ?? 'LOCAL').toUpperCase();
     return loc === 'DEPOSITO' ? 'DEPOSITO' : 'LOCAL';
   }, [editItemsSale]);
@@ -1603,16 +1605,21 @@ export default function VentasPage() {
   }, [editItemsSale]);
 
   // Effective available stock = current product stock + old sale quantity for that product
-  // (because the backend restores the old stock before validating the new quantities)
+  // (because the backend restores the old stock before validating the new quantities) —
+  // pero esa cantidad vieja solo se "devuelve" al mismo depósito si no se cambió el
+  // selector de Stock: si cambiás de depósito, el backend restaura lo viejo en el
+  // depósito original y descuenta lo nuevo del depósito recién elegido, sin relación.
   const editAvailableStockMap = useMemo(() => {
     const map = new Map<string, { units: number; kg: number }>();
+    const sameLocation = editStockLocation === editOriginalStockLocation;
+
     for (const product of products) {
       const pid = String((product as any).id);
-      const old = oldEditSaleQtyMap.get(pid) ?? { qty: 0, kg: 0 };
-      const stockUnits = editSaleStockLocation === 'DEPOSITO'
+      const old = sameLocation ? oldEditSaleQtyMap.get(pid) ?? { qty: 0, kg: 0 } : { qty: 0, kg: 0 };
+      const stockUnits = editStockLocation === 'DEPOSITO'
         ? num((product as any).stockDeposito)
         : num((product as any).stockLocal);
-      const stockKg = editSaleStockLocation === 'DEPOSITO'
+      const stockKg = editStockLocation === 'DEPOSITO'
         ? num((product as any).stockDepositoKg)
         : num((product as any).stockLocalKg);
       map.set(pid, {
@@ -1621,13 +1628,17 @@ export default function VentasPage() {
       });
     }
     return map;
-  }, [products, oldEditSaleQtyMap, editSaleStockLocation]);
+  }, [products, oldEditSaleQtyMap, editStockLocation, editOriginalStockLocation]);
+
+  // Precio por defecto para productos NUEVOS que se agreguen, según el Stock
+  // elegido en vivo (no el original de la venta, para que siga el selector).
+  const editDefaultPriceTypeForAdd = editStockLocation === 'LOCAL' ? 'WHOLESALE_PRICE' : 'PRICE';
 
   const addProductToEditSale = (product: Product) => {
     const productAny = product as any;
     const productId = String(productAny.id);
     const isDelivery = isDeliveryProduct(productAny);
-    const defaultPriceType = isDelivery ? 'MANUAL' : getEditSaleDefaultPriceType(editItemsSale);
+    const defaultPriceType = isDelivery ? 'MANUAL' : editDefaultPriceTypeForAdd;
     const price = getProductEditPrice(product, defaultPriceType);
 
     setEditLines((prev) => {
@@ -1654,6 +1665,7 @@ export default function VentasPage() {
           priceType: defaultPriceType,
           sku: productAny.sku ?? null,
           isDelivery,
+          imageUrl: getProductImageUrl(productAny),
         },
       ];
     });
@@ -1923,9 +1935,7 @@ export default function VentasPage() {
       const deliveryCost = deliveryLine ? num(deliveryLine.price) : 0;
 
       await api.patch(`/sales/${editItemsSale.id}/items`, {
-        stockLocation: String((editItemsSale as SaleExtra).stockLocation ?? 'LOCAL').toUpperCase() === 'DEPOSITO'
-          ? 'DEPOSITO'
-          : 'LOCAL',
+        stockLocation: editStockLocation,
         businessLocationId: deliveryLine ? editBusinessLocationId || null : editBusinessLocationId || null,
         deliveryMethod: deliveryLine ? 'LOCAL_DELIVERY' : 'PICKUP',
         deliveryStatus: deliveryLine ? 'PENDING' : 'NONE',
@@ -1959,6 +1969,7 @@ export default function VentasPage() {
       setEditDeliveryCalculation(null);
       setEditDiscountType('');
       setEditDiscountValue('');
+      setEditStockLocation('LOCAL');
       await load();
       toast.success('Productos de la venta actualizados', { id: toastId });
     } catch (error: unknown) {
@@ -3726,6 +3737,7 @@ export default function VentasPage() {
                   ) : editProductsFiltered.length ? (
                     editProductsFiltered.map((product: any) => {
                       const selectedLabel = getEditProductSelectedLabel(String(product.id));
+                      const imageUrl = getProductImageUrl(product);
 
                       return (
                         <button
@@ -3735,11 +3747,15 @@ export default function VentasPage() {
                           onClick={() => addProductToEditSale(product)}
                         >
                           <span>
-                            <Package size={16} />
+                            {imageUrl ? (
+                              <img src={imageUrl} alt={product.name} loading="lazy" />
+                            ) : (
+                              <Package size={16} />
+                            )}
                           </span>
                           <div>
                             <b>{product.name}</b>
-                            <small>{product.sku || 'SIN-SKU'} · {fmtMoney(getProductEditPrice(product, getEditSaleDefaultPriceType(editItemsSale)))} · {getEditPriceLabel(getEditSaleDefaultPriceType(editItemsSale))}</small>
+                            <small>{product.sku || 'SIN-SKU'} · {fmtMoney(getProductEditPrice(product, editDefaultPriceTypeForAdd))} · {getEditPriceLabel(editDefaultPriceTypeForAdd)}</small>
                           </div>
                           {selectedLabel ? (
                             <strong className="sales-edit-product-count">{selectedLabel}</strong>
@@ -3905,13 +3921,41 @@ export default function VentasPage() {
 
               <div className="sales-edit-lines">
                 <div className="sales-edit-lines-head">
-                  <b>Productos de la venta</b>
-                  <span>{editLines.length} items</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <b>Productos de la venta</b>
+                    <span>{editLines.length} items</span>
+                  </div>
+
+                  <label className="sales-edit-stock-picker">
+                    <span>Stock</span>
+                    <select
+                      value={editStockLocation}
+                      onChange={(e) => setEditStockLocation(e.target.value as 'LOCAL' | 'DEPOSITO')}
+                    >
+                      <option value="LOCAL">Mayorista</option>
+                      <option value="DEPOSITO">Minorista</option>
+                    </select>
+                  </label>
                 </div>
+
+                {editStockLocation !== editOriginalStockLocation && (
+                  <small style={{ color: 'var(--warn)', lineHeight: 1.4, display: 'block', marginTop: -4 }}>
+                    Vas a mover esta venta de {editOriginalStockLocation === 'DEPOSITO' ? 'Minorista' : 'Mayorista'} a{' '}
+                    {editStockLocation === 'DEPOSITO' ? 'Minorista' : 'Mayorista'}: se restaura el stock viejo en su
+                    depósito original y se descuenta lo nuevo del depósito elegido.
+                  </small>
+                )}
 
                 {editLines.map((line) => (
                   <div className="sales-edit-line" key={line.key}>
                     <div className="sales-edit-line-title">
+                      <span className="sales-edit-line-image">
+                        {line.imageUrl ? (
+                          <img src={line.imageUrl} alt={line.name} loading="lazy" />
+                        ) : (
+                          <Package size={16} />
+                        )}
+                      </span>
                       <div>
                         <b>{line.name}</b>
                         <small className="sales-edit-line-meta">
@@ -4809,6 +4853,13 @@ export default function VentasPage() {
           place-items: center;
           color: var(--accent);
           flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .sales-edit-product-row > span img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
         }
 
         .sales-edit-product-row > div {
@@ -4856,6 +4907,27 @@ export default function VentasPage() {
           font-weight: 900;
         }
 
+        .sales-edit-stock-picker {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+
+        .sales-edit-stock-picker span {
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          font-size: 10px;
+        }
+
+        .sales-edit-stock-picker select {
+          width: auto;
+          height: 32px;
+          padding: 4px 10px;
+          font-size: 12px;
+          font-weight: 700;
+        }
+
         .sales-edit-line {
           border: 1px solid var(--border);
           border-radius: 18px;
@@ -4873,8 +4945,28 @@ export default function VentasPage() {
           min-width: 0;
         }
 
+        .sales-edit-line-image {
+          width: 32px;
+          height: 32px;
+          border-radius: 10px;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          display: grid;
+          place-items: center;
+          color: var(--accent);
+          flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .sales-edit-line-image img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
         .sales-edit-line-title > div {
           min-width: 0;
+          flex: 1 1 auto;
           display: grid;
           gap: 3px;
         }

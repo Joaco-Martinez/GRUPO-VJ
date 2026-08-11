@@ -1153,7 +1153,7 @@ function buildSalePaginatedListInclude() {
     items: {
       include: {
         product: {
-          select: { id: true, name: true, sku: true, saleUnit: true },
+          select: { id: true, name: true, sku: true, saleUnit: true, imageUrl: true },
         },
       },
     },

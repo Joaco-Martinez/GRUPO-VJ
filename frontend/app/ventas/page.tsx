@@ -4747,9 +4747,11 @@ export default function VentasPage() {
           display: grid;
           grid-template-columns: minmax(340px, 430px) minmax(560px, 1fr);
           grid-template-rows: auto auto minmax(0, 1fr);
+          grid-auto-rows: min-content;
           gap: 16px;
           padding: 16px !important;
-          overflow: hidden !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
           background: var(--bg);
         }
 

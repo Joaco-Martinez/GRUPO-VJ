@@ -4728,8 +4728,8 @@ export default function VentasPage() {
         }
 
         .sales-edit-items-modal {
-          width: min(1280px, calc(100vw - 36px)) !important;
-          max-width: min(1280px, calc(100vw - 36px)) !important;
+          width: min(760px, calc(100vw - 36px)) !important;
+          max-width: min(760px, calc(100vw - 36px)) !important;
           height: min(94dvh, 900px);
           max-height: calc(100dvh - 24px);
           overflow: hidden;
@@ -4741,10 +4741,9 @@ export default function VentasPage() {
           border-bottom: 1px solid var(--border);
         }
 
-        /* Default: stacked single column with page-level scroll. Robust on
-           any screen size/resolution — this is what old/small-screen PCs
-           get. The 2-column layout below is an enhancement only turned on
-           for screens with enough width AND height to actually fit it. */
+        /* Always a single stacked column with page-level scroll, on every
+           screen size — deliberately simple so cards can never overlap.
+           No CSS grid, no position:sticky, no flex "order" tricks here. */
         .sales-edit-items-body {
           flex: 1 1 auto;
           min-height: 0;
@@ -4757,10 +4756,18 @@ export default function VentasPage() {
           background: var(--bg);
         }
 
+        /* flex-shrink: 0 en las tres es a propósito: sin esto, cuando el
+           modal no tiene alto suficiente para mostrar todas las tarjetas
+           completas, Flexbox las comprime por debajo de su contenido real
+           (en vez de dejarlas en su tamaño natural y scrollear el body),
+           y el contenido que no entra se desborda visualmente encima de
+           la tarjeta siguiente. Con flex-shrink:0 cada tarjeta SIEMPRE
+           ocupa su alto real, y si no entran todas, scrollea .sales-edit-items-body. */
         .sales-edit-products-picker,
         .sales-edit-lines,
         .sales-edit-delivery-card {
           min-width: 0;
+          flex-shrink: 0;
           display: flex;
           flex-direction: column;
           gap: 12px;
@@ -4771,17 +4778,11 @@ export default function VentasPage() {
         }
 
         .sales-edit-products-picker {
-          min-height: 0;
           max-height: 330px;
           overflow: hidden;
         }
 
-        .sales-edit-delivery-card {
-          min-height: 0;
-        }
-
         .sales-edit-lines {
-          min-height: 0;
           overflow: visible;
         }
 
@@ -4795,41 +4796,6 @@ export default function VentasPage() {
           overflow-y: auto;
           overflow-x: hidden;
           padding-right: 4px;
-        }
-
-        @media (min-width: 1300px) and (min-height: 820px) {
-          .sales-edit-items-body {
-            display: grid;
-            grid-template-columns: minmax(340px, 430px) minmax(560px, 1fr);
-            grid-template-rows: auto auto minmax(0, 1fr);
-            grid-auto-rows: min-content;
-          }
-
-          .sales-edit-products-picker {
-            grid-row: 1 / span 3;
-            max-height: none;
-          }
-
-          .sales-edit-products-list {
-            max-height: none;
-          }
-
-          .sales-edit-lines {
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding-right: 10px;
-          }
-
-          /* Solo tiene sentido pegar el header arriba cuando esta tarjeta
-             tiene scroll propio (arriba, en este mismo breakpoint). En el
-             layout apilado por defecto NO es sticky, para que no flote
-             encima de las tarjetas de Envío/Descuento al scrollear todo
-             el modal junto. */
-          .sales-edit-lines-head {
-            position: sticky;
-            top: 0;
-            z-index: 2;
-          }
         }
 
         .sales-edit-product-row {
@@ -6304,47 +6270,6 @@ export default function VentasPage() {
           }
         }
 
-
-        /* ===== FIX MOBILE: envío visible arriba ===== */
-        @media (max-width: 768px) {
-          .sales-edit-delivery-card {
-            order: 1 !important;
-            flex: 0 0 auto !important;
-            overflow: visible !important;
-          }
-
-          .sales-edit-products-picker {
-            order: 2 !important;
-            max-height: 30dvh !important;
-          }
-
-          .sales-edit-products-list {
-            max-height: calc(30dvh - 98px) !important;
-          }
-
-          .sales-edit-lines {
-            order: 3 !important;
-          }
-
-          .sales-edit-items-body {
-            padding-bottom: 14px !important;
-          }
-
-          .sales-edit-delivery-card .sales-edit-lines-head {
-            position: static !important;
-          }
-
-          .sales-edit-delivery-grid {
-            display: grid !important;
-            grid-template-columns: 1fr !important;
-          }
-
-          .sales-edit-delivery-grid label,
-          .sales-edit-delivery-calc,
-          .sales-edit-delivery-actions button {
-            width: 100% !important;
-          }
-        }
 
 
       `}</style>

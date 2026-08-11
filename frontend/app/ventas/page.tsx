@@ -4741,13 +4741,15 @@ export default function VentasPage() {
           border-bottom: 1px solid var(--border);
         }
 
+        /* Default: stacked single column with page-level scroll. Robust on
+           any screen size/resolution — this is what old/small-screen PCs
+           get. The 2-column layout below is an enhancement only turned on
+           for screens with enough width AND height to actually fit it. */
         .sales-edit-items-body {
           flex: 1 1 auto;
           min-height: 0;
-          display: grid;
-          grid-template-columns: minmax(340px, 430px) minmax(560px, 1fr);
-          grid-template-rows: auto auto minmax(0, 1fr);
-          grid-auto-rows: min-content;
+          display: flex;
+          flex-direction: column;
           gap: 16px;
           padding: 16px !important;
           overflow-y: auto !important;
@@ -4769,9 +4771,8 @@ export default function VentasPage() {
         }
 
         .sales-edit-products-picker {
-          grid-row: 1 / span 3;
           min-height: 0;
-          max-height: none;
+          max-height: 330px;
           overflow: hidden;
         }
 
@@ -4781,21 +4782,43 @@ export default function VentasPage() {
 
         .sales-edit-lines {
           min-height: 0;
-          overflow-y: auto;
-          overflow-x: hidden;
-          padding-right: 10px;
+          overflow: visible;
         }
 
         .sales-edit-products-list {
           flex: 1 1 auto;
           min-height: 0;
-          max-height: none;
+          max-height: 230px;
           display: grid;
           align-content: start;
           gap: 8px;
           overflow-y: auto;
           overflow-x: hidden;
           padding-right: 4px;
+        }
+
+        @media (min-width: 1300px) and (min-height: 820px) {
+          .sales-edit-items-body {
+            display: grid;
+            grid-template-columns: minmax(340px, 430px) minmax(560px, 1fr);
+            grid-template-rows: auto auto minmax(0, 1fr);
+            grid-auto-rows: min-content;
+          }
+
+          .sales-edit-products-picker {
+            grid-row: 1 / span 3;
+            max-height: none;
+          }
+
+          .sales-edit-products-list {
+            max-height: none;
+          }
+
+          .sales-edit-lines {
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 10px;
+          }
         }
 
         .sales-edit-product-row {
@@ -5210,28 +5233,6 @@ export default function VentasPage() {
 
           .pending-afip-alert-main p {
             max-width: none;
-          }
-        }
-
-        @media (max-width: 1100px) {
-          .sales-edit-items-body {
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto !important;
-          }
-
-          .sales-edit-products-picker {
-            grid-row: auto;
-            max-height: 330px;
-          }
-
-          .sales-edit-products-list {
-            max-height: 230px;
-          }
-
-          .sales-edit-lines {
-            overflow: visible;
-            padding-right: 0;
           }
         }
 

@@ -4819,6 +4819,17 @@ export default function VentasPage() {
             overflow-x: hidden;
             padding-right: 10px;
           }
+
+          /* Solo tiene sentido pegar el header arriba cuando esta tarjeta
+             tiene scroll propio (arriba, en este mismo breakpoint). En el
+             layout apilado por defecto NO es sticky, para que no flote
+             encima de las tarjetas de Envío/Descuento al scrollear todo
+             el modal junto. */
+          .sales-edit-lines-head {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+          }
         }
 
         .sales-edit-product-row {
@@ -4913,9 +4924,6 @@ export default function VentasPage() {
         }
 
         .sales-edit-lines-head {
-          position: sticky;
-          top: 0;
-          z-index: 2;
           margin: -12px -12px 0;
           padding: 12px;
           background: var(--surface);

@@ -1432,14 +1432,14 @@ export default function POSPage() {
         <button
           type="button"
           className={activeDefaultPriceType === RETAIL_PRICE_TYPE ? "active" : ""}
-          onClick={() => applyPriceTypeToCart(RETAIL_PRICE_TYPE)}
+          onClick={() => setDefaultPriceType(RETAIL_PRICE_TYPE)}
         >
           Minorista
         </button>
         <button
           type="button"
           className={activeDefaultPriceType === WHOLESALE_PRICE_TYPE ? "active" : ""}
-          onClick={() => applyPriceTypeToCart(WHOLESALE_PRICE_TYPE)}
+          onClick={() => setDefaultPriceType(WHOLESALE_PRICE_TYPE)}
         >
           Mayorista
         </button>

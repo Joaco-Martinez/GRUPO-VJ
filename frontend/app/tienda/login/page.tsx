@@ -29,9 +29,11 @@ function getErrorMessage(error: unknown, fallback: string) {
   );
 }
 
+const STAFF_ROLES = ["ADMIN", "EMPLEADO"];
+
 export default function TiendaLoginPage() {
   const router = useRouter();
-  const { login, isLoggedIn, loading } = useShopAuth();
+  const { login, user, isLoggedIn, loading } = useShopAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,9 +51,11 @@ export default function TiendaLoginPage() {
     if (showForgotPassword) return;
 
     if (isLoggedIn) {
-      router.replace("/tienda/cuenta");
+      router.replace(
+        user?.role && STAFF_ROLES.includes(user.role) ? "/pos" : "/tienda/cuenta"
+      );
     }
-  }, [loading, isLoggedIn, showForgotPassword, router]);
+  }, [loading, isLoggedIn, showForgotPassword, router, user]);
 
   function validateForm() {
     if (!email.trim()) {
@@ -78,14 +82,18 @@ export default function TiendaLoginPage() {
     const toastId = toast.loading("Iniciando sesión...");
 
     try {
-      await login({
+      const loggedUser = await login({
         email: email.trim(),
         password,
       });
 
       toast.success("Sesión iniciada correctamente", { id: toastId });
 
-      router.replace("/tienda/cuenta");
+      router.replace(
+        loggedUser.role && STAFF_ROLES.includes(loggedUser.role)
+          ? "/pos"
+          : "/tienda/cuenta"
+      );
       router.refresh();
     } catch (err: unknown) {
       const message = getErrorMessage(err, "No se pudo iniciar sesión");

@@ -228,6 +228,7 @@ type SalesStats = {
   cancelledCount?: number;
   confirmedTotal?: number;
   debt?: number;
+  deliveryTotal?: number;
 };
 
 type SalesFetchResult = {
@@ -1037,6 +1038,23 @@ export default function VentasPage() {
     serverStats?.debt !== undefined && serverStats?.debt !== null
       ? num(serverStats.debt)
       : fallbackDebt;
+
+  // El envío se vende como un item más (SKU ENVIO-FLETE2) y no siempre
+  // queda reflejado en deliveryMethod/deliveryCost de la venta (ej: se
+  // agrega como producto suelto al editar), así que se suma directo desde
+  // los items en vez de confiar en esos campos.
+  const fallbackDeliveryTotal = visibleMoneySales.reduce((a, s) => {
+    const deliveryItemsTotal = (s.items ?? [])
+      .filter((item) => isDeliveryProduct(item.product))
+      .reduce((acc, item) => acc + num(item.subtotal, num(item.price)), 0);
+
+    return a + deliveryItemsTotal;
+  }, 0);
+
+  const deliveryTotal =
+    serverStats?.deliveryTotal !== undefined && serverStats?.deliveryTotal !== null
+      ? num(serverStats.deliveryTotal)
+      : fallbackDeliveryTotal;
 
   const salesCount = num(serverStats?.totalCount, serverPaginated ? serverTotalItems : sales.length);
   const pendingCount = num(
@@ -2270,6 +2288,13 @@ export default function VentasPage() {
               {fmtMoney(debt)}
             </div>
             <div className="stat-label">Deuda real</div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-value" style={{ color: 'var(--accent)' }}>
+              {fmtMoney(deliveryTotal)}
+            </div>
+            <div className="stat-label">Total envíos a cobrar</div>
           </div>
         </div>
       )}

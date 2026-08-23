@@ -389,6 +389,7 @@ const getMovementLinkedRef = (
 const getCleanMovementDescription = (movement?: AnyObj | null) => {
   const description = String(movement?.description || "").trim();
   return description
+    .replace(/\[sale-envio:[a-zA-Z0-9-]+\]\s*/i, "")
     .replace(/\[sale:[a-zA-Z0-9-]+\]\s*/i, "")
     .replace(/\[purchase:[a-zA-Z0-9-]+\]\s*/i, "")
     .trim();

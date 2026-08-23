@@ -1301,6 +1301,9 @@ export default function POSPage() {
         stockLocation,
         paymentMethod,
         receiptType,
+        // Venta del POS = venta directa en mostrador, se confirma al
+        // instante en vez de quedar "pendiente" esperando confirmación.
+        status: "COMPLETED",
         discountType: discountType || undefined,
         discountValue: discountType ? num(discountValue) : undefined,
         businessLocationId:

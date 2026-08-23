@@ -792,11 +792,18 @@ export default function ComprasPage() {
                 />
               </label>
             ) : (
-              <div className="pos-stepper">
+              <div className="pos-stepper pos-stepper-editable">
                 <button type="button" onClick={() => setQty(lineKey, item.quantity - 1)}>
                   <Minus size={14} />
                 </button>
-                <span>{item.quantity}</span>
+                <input
+                  type="number"
+                  min={1}
+                  step="1"
+                  value={item.quantity}
+                  onChange={(e) => setQty(lineKey, num(e.target.value))}
+                  onFocus={(e) => e.target.select()}
+                />
                 <button type="button" onClick={() => setQty(lineKey, item.quantity + 1)}>
                   <Plus size={14} />
                 </button>
@@ -1272,6 +1279,10 @@ export default function ComprasPage() {
         .pos-stepper { display: inline-grid; grid-template-columns: 36px 36px 36px; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface2); }
         .pos-stepper button { height: 36px; border: 0; background: transparent; color: var(--text); display: grid; place-items: center; }
         .pos-stepper span { text-align: center; font-weight: 900; font-family: var(--mono); }
+        .pos-stepper input { width: 100%; height: 36px; border: 0; background: transparent; color: var(--text); text-align: center; font-weight: 900; font-family: var(--mono); font-size: 14px; -moz-appearance: textfield; }
+        .pos-stepper input::-webkit-outer-spin-button,
+        .pos-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .pos-stepper input:focus { outline: none; }
         .pos-kg-input { display: grid; grid-template-columns: 30px 90px; align-items: center; gap: 7px; }
         .pos-kg-input input { height: 36px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); padding: 0 10px; width: 100%; }
         .pos-cart-footer { border-top: 1px solid var(--border); background: var(--surface); padding: 11px 12px max(12px, env(safe-area-inset-bottom)); box-shadow: 0 -18px 44px rgba(0,0,0,.32); }

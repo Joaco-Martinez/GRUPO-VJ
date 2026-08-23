@@ -12,6 +12,12 @@ import {
   weekRangeAR,
 } from "../utils/dateAR";
 
+const DELIVERY_SKU = "ENVIO-FLETE2";
+
+function normalizeSku(value?: string | null) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
 function fmtKgAR(n: number) {
   return n.toLocaleString("es-AR", {
     minimumFractionDigits: 3,
@@ -270,16 +276,7 @@ export const financeService = {
     if (sale.status !== "COMPLETED") return null;
 
     const marker = `[sale:${sale.id}]`;
-
-    const existing = await prisma.finance.findFirst({
-      where: {
-        type: "INGRESO",
-        category: "VENTA",
-        description: {
-          contains: marker,
-        },
-      },
-    });
+    const deliveryMarker = `[sale-envio:${sale.id}]`;
 
     const paidAmount = sale.payments?.length
       ? sale.payments
@@ -291,35 +288,80 @@ export const financeService = {
 
     const amount = Number(paidAmount.toFixed(2));
 
-    // Si ya existía un ingreso de esta venta, lo sincronizamos.
-    // Esto evita que quede mal si después cambian los pagos.
-    if (existing) {
-      if (amount <= 0) {
-        return prisma.finance.delete({
-          where: {
-            id: existing.id,
+    // El envío se vende como un item más (SKU ENVIO-FLETE2). Para que en
+    // Finanzas se vea discriminado del resto de la venta, se separa el
+    // ingreso en dos movimientos proporcionales al peso de cada parte
+    // dentro del subtotal de items (así funciona igual con descuentos y
+    // pagos parciales).
+    const isDeliveryItem = (item: (typeof sale.items)[number]) =>
+      normalizeSku(item.productSkuSnapshot ?? item.product?.sku) === DELIVERY_SKU;
+
+    const itemsSubtotalTotal = sale.items.reduce(
+      (acc, item) => acc + Number(item.subtotal || 0),
+      0
+    );
+    const deliverySubtotal = sale.items
+      .filter(isDeliveryItem)
+      .reduce((acc, item) => acc + Number(item.subtotal || 0), 0);
+
+    const deliveryAmount =
+      amount > 0 && deliverySubtotal > 0 && itemsSubtotalTotal > 0
+        ? Number(((amount * deliverySubtotal) / itemsSubtotalTotal).toFixed(2))
+        : 0;
+    const saleAmount = Number((amount - deliveryAmount).toFixed(2));
+
+    const paymentMethod = sale.payments?.length
+      ? sale.payments[0].method
+      : sale.paymentMethod;
+
+    const syncMovement = async (options: {
+      findMarker: string;
+      category: "VENTA" | "Eenvios";
+      movementAmount: number;
+      buildDescription: () => string;
+    }) => {
+      const existing = await prisma.finance.findFirst({
+        where: {
+          type: "INGRESO",
+          category: options.category,
+          description: {
+            contains: options.findMarker,
+          },
+        },
+      });
+
+      if (existing) {
+        if (options.movementAmount <= 0) {
+          return prisma.finance.delete({ where: { id: existing.id } });
+        }
+
+        return prisma.finance.update({
+          where: { id: existing.id },
+          data: {
+            amount: options.movementAmount,
+            paymentMethod,
+            date: existing.date,
           },
         });
       }
 
-      return prisma.finance.update({
-        where: {
-          id: existing.id,
-        },
+      // Venta 100% cuenta corriente (o sin parte de envío): no genera
+      // ingreso hasta que corresponda.
+      if (options.movementAmount <= 0) return null;
+
+      return prisma.finance.create({
         data: {
-          amount,
-          paymentMethod: sale.payments?.length
-            ? sale.payments[0].method
-            : sale.paymentMethod,
-          date: existing.date,
+          type: "INGRESO",
+          amount: options.movementAmount,
+          category: options.category,
+          description: options.buildDescription(),
+          date: new Date(),
+          paymentMethod,
         },
       });
-    }
+    };
 
-    // Venta 100% cuenta corriente: no genera ingreso hasta que se cobre.
-    if (amount <= 0) return null;
-
-    const itemsDesc = sale.items.map((i) => {
+    const itemsDesc = sale.items.filter((i) => !isDeliveryItem(i)).map((i) => {
       const saleUnit = (i.product as any)?.saleUnit;
 
       if (i.product) {
@@ -342,20 +384,25 @@ export const financeService = {
       return "Item desconocido";
     });
 
-    const description = `${marker} Venta de ${itemsDesc.join(", ")}`;
-
-    return prisma.finance.create({
-      data: {
-        type: "INGRESO",
-        amount,
+    const [saleMovement, deliveryMovement] = await Promise.all([
+      syncMovement({
+        findMarker: marker,
         category: "VENTA",
-        description,
-        date: new Date(),
-        paymentMethod: sale.payments?.length
-          ? sale.payments[0].method
-          : sale.paymentMethod,
-      },
-    });
+        movementAmount: saleAmount,
+        buildDescription: () =>
+          itemsDesc.length
+            ? `${marker} Venta de ${itemsDesc.join(", ")}`
+            : `${marker} Venta de envío`,
+      }),
+      syncMovement({
+        findMarker: deliveryMarker,
+        category: "Eenvios",
+        movementAmount: deliveryAmount,
+        buildDescription: () => `${deliveryMarker} Costo de envío ${marker}`,
+      }),
+    ]);
+
+    return saleMovement ?? deliveryMovement;
   },
 
   async registerCreditNote(amount: number, description: string, userId: string) {

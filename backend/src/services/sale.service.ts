@@ -1298,7 +1298,7 @@ async function buildSalesStats(params: GetSalesParams = {}) {
     `sales:stats:${JSON.stringify(baseWhere)}`,
     SALES_STATS_CACHE_TTL_MS,
     async () => {
-      const [statusCounts, confirmedTotal, debt] = await Promise.all([
+      const [statusCounts, confirmedTotal, debt, deliveryTotal] = await Promise.all([
         prisma.sale.groupBy({
           by: ["status"],
           where: baseWhere,
@@ -1308,6 +1308,20 @@ async function buildSalesStats(params: GetSalesParams = {}) {
         prisma.sale.aggregate({
           where: confirmedWhere,
           _sum: { accountDebtAmount: true },
+        }),
+        // El envío se vende como un ítem más de la venta (SKU ENVIO-FLETE2),
+        // no siempre queda reflejado en Sale.deliveryCost/deliveryMethod
+        // (ej: se agrega como producto suelto al editar una venta). Por eso
+        // se suma directo desde los items en vez de confiar en esos campos.
+        prisma.saleItem.aggregate({
+          where: {
+            OR: [
+              { productSkuSnapshot: { equals: DELIVERY_SKU, mode: "insensitive" } },
+              { product: { sku: { equals: DELIVERY_SKU, mode: "insensitive" } } },
+            ],
+            sale: confirmedWhere,
+          },
+          _sum: { subtotal: true },
         }),
       ]);
 
@@ -1326,6 +1340,7 @@ async function buildSalesStats(params: GetSalesParams = {}) {
         cancelledCount: countByStatus.get(SaleStatus.CANCELLED) ?? 0,
         confirmedTotal: round2(Number(confirmedTotal._sum.total ?? 0)),
         debt: round2(Number(debt._sum.accountDebtAmount ?? 0)),
+        deliveryTotal: round2(Number(deliveryTotal._sum.subtotal ?? 0)),
       };
     }
   );
@@ -1689,6 +1704,28 @@ export const saleService = {
 
     queueStockAlerts(pendingAlerts);
     queueSalePdfGeneration(result.id);
+
+    if (saleStatus === SaleStatus.COMPLETED) {
+      // Una venta puede nacer ya confirmada (ej: venta directa desde el
+      // POS, sin pasar por "pendiente"). En ese caso replicamos los mismos
+      // efectos que updateStatus() dispara al pasar PENDING -> COMPLETED,
+      // porque acá no pasamos por ese método.
+      await financeService.registerIncomeFromSale(result.id);
+
+      await productStatsService.createStatsFromSale(
+        result.items
+          .filter((item) => !item.product?.isService)
+          .map((item) => {
+            const saleUnit = item.product?.saleUnit as SaleUnit;
+
+            return {
+              productId: item.productId,
+              quantity: saleUnit === SaleUnit.KG ? 0 : item.quantity,
+              quantityKg: saleUnit === SaleUnit.KG ? item.quantityKg ?? 0 : undefined,
+            };
+          })
+      );
+    }
 
     return {
       sale: result,

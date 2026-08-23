@@ -1289,11 +1289,11 @@ export default function POSPage() {
     return true;
   };
 
-  const submitSale = async () => {
+  const submitSale = async (status: "COMPLETED" | "PENDING" = "COMPLETED") => {
     if (!validateSale()) return;
 
     setSubmitting(true);
-    const toastId = toast.loading("Registrando venta...");
+    const toastId = toast.loading(status === "PENDING" ? "Guardando venta pendiente..." : "Registrando venta...");
 
     try {
       const payload = {
@@ -1301,9 +1301,10 @@ export default function POSPage() {
         stockLocation,
         paymentMethod,
         receiptType,
-        // Venta del POS = venta directa en mostrador, se confirma al
-        // instante en vez de quedar "pendiente" esperando confirmación.
-        status: "COMPLETED",
+        // Venta del POS = venta directa en mostrador por default (se
+        // confirma al instante, sin pasar por el paso manual de
+        // confirmación) -- salvo que el cajero elija "Dejar pendiente".
+        status,
         discountType: discountType || undefined,
         discountValue: discountType ? num(discountValue) : undefined,
         businessLocationId:
@@ -1365,9 +1366,12 @@ export default function POSPage() {
       setClientGateMode(null);
       setConsumerFinalConfirmed(false);
 
-      toast.success("Venta registrada correctamente", { id: toastId });
+      toast.success(status === "PENDING" ? "Venta guardada como pendiente" : "Venta registrada correctamente", { id: toastId });
 
-      if (createdSale?.id) {
+      // El ticket no fiscal se ofrece solo si la venta quedo confirmada --
+      // no tiene sentido imprimir un comprobante de algo que todavia esta
+      // pendiente de confirmar.
+      if (createdSale?.id && status === "COMPLETED") {
         setPostSaleTicket({ saleId: createdSale.id });
       }
 
@@ -1379,15 +1383,20 @@ export default function POSPage() {
     }
   };
 
-  const openSubmitConfirm = () => {
+  const openSubmitConfirm = (status: "COMPLETED" | "PENDING" = "COMPLETED") => {
     if (!validateSale()) return;
 
+    const isPending = status === "PENDING";
+    const debtNote = debt > 0 ? ` Quedará en cuenta corriente: ${fmtMoney(debt)}.` : "";
+
     setConfirmModal({
-      title: "Finalizar venta",
-      message: `¿Confirmás registrar esta venta por ${fmtMoney(total)}?${debt > 0 ? ` Quedará en cuenta corriente: ${fmtMoney(debt)}.` : ""}`,
-      confirmText: "Finalizar venta",
+      title: isPending ? "Dejar venta pendiente" : "Finalizar venta",
+      message: isPending
+        ? `¿Guardar esta venta por ${fmtMoney(total)} como pendiente? La vas a poder confirmar después desde Ventas.${debtNote}`
+        : `¿Confirmás registrar esta venta por ${fmtMoney(total)}?${debtNote}`,
+      confirmText: isPending ? "Dejar pendiente" : "Finalizar venta",
       danger: false,
-      onConfirm: submitSale,
+      onConfirm: () => submitSale(status),
     });
   };
 
@@ -2078,9 +2087,14 @@ export default function POSPage() {
                       <div className="total"><span>Total</span><b>{fmtMoney(total)}</b></div>
                     </div>
                     {debt > 0 && <div className="badge badge-yellow debt-badge">Queda en cuenta corriente: {fmtMoney(debt)}</div>}
-                    <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={openSubmitConfirm}>
-                      <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
-                    </button>
+                    <div className="pos-finish-row">
+                      <button type="button" className="pos-finish-secondary" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm("PENDING")}>
+                        Dejar pendiente
+                      </button>
+                      <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm()}>
+                        <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
+                      </button>
+                    </div>
                   </footer>
                 </div>
               </div>
@@ -2368,9 +2382,14 @@ export default function POSPage() {
                       {discount > 0 && <div><span>Descuento</span><b>-{fmtMoney(discount)}</b></div>}
                       <div className="total"><span>Total</span><b>{fmtMoney(total)}</b></div>
                     </div>
-                    <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={openSubmitConfirm}>
-                      <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
-                    </button>
+                    <div className="pos-finish-row">
+                      <button type="button" className="pos-finish-secondary" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm("PENDING")}>
+                        Dejar pendiente
+                      </button>
+                      <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm()}>
+                        <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
+                      </button>
+                    </div>
                   </footer>
                 </div>
               </div>
@@ -3239,13 +3258,22 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 .debt-badge { margin-bottom: 10px; }
 
 /* Floating finish button */
+.pos-finish-row { display: flex; gap: 8px; }
 .pos-finish {
-  width: 100%; min-height: 52px; border: 0; border-radius: 18px;
+  flex: 1; min-height: 52px; border: 0; border-radius: 18px;
   background: var(--accent); color: white;
   display: inline-flex; align-items: center; justify-content: center;
   gap: 8px; font-size: 15px; font-weight: 950; cursor: pointer;
 }
 .pos-finish:disabled { opacity: .45; }
+.pos-finish-secondary {
+  flex: 0 0 auto; min-height: 52px; border-radius: 18px;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text2); font-size: 13px; font-weight: 800; cursor: pointer;
+  padding: 0 14px; white-space: nowrap;
+}
+.pos-finish-secondary:hover { border-color: var(--accent); color: var(--text1); }
+.pos-finish-secondary:disabled { opacity: .45; }
 
 /* Cart preview dots */
 .pos-cart-preview {

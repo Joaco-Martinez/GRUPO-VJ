@@ -25,6 +25,14 @@ function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+// El costo de envío se cobra siempre en pesos enteros (igual que el resto de
+// los precios del sistema); si se redondeara a centavos, la distancia real
+// (con decimales) filtra centavos al total de la venta que después no
+// coinciden con lo que se muestra en pantalla (montos siempre en pesos enteros).
+function roundMoney(n: number) {
+  return Math.round(n);
+}
+
 function toRad(value: number) {
   return (value * Math.PI) / 180;
 }
@@ -353,7 +361,7 @@ export const deliveryService = {
     }
 
     const roundedDistanceKm = round2(distanceKm);
-    const deliveryCost = round2(roundedDistanceKm * pricePerKm);
+    const deliveryCost = roundMoney(roundedDistanceKm * pricePerKm);
 
     const roundedShortKm = round2(shortDistanceKm);
     const roundedLongKm = round2(longDistanceKm);
@@ -365,7 +373,7 @@ export const deliveryService = {
         label: "Ruta corta",
         distanceKm: roundedShortKm,
         durationMinutes: shortDurationMinutes,
-        deliveryCost: round2(roundedShortKm * pricePerKm),
+        deliveryCost: roundMoney(roundedShortKm * pricePerKm),
       },
       {
         key: "CALCULATED" as const,
@@ -379,7 +387,7 @@ export const deliveryService = {
         label: "Ruta larga",
         distanceKm: roundedLongKm,
         durationMinutes: longDurationMinutes,
-        deliveryCost: round2(roundedLongKm * pricePerKm),
+        deliveryCost: roundMoney(roundedLongKm * pricePerKm),
       },
     ];
 
@@ -388,7 +396,7 @@ export const deliveryService = {
       label: "Promedio",
       distanceKm: averageKm,
       durationMinutes: null,
-      deliveryCost: round2(averageKm * pricePerKm),
+      deliveryCost: roundMoney(averageKm * pricePerKm),
     };
 
     const originAddress = buildLocationAddress(location);

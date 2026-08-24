@@ -645,6 +645,10 @@ export default function ProductosPage() {
 
   const buildPayloadObject = () => {
     const isService = form.isService === 'true';
+    // La cantidad de stock sólo se puede fijar al crear el producto. En edición
+    // se gestiona exclusivamente desde el apartado de Stock (altas/transferencias
+    // con su propio registro de movimientos), así que no se manda en el payload.
+    const isEditing = modal === 'product-edit';
 
     return {
       ...form,
@@ -667,10 +671,10 @@ export default function ProductosPage() {
       wholesalePricePerKg:
         form.wholesalePricePerKg === '' ? undefined : num(form.wholesalePricePerKg),
 
-      stockLocal: isService ? 0 : num(form.stockLocal),
-      stockDeposito: isService ? 0 : num(form.stockDeposito),
-      stockLocalKg: isService ? 0 : num(form.stockLocalKg),
-      stockDepositoKg: isService ? 0 : num(form.stockDepositoKg),
+      stockLocal: isEditing ? undefined : isService ? 0 : num(form.stockLocal),
+      stockDeposito: isEditing ? undefined : isService ? 0 : num(form.stockDeposito),
+      stockLocalKg: isEditing ? undefined : isService ? 0 : num(form.stockLocalKg),
+      stockDepositoKg: isEditing ? undefined : isService ? 0 : num(form.stockDepositoKg),
 
       minStock: isService ? 0 : num(form.minStock),
       minStockDeposito: isService ? 0 : num(form.minStockDeposito),
@@ -2246,6 +2250,8 @@ export default function ProductosPage() {
                             <input
                               type="number"
                               value={form.saleUnit === 'KG' ? form.stockDepositoKg : form.stockDeposito}
+                              disabled={modal === 'product-edit'}
+                              title={modal === 'product-edit' ? 'El stock se modifica desde el apartado Stock' : undefined}
                               onChange={(e) =>
                                 setForm((p) => ({
                                   ...p,
@@ -2253,6 +2259,14 @@ export default function ProductosPage() {
                                 }))
                               }
                             />
+                            {modal === 'product-edit' && (
+                              <small
+                                className="products-pricing-note"
+                                style={{ display: 'block', marginTop: 8 }}
+                              >
+                                Para sumar o transferir stock, hacelo desde el apartado Stock.
+                              </small>
+                            )}
                           </div>
 
                           <div className="form-group">
@@ -2315,6 +2329,8 @@ export default function ProductosPage() {
                             <input
                               type="number"
                               value={form.saleUnit === 'KG' ? form.stockLocalKg : form.stockLocal}
+                              disabled={modal === 'product-edit'}
+                              title={modal === 'product-edit' ? 'El stock se modifica desde el apartado Stock' : undefined}
                               onChange={(e) =>
                                 setForm((p) => ({
                                   ...p,
@@ -2322,6 +2338,14 @@ export default function ProductosPage() {
                                 }))
                               }
                             />
+                            {modal === 'product-edit' && (
+                              <small
+                                className="products-pricing-note"
+                                style={{ display: 'block', marginTop: 8 }}
+                              >
+                                Para sumar o transferir stock, hacelo desde el apartado Stock.
+                              </small>
+                            )}
                           </div>
 
                           <div className="form-group">

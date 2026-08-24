@@ -87,7 +87,7 @@ const emptyForm: StockForm = {
   location: "LOCAL",
   quantity: "",
   quantityKg: "",
-  mode: "ADD",
+  mode: "TRANSFER",
 };
 
 const MOBILE_STOCK_PAGE_SIZE = 8;

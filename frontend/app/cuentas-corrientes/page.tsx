@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { AccountMovement, Client, PaymentMethod } from '@/types';
@@ -490,7 +491,9 @@ export default function CuentasCorrientesPage() {
         </div>
       </div>
 
-      {client && (
+      {client &&
+        typeof document !== 'undefined' &&
+        createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closePaymentModal()}
@@ -585,10 +588,15 @@ export default function CuentasCorrientesPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <style jsx>{`
+        .modal-overlay {
+          z-index: 2147483000 !important;
+        }
+
         .cc-mobile-list {
           display: none;
         }

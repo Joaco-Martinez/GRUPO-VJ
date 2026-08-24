@@ -2518,7 +2518,10 @@ export default function ClientesPage() {
         document.body,
       )}
 
-      {modal === "payment" && editing && (
+      {modal === "payment" &&
+        editing &&
+        typeof document !== "undefined" &&
+        createPortal(
         <div
           className="modal-overlay"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
@@ -2634,7 +2637,8 @@ export default function ClientesPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {modal === "history" && editing && (

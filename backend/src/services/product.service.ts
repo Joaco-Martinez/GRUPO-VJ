@@ -1439,6 +1439,145 @@
       return updated;
     },
 
+    async removeStock(
+      productId: string,
+      from: Location,
+      quantity: number,
+      userId: string,
+    ) {
+      if (!userId) throw new Error("Falta userId en la operación de salida");
+
+      const qty = Number(quantity);
+
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error("Cantidad inválida");
+      }
+
+      const product = await prisma.product.findUnique({
+        where: { id: productId },
+      });
+
+      if (!product) throw new Error("Producto no encontrado");
+
+      if (product.saleUnit !== SaleUnit.UNIT) {
+        throw new Error("Este producto no se maneja por unidades");
+      }
+
+      if (product.type === ProductType.COMPUESTO) {
+        throw new Error(
+          "No se saca stock directo de productos compuestos. Sacá stock de sus componentes",
+        );
+      }
+
+      if (from === Location.DEPOSITO && product.stockDeposito < qty) {
+        throw new Error("Stock insuficiente en depósito");
+      }
+
+      if (from === Location.LOCAL && product.stockLocal < qty) {
+        throw new Error("Stock insuficiente en local");
+      }
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const productUpdated = await tx.product.update({
+          where: { id: productId },
+          data: {
+            stockLocal: from === Location.LOCAL ? { decrement: qty } : undefined,
+            stockDeposito:
+              from === Location.DEPOSITO ? { decrement: qty } : undefined,
+          },
+        });
+
+        await tx.stockMovement.create({
+          data: {
+            productId,
+            userId,
+            type: MovementType.ADJUSTMENT,
+            from,
+            to: null,
+            quantity: qty,
+          },
+        });
+
+        return productUpdated;
+      });
+
+      await alertService.checkProductStock(updated.id);
+
+      invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
+      return updated;
+    },
+
+    async removeStockKg(
+      productId: string,
+      from: Location,
+      quantityKg: number,
+      userId: string,
+    ) {
+      if (!userId) throw new Error("Falta userId en la operación de salida");
+
+      const product = await prisma.product.findUnique({
+        where: { id: productId },
+      });
+
+      if (!product) throw new Error("Producto no encontrado");
+
+      if (product.saleUnit !== SaleUnit.KG) {
+        throw new Error("Este producto no es por KG");
+      }
+
+      if (product.type === ProductType.COMPUESTO) {
+        throw new Error(
+          "No se saca stock directo de productos compuestos. Sacá stock de sus componentes",
+        );
+      }
+
+      const qty = Number(quantityKg);
+
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error("Cantidad KG inválida");
+      }
+
+      if (from === Location.DEPOSITO && (product.stockDepositoKg ?? 0) < qty) {
+        throw new Error("Stock insuficiente en depósito KG");
+      }
+
+      if (from === Location.LOCAL && (product.stockLocalKg ?? 0) < qty) {
+        throw new Error("Stock insuficiente en local KG");
+      }
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const productUpdated = await tx.product.update({
+          where: { id: productId },
+          data: {
+            stockLocalKg:
+              from === Location.LOCAL ? { decrement: qty } : undefined,
+            stockDepositoKg:
+              from === Location.DEPOSITO ? { decrement: qty } : undefined,
+          },
+        });
+
+        await tx.stockMovement.create({
+          data: {
+            productId,
+            userId,
+            type: MovementType.ADJUSTMENT,
+            from,
+            to: null,
+            quantityKg: qty,
+          },
+        });
+
+        return productUpdated;
+      });
+
+      await alertService.checkProductStock(updated.id);
+
+      invalidateCache(PRODUCTS_LIST_CACHE_PREFIX);
+
+      return updated;
+    },
+
     async getMovements(filters?: GetStockMovementsFilters) {
       const where = buildStockMovementWhere(filters);
 

@@ -23,7 +23,7 @@ import toast from "react-hot-toast";
 
 // ─── tipos ────────────────────────────────────────────────────────────────────
 
-type StockMode = "ADD" | "TRANSFER";
+type StockMode = "ADD" | "REMOVE" | "TRANSFER";
 type MobileTab = "stock" | "movements";
 type SortKey = "category" | "product" | "sku";
 type SortDirection = "asc" | "desc";
@@ -979,13 +979,16 @@ export default function StockPage() {
     const quantityKg = num(form.quantityKg);
     const isKg = selected.saleUnit === "KG";
     const isTransfer = form.mode === "TRANSFER";
+    const isRemove = form.mode === "REMOVE";
 
     if (isKg && quantityKg <= 0) { toast.error("Ingresá una cantidad válida en kg"); return; }
     if (!isKg && quantity <= 0) { toast.error("Ingresá una cantidad válida"); return; }
     if (isTransfer && form.from === form.to) { toast.error("El origen y el destino no pueden ser iguales"); return; }
 
     setSaving(true);
-    const toastId = toast.loading(isTransfer ? "Transfiriendo stock..." : "Agregando stock...");
+    const toastId = toast.loading(
+      isTransfer ? "Transfiriendo stock..." : isRemove ? "Sacando stock..." : "Agregando stock...",
+    );
 
     try {
       if (isTransfer) {
@@ -993,6 +996,12 @@ export default function StockPage() {
           await api.post(`/products/${selected.id}/transfer-kg`, { from: form.from, to: form.to, quantityKg });
         } else {
           await api.post("/products/transfer", { productId: selected.id, from: form.from, to: form.to, quantity });
+        }
+      } else if (isRemove) {
+        if (isKg) {
+          await api.post(`/products/${selected.id}/remove-stock-kg`, { from: form.location, quantityKg });
+        } else {
+          await api.post("/products/remove-stock", { productId: selected.id, from: form.location, quantity });
         }
       } else {
         if (isKg) {
@@ -1006,7 +1015,10 @@ export default function StockPage() {
       setProductSearch("");
       setProductPickerOpen(false);
       setMobileSheetOpen(false);
-      toast.success(isTransfer ? "Stock transferido correctamente" : "Stock agregado correctamente", { id: toastId });
+      toast.success(
+        isTransfer ? "Stock transferido correctamente" : isRemove ? "Stock descontado correctamente" : "Stock agregado correctamente",
+        { id: toastId },
+      );
       await load();
     } catch (e: unknown) {
       toast.error(getErrorMessage(e, "Error al mover stock"), { id: toastId });
@@ -1111,6 +1123,7 @@ export default function StockPage() {
           disabled={saving}
         >
           <option value="ADD">Agregar</option>
+          <option value="REMOVE">Sacar</option>
           <option value="TRANSFER">Transferir</option>
         </select>
       </div>
@@ -1142,7 +1155,7 @@ export default function StockPage() {
         </>
       ) : (
         <div className="stock-location-field">
-          <label className="form-label">Destino</label>
+          <label className="form-label">{form.mode === "REMOVE" ? "Origen" : "Destino"}</label>
           <select
             value={form.location}
             onChange={(e) => setForm((p) => ({ ...p, location: e.target.value as MovementLocation }))}
@@ -1182,6 +1195,8 @@ export default function StockPage() {
           <span className="spinner" />
         ) : form.mode === "TRANSFER" ? (
           <><ArrowLeftRight size={14} /> Transferir</>
+        ) : form.mode === "REMOVE" ? (
+          <><ArrowUpCircle size={14} /> Sacar stock</>
         ) : (
           "Agregar stock"
         )}

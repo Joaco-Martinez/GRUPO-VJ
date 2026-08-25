@@ -17,6 +17,7 @@ router.get("/movements", authMiddleware, productController.getMovements);
 // Stock UNIT
 router.post("/transfer", authMiddleware, productController.transferStock);
 router.post("/add-stock", authMiddleware, productController.addStock);
+router.post("/remove-stock", authMiddleware, productController.removeStock);
 
 // Stock KG
 router.post(
@@ -31,6 +32,13 @@ router.post(
   authMiddleware,
   requireRole("ADMIN"),
   productController.addStockKg
+);
+
+router.post(
+  "/:id/remove-stock-kg",
+  authMiddleware,
+  requireRole("ADMIN"),
+  productController.removeStockKg
 );
 
 // SKU

@@ -390,6 +390,52 @@ export const productController = {
     }
   },
 
+  async removeStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { productId, from, quantity } = req.body;
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const updated = await productService.removeStock(
+        productId,
+        from,
+        Number(quantity),
+        userId,
+      );
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async removeStockKg(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { from, quantityKg } = req.body;
+
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+        return res.status(401).json({ message: "No autorizado" });
+      }
+
+      const updated = await productService.removeStockKg(
+        getParamAsString(id, "id"),
+        from,
+        Number(quantityKg),
+        userId,
+      );
+
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   async transferStockKg(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;

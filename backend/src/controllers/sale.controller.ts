@@ -142,12 +142,14 @@ function getAuthUserId(req: Request) {
 export const saleController = {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const { page, limit, search, status } = req.query;
+      const { page, limit, search, status, dateFrom, dateTo } = req.query;
       const sales = await saleService.getAll({
         page: page !== undefined ? Number(page) : undefined,
         limit: limit !== undefined ? Number(limit) : undefined,
         search: typeof search === "string" ? search : undefined,
         status: typeof status === "string" ? status : undefined,
+        dateFrom: typeof dateFrom === "string" ? dateFrom : undefined,
+        dateTo: typeof dateTo === "string" ? dateTo : undefined,
       });
       res.json(safeJson(sales));
     } catch (err) {

@@ -717,7 +717,14 @@ function normalizeSalesFetchResponse(data: any, fallbackPage: number): SalesFetc
   };
 }
 
-async function fetchSales(params?: { page?: number; limit?: number; search?: string; status?: string }) {
+async function fetchSales(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
   const r = await api.get('/sales', { params });
   return normalizeSalesFetchResponse(r.data, params?.page ?? 1);
 }
@@ -728,6 +735,8 @@ export default function VentasPage() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [detail, setDetail] = useState<Sale | null>(null);
   const [payEdit, setPayEdit] = useState<Sale | null>(null);
@@ -821,6 +830,8 @@ export default function VentasPage() {
         limit: PAGE_SIZE,
         search: debouncedSearch || undefined,
         status: status || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
       });
 
       setSales(result.items);
@@ -972,7 +983,7 @@ export default function VentasPage() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, debouncedSearch, status]);
+  }, [currentPage, debouncedSearch, status, dateFrom, dateTo]);
 
 
   useEffect(() => {
@@ -1017,7 +1028,7 @@ export default function VentasPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, status]);
+  }, [search, status, dateFrom, dateTo]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -2294,7 +2305,9 @@ export default function VentasPage() {
             <div className="stat-value" style={{ color: 'var(--accent)' }}>
               {fmtMoney(deliveryTotal)}
             </div>
-            <div className="stat-label">Total envíos a cobrar</div>
+            <div className="stat-label">
+              Envíos cobrados{dateFrom || dateTo ? ' (período filtrado)' : ' (histórico)'}
+            </div>
           </div>
         </div>
       )}
@@ -2352,7 +2365,7 @@ export default function VentasPage() {
         </div>
       )}
 
-      <div className="sales-filters" style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+      <div className="sales-filters" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
         <div className="sales-search" style={{ position: 'relative', flex: 1 }}>
           <Search
             size={14}
@@ -2383,6 +2396,53 @@ export default function VentasPage() {
           <option value="COMPLETED">Completadas</option>
           <option value="CANCELLED">Canceladas</option>
         </select>
+
+        <input
+          type="date"
+          value={dateFrom}
+          max={dateTo || undefined}
+          onChange={(e) => setDateFrom(e.target.value)}
+          title="Desde"
+          style={{ width: 150 }}
+        />
+
+        <input
+          type="date"
+          value={dateTo}
+          min={dateFrom || undefined}
+          onChange={(e) => setDateTo(e.target.value)}
+          title="Hasta"
+          style={{ width: 150 }}
+        />
+
+        {(dateFrom || dateTo) && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => {
+              setDateFrom('');
+              setDateTo('');
+            }}
+          >
+            Limpiar fechas
+          </button>
+        )}
+
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => {
+            const now = new Date();
+            const first = new Date(now.getFullYear(), now.getMonth(), 1);
+            const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            const toIso = (d: Date) =>
+              `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            setDateFrom(toIso(first));
+            setDateTo(toIso(last));
+          }}
+        >
+          Este mes
+        </button>
       </div>
 
       <div className="card sales-card">
@@ -5352,7 +5412,9 @@ export default function VentasPage() {
           }
 
           .sales-search input,
-          .sales-filters select {
+          .sales-filters select,
+          .sales-filters input[type='date'],
+          .sales-filters button {
             width: 100% !important;
           }
 

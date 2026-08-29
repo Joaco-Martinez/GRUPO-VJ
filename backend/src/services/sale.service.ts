@@ -22,6 +22,7 @@ import { generarTicketPedidoPDF } from "../utils/generarReciboPDF";
 import { generarCotizacionPDF } from "../utils/generarCotizacionPDF";
 import { generarComprobanteVentaPDF } from "../utils/generarComprobanteVentaPDF";
 import { cached, invalidateCache } from "../utils/simpleCache";
+import { optionalRangeAR } from "../utils/dateAR";
 
 // Mismo prefijo que PRODUCTS_LIST_CACHE_PREFIX en product.service.ts. Las
 // ventas modifican stock directo con tx.product.update (no pasan por
@@ -123,6 +124,8 @@ type GetSalesParams = {
   limit?: number;
   search?: string;
   status?: SaleStatus | string;
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 const DELIVERY_SKU = "ENVIO-FLETE2";
@@ -1263,6 +1266,15 @@ function buildSalesWhere(params: GetSalesParams = {}, includeStatus = true) {
       { client: { dni: { contains: search, mode: "insensitive" } } },
       { client: { gmail: { contains: search, mode: "insensitive" } } },
     ];
+  }
+
+  const { start, end } = optionalRangeAR(params.dateFrom, params.dateTo);
+
+  if (start || end) {
+    where.createdAt = {
+      ...(start ? { gte: start } : {}),
+      ...(end ? { lte: end } : {}),
+    };
   }
 
   return where;

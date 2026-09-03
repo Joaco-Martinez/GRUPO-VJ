@@ -8,6 +8,9 @@ const isProd = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;
 
+const SESSION_DURATION_MS = 14 * 24 * 60 * 60 * 1000;
+const SESSION_DURATION_JWT = "14d";
+
 function getCookieOptions() {
   return {
     httpOnly: true,
@@ -15,7 +18,7 @@ function getCookieOptions() {
     sameSite: isProd ? ("none" as const) : ("lax" as const),
     domain: isProd ? COOKIE_DOMAIN : undefined,
     path: "/",
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: SESSION_DURATION_MS,
   };
 }
 
@@ -132,7 +135,7 @@ export const authService = {
     const token = jwt.sign(
       { userId: user.id, role: user.role },
       JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: SESSION_DURATION_JWT }
     );
 
     const cleanUser = sanitizeUser(user);
@@ -205,7 +208,7 @@ export const authService = {
       const token = jwt.sign(
         { userId: updatedUser.id, role: updatedUser.role },
         JWT_SECRET,
-        { expiresIn: "1d" }
+        { expiresIn: SESSION_DURATION_JWT }
       );
 
       setAuthCookies(res, cleanUser, token);

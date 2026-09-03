@@ -6,8 +6,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { Area } from 'react-easy-crop';
 import AppLayout from '@/components/AppLayout';
+import ImageCropModal from '@/components/ImageCropModal';
 import api from '@/lib/api';
+import { getCroppedImageFile } from '@/lib/cropImage';
 import type { Product, ProductCategory, ProductComponent } from '@/types';
 import {
   categoryName,
@@ -353,6 +356,7 @@ export default function ProductosPage() {
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
+  const [cropSource, setCropSource] = useState<{ src: string; fileName: string } | null>(null);
 
   const [toast, setToast] = useState<ToastState>(null);
   const [confirmModal, setConfirmModal] = useState<ConfirmState>(null);
@@ -445,6 +449,12 @@ export default function ProductosPage() {
       }
     };
   }, [imagePreview]);
+
+  useEffect(() => {
+    return () => {
+      if (cropSource) URL.revokeObjectURL(cropSource.src);
+    };
+  }, [cropSource]);
 
   useEffect(() => {
     if (productFormStep === 'componentes' && (form.isService === 'true' || form.type !== 'COMPUESTO')) {
@@ -635,12 +645,32 @@ export default function ProductosPage() {
       return;
     }
 
-    if (imagePreview?.startsWith('blob:')) {
-      URL.revokeObjectURL(imagePreview);
-    }
+    setCropSource({ src: URL.createObjectURL(file), fileName: file.name });
+  };
 
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+  const handleCropCancel = () => {
+    if (cropSource) URL.revokeObjectURL(cropSource.src);
+    setCropSource(null);
+  };
+
+  const handleCropConfirm = async (area: Area) => {
+    if (!cropSource) return;
+
+    try {
+      const croppedFile = await getCroppedImageFile(cropSource.src, area, cropSource.fileName);
+
+      if (imagePreview?.startsWith('blob:')) {
+        URL.revokeObjectURL(imagePreview);
+      }
+
+      setImageFile(croppedFile);
+      setImagePreview(URL.createObjectURL(croppedFile));
+    } catch {
+      showToast('error', 'No se pudo recortar la imagen. Probá con otra foto.');
+    } finally {
+      URL.revokeObjectURL(cropSource.src);
+      setCropSource(null);
+    }
   };
 
   const buildPayloadObject = () => {
@@ -1843,6 +1873,16 @@ export default function ProductosPage() {
           document.body
         )}
 
+      {cropSource && typeof document !== 'undefined' &&
+        createPortal(
+          <ImageCropModal
+            imageSrc={cropSource.src}
+            onCancel={handleCropCancel}
+            onConfirm={(area) => void handleCropConfirm(area)}
+          />,
+          document.body
+        )}
+
       {modal === 'stock-notice' && typeof document !== 'undefined' &&
         createPortal(
         <div className="modal-overlay">
@@ -1998,6 +2038,12 @@ export default function ProductosPage() {
 
               <div className="form-group">
                 <label className="form-label">Imagen del producto</label>
+
+                <small className="products-image-helper" style={{ display: 'block', marginBottom: 8 }}>
+                  Tamaño recomendado: <b>foto cuadrada (1:1)</b>, mínimo <b>800x800px</b>, con
+                  el producto centrado sobre fondo blanco o neutro. Después de elegirla vas a
+                  poder recortarla para que quede con ese tamaño.
+                </small>
 
                 <div className="products-image-uploader">
                   <div className="products-image-actions">

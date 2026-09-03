@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth';
 import Sidebar from './Sidebar';
 import Toasts from './Toasts';
+import WhatsNewModal from './WhatsNewModal';
 import { useToast } from '@/hooks/useToast';
 import { Menu, Bell } from 'lucide-react';
 
@@ -207,6 +208,7 @@ useEffect(() => {
       </div>
 
       <Toasts toasts={toasts} />
+      <WhatsNewModal />
     </div>
   );
 }

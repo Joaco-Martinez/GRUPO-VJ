@@ -28,6 +28,7 @@ type PurchaseItemInput = {
 
 type CreatePurchaseInput = {
   providerName?: string;
+  providerId?: string | null;
   invoiceNumber?: string;
   description?: string;
   paymentMethod?: PaymentMethod;
@@ -38,10 +39,12 @@ type CreatePurchaseInput = {
 
 type UpdatePurchaseProviderInput = {
   providerName?: string | null;
+  providerId?: string | null;
 };
 
 type UpdatePurchaseInput = {
   providerName?: string | null;
+  providerId?: string | null;
   invoiceNumber?: string | null;
   description?: string | null;
   paymentMethod?: PaymentMethod;
@@ -76,12 +79,35 @@ function parseDate(value: unknown): Date {
   return parsed;
 }
 
+async function resolveProvider(
+  tx: any,
+  providerId: string | null | undefined,
+  providerName: string | undefined | null,
+): Promise<{ providerId: string | null; providerName: string | null }> {
+  if (providerId) {
+    const provider = await tx.provider.findUnique({ where: { id: providerId } });
+    if (!provider) throw new Error("Proveedor no encontrado");
+
+    return {
+      providerId: provider.id,
+      providerName:
+        providerName?.trim() || provider.razonSocial || provider.nombreFantasia || null,
+    };
+  }
+
+  return {
+    providerId: null,
+    providerName: providerName?.trim() || null,
+  };
+}
+
 export const purchaseService = {
   async getAll() {
     return prisma.purchase.findMany({
       orderBy: { date: "desc" },
       include: {
         user: { select: { id: true, name: true, email: true } },
+        provider: true,
         finance: true,
         items: {
           include: {
@@ -97,6 +123,7 @@ export const purchaseService = {
       where: { id },
       include: {
         user: { select: { id: true, name: true, email: true } },
+        provider: true,
         finance: true,
         items: { include: { product: true } },
         stockMovements: {
@@ -122,9 +149,16 @@ export const purchaseService = {
     const date = parseDate(data.date);
 
     const createdPurchase = await prisma.$transaction(async (tx) => {
+      const { providerId, providerName } = await resolveProvider(
+        tx,
+        data.providerId,
+        data.providerName,
+      );
+
       const purchase = await tx.purchase.create({
         data: {
-          providerName: data.providerName?.trim() || null,
+          providerName,
+          providerId,
           invoiceNumber: data.invoiceNumber?.trim() || null,
           description: data.description?.trim() || null,
           paymentMethod,
@@ -265,7 +299,7 @@ export const purchaseService = {
           amount: total,
           category: CategoryFinance.CompraMercaderia,
           paymentMethod,
-          description: `[purchase:${purchase.id}] Compra de mercadería${data.providerName ? ` - ${data.providerName}` : ""}`,
+          description: `[purchase:${purchase.id}] Compra de mercadería${providerName ? ` - ${providerName}` : ""}`,
           date,
         },
       });
@@ -315,8 +349,6 @@ export const purchaseService = {
   },
 
   async updateProvider(id: string, data: UpdatePurchaseProviderInput) {
-    const providerName = data.providerName?.trim() || null;
-
     const updatedPurchase = await prisma.$transaction(async (tx) => {
       const purchase = await tx.purchase.findUnique({
         where: { id },
@@ -325,11 +357,18 @@ export const purchaseService = {
 
       if (!purchase) throw new Error("Compra no encontrada");
 
+      const { providerId, providerName } = await resolveProvider(
+        tx,
+        data.providerId,
+        data.providerName,
+      );
+
       const updated = await tx.purchase.update({
         where: { id },
-        data: { providerName },
+        data: { providerName, providerId },
         include: {
           user: { select: { id: true, name: true, email: true } },
+          provider: true,
           finance: true,
           items: {
             include: {
@@ -593,8 +632,10 @@ export const purchaseService = {
 
       const total = roundMoney(totalAmount);
 
-      const providerName =
-        data.providerName !== undefined ? data.providerName?.trim() || null : purchase.providerName;
+      const { providerId, providerName } =
+        data.providerName !== undefined || data.providerId !== undefined
+          ? await resolveProvider(tx, data.providerId, data.providerName)
+          : { providerId: purchase.providerId, providerName: purchase.providerName };
       const invoiceNumber =
         data.invoiceNumber !== undefined ? data.invoiceNumber?.trim() || null : purchase.invoiceNumber;
       const description =
@@ -616,6 +657,7 @@ export const purchaseService = {
         where: { id: purchase.id },
         data: {
           providerName,
+          providerId,
           invoiceNumber,
           description,
           paymentMethod: paymentMethod ?? purchase.paymentMethod,
@@ -624,6 +666,7 @@ export const purchaseService = {
         },
         include: {
           user: { select: { id: true, name: true, email: true } },
+          provider: true,
           finance: true,
           items: {
             include: {

@@ -9,7 +9,7 @@ import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
 import { fmtMoney, num } from "@/lib/helpers";
 import { formatDateAR, formatDateTimeAR, toDateInputAR } from "@/lib/dateAR";
-import type { PaymentMethod, Product } from "@/types";
+import type { PaymentMethod, Product, Provider } from "@/types";
 import toast from "react-hot-toast";
 import {
   AlertTriangle,
@@ -94,6 +94,8 @@ type PurchaseView = {
   id: string;
   status?: string | null;
   providerName?: string | null;
+  providerId?: string | null;
+  provider?: Provider | null;
   supplierName?: string | null;
   invoiceNumber?: string | null;
   documentNumber?: string | null;
@@ -317,6 +319,8 @@ export default function ComprasHistorialPage() {
 
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [editProviderId, setEditProviderId] = useState("");
   const [editProvider, setEditProvider] = useState("");
   const [editInvoice, setEditInvoice] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -455,6 +459,15 @@ export default function ComprasHistorialPage() {
     }
   };
 
+  const loadProviders = async () => {
+    try {
+      const response = await api.get("/providers");
+      setProviders(normalizeArray<Provider>(response.data?.providers ?? response.data));
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const startEdit = (purchase: PurchaseView) => {
     const items = getPurchaseItems(purchase).map((item) => {
       const qty = getItemQty(item);
@@ -472,6 +485,7 @@ export default function ComprasHistorialPage() {
     }).filter((item) => item.productId);
 
     setEditItems(items);
+    setEditProviderId(purchase.providerId || "");
     setEditProvider(getProviderName(purchase) === "Sin proveedor" ? "" : getProviderName(purchase));
     setEditInvoice(getInvoiceNumber(purchase) === "—" ? "" : getInvoiceNumber(purchase));
     setEditDescription(purchase.description || "");
@@ -480,6 +494,16 @@ export default function ComprasHistorialPage() {
     setAddProductQuery("");
     setEditing(true);
     void loadProductsForEdit();
+    void loadProviders();
+  };
+
+  const handleEditProviderSelect = (id: string) => {
+    setEditProviderId(id);
+    if (!id) return;
+    const provider = providers.find((p) => p.id === id);
+    if (provider) {
+      setEditProvider(provider.razonSocial || provider.nombreFantasia || "");
+    }
   };
 
   const cancelEdit = () => {
@@ -580,6 +604,7 @@ export default function ComprasHistorialPage() {
 
     try {
       const payload = {
+        providerId: editProviderId || null,
         providerName: editProvider.trim() || null,
         invoiceNumber: editInvoice.trim() || null,
         description: editDescription.trim() || null,
@@ -922,6 +947,15 @@ export default function ComprasHistorialPage() {
                         <div className="purchase-edit-grid">
                           <label>
                             <span>Proveedor</span>
+                            <select value={editProviderId} onChange={(e) => handleEditProviderSelect(e.target.value)}>
+                              <option value="">Sin seleccionar / otro</option>
+                              {providers.map((p) => (
+                                <option key={p.id} value={p.id}>{p.razonSocial || p.nombreFantasia || "Proveedor"}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Nombre del proveedor</span>
                             <input value={editProvider} onChange={(e) => setEditProvider(e.target.value)} placeholder="Opcional" />
                           </label>
                           <label>

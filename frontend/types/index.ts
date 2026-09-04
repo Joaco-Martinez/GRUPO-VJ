@@ -187,6 +187,26 @@ longitude?: number | null;
   };
 }
 
+export interface Provider {
+  id: string;
+  razonSocial?: string | null;
+  nombreFantasia?: string | null;
+  cuit?: string | null;
+  telefono?: string | null;
+  email?: string | null;
+  direccion?: string | null;
+  contactoNombre?: string | null;
+  notas?: string | null;
+  isActive: boolean;
+
+  createdAt?: string;
+  updatedAt?: string;
+
+  _count?: {
+    purchases?: number;
+  };
+}
+
 export interface SaleItem {
   id: string;
   saleId?: string;

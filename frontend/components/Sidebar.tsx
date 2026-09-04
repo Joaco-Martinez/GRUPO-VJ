@@ -24,6 +24,7 @@ import {
   ShieldCheck,
   MapPin,
   BadgeDollarSign,
+  Truck,
 } from 'lucide-react';
 
 const NAV = [
@@ -107,6 +108,12 @@ const ADMIN_NAV = [
     icon: Receipt,
     label: 'Compras',
     color: '#0f9f5c',
+  },
+  {
+    href: '/proveedores',
+    icon: Truck,
+    label: 'Proveedores',
+    color: '#0ea5e9',
   },
   {
     href: '/finanzas',

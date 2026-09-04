@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import AppLayout from "@/components/AppLayout";
 import api from "@/lib/api";
-import type { PaymentMethod, Product, ProductCategory } from "@/types";
+import type { PaymentMethod, Product, ProductCategory, Provider } from "@/types";
 import { categoryName, fmtMoney, normalizeArray, num } from "@/lib/helpers";
 import { todayInputAR } from "@/lib/dateAR";
 import toast from "react-hot-toast";
@@ -213,12 +213,17 @@ function normalizeProductsPayload(data: any) {
 }
 
 async function fetchPurchaseData() {
-  const [p, c] = await Promise.all([api.get("/products"), api.get("/categories")]);
+  const [p, c, pr] = await Promise.all([
+    api.get("/products"),
+    api.get("/categories"),
+    api.get("/providers"),
+  ]);
 
   const products = normalizeProductsPayload(p.data).filter((x) => isPurchasableProduct(x));
   const categories = normalizeArray<ProductCategory>(c.data);
+  const providers = normalizeArray<Provider>(pr.data?.providers ?? pr.data);
 
-  return { products, categories };
+  return { products, categories, providers };
 }
 
 export default function ComprasPage() {
@@ -232,6 +237,8 @@ export default function ComprasPage() {
   const [sortMode, setSortMode] = useState<ProductSortMode>("name-asc");
   const [stockLocation, setStockLocation] = useState<StockLocation>("LOCAL");
 
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerId, setProviderId] = useState("");
   const [providerName, setProviderName] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(() => todayInputAR());
@@ -289,6 +296,7 @@ export default function ComprasPage() {
         if (!alive) return;
         setProducts(data.products);
         setCategories(data.categories);
+        setProviders(data.providers);
       })
       .catch((e) => {
         console.error(e);
@@ -578,12 +586,22 @@ export default function ComprasPage() {
   const clearPurchase = () => {
     setCart([]);
     setCostDrafts({});
+    setProviderId("");
     setProviderName("");
     setInvoiceNumber("");
     setDescription("");
     setPaymentMethod("TRANSFERENCIA");
     setPurchaseDate(todayInputAR());
     setStockLocation("LOCAL");
+  };
+
+  const handleProviderSelect = (id: string) => {
+    setProviderId(id);
+    if (!id) return;
+    const provider = providers.find((p) => p.id === id);
+    if (provider) {
+      setProviderName(provider.razonSocial || provider.nombreFantasia || "");
+    }
   };
 
   const validatePurchase = () => {
@@ -617,6 +635,7 @@ export default function ComprasPage() {
 
     try {
       const payload = {
+        providerId: providerId || undefined,
         providerName: providerName.trim() || undefined,
         invoiceNumber: invoiceNumber.trim() || undefined,
         description: description.trim() || undefined,
@@ -952,12 +971,22 @@ export default function ComprasPage() {
               <div className="form-row">
                 <div className="form-group">
                   <label className="form-label">Proveedor</label>
-                  <input value={providerName} onChange={(e) => setProviderName(e.target.value)} placeholder="Opcional" />
+                  <select value={providerId} onChange={(e) => handleProviderSelect(e.target.value)}>
+                    <option value="">Sin seleccionar / otro</option>
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>{p.razonSocial || p.nombreFantasia || "Proveedor"}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Fecha</label>
                   <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
                 </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Nombre del proveedor</label>
+                <input value={providerName} onChange={(e) => setProviderName(e.target.value)} placeholder="Opcional" />
               </div>
 
               <div className="form-group">
@@ -1115,7 +1144,15 @@ export default function ComprasPage() {
                       <details open>
                         <summary>Datos de compra</summary>
                         <div className="pos-option-body">
-                          <label><span>Proveedor</span><input value={providerName} onChange={(e) => setProviderName(e.target.value)} placeholder="Opcional" /></label>
+                          <label><span>Proveedor</span>
+                            <select value={providerId} onChange={(e) => handleProviderSelect(e.target.value)}>
+                              <option value="">Sin seleccionar / otro</option>
+                              {providers.map((p) => (
+                                <option key={p.id} value={p.id}>{p.razonSocial || p.nombreFantasia || "Proveedor"}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label><span>Nombre del proveedor</span><input value={providerName} onChange={(e) => setProviderName(e.target.value)} placeholder="Opcional" /></label>
                           <label><span>Comprobante</span><input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} placeholder="Factura/remito" /></label>
                           <label><span>Fecha</span><input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} /></label>
                           <label><span>Método de pago</span><select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}>{methods.map((method) => <option key={method} value={method}>{method}</option>)}</select></label>

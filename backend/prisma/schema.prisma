@@ -607,6 +607,7 @@ model StockMovement {
 model Purchase {
   id            String         @id @default(uuid())
   providerName  String?
+  providerId    String?
   invoiceNumber String?
   description   String?
   totalAmount   Float          @default(0)
@@ -620,6 +621,7 @@ model Purchase {
   updatedAt     DateTime       @updatedAt
 
   user           User?           @relation(fields: [userId], references: [id])
+  provider       Provider?       @relation(fields: [providerId], references: [id])
   finance        Finance?        @relation(fields: [financeId], references: [id])
   items          PurchaseItem[]
   stockMovements StockMovement[]
@@ -628,6 +630,27 @@ model Purchase {
   @@index([financeId])
   @@index([status])
   @@index([date])
+  @@index([providerId])
+}
+
+model Provider {
+  id            String   @id @default(uuid())
+  razonSocial   String?
+  nombreFantasia String?
+  cuit          String?
+  telefono      String?
+  email         String?
+  direccion     String?
+  contactoNombre String?
+  notas         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  purchases Purchase[]
+
+  @@index([isActive])
+  @@index([cuit])
 }
 
 model PurchaseItem {

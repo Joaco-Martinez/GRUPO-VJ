@@ -32,6 +32,9 @@ import {
   CheckCircle2,
   Calculator,
   ScanBarcode,
+  FileDown,
+  FileText,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 type Modal = 'product-create' | 'product-edit' | 'category' | 'sku-scanner' | 'stock-notice' | null;
@@ -344,6 +347,8 @@ export default function ProductosPage() {
   const [categoryForm, setCategoryForm] = useState({ name: '', description: '' });
   const [profitCalc, setProfitCalc] = useState(getInitialProfitCalculator);
   const [showProfitCalculator, setShowProfitCalculator] = useState(false);
+  const [showPriceListMenu, setShowPriceListMenu] = useState(false);
+  const [priceListDownloading, setPriceListDownloading] = useState(false);
   const [sortMode, setSortMode] = useState<ProductSortMode>('default');
   const [scannerError, setScannerError] = useState('');
   const [scannerLoading, setScannerLoading] = useState(false);
@@ -372,6 +377,36 @@ export default function ProductosPage() {
     window.setTimeout(() => {
       setToast(null);
     }, 3200);
+  };
+
+  const downloadPriceList = async (type: 'mayorista' | 'minorista', format: 'pdf' | 'excel') => {
+    setPriceListDownloading(true);
+    setShowPriceListMenu(false);
+
+    try {
+      const response = await api.get(`/price-lists/export/${format}`, {
+        params: { type },
+        responseType: 'blob',
+      });
+
+      const extension = format === 'pdf' ? 'pdf' : 'xlsx';
+      const blob = new Blob([response.data]);
+      const url = window.URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `lista-precios-${type}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      showToast('success', 'Descarga lista');
+    } catch {
+      showToast('error', 'No se pudo descargar la lista de precios');
+    } finally {
+      setPriceListDownloading(false);
+    }
   };
 
   const load = async () => {
@@ -1065,7 +1100,7 @@ export default function ProductosPage() {
       title="Productos"
       subtitle="Catálogo empresarial, promos y stock"
       actions={
-        <div className="products-actions" style={{ display: 'flex', gap: 8 }}>
+        <div className="products-actions" style={{ display: 'flex', gap: 8, position: 'relative' }}>
           <button
             className={`btn btn-secondary btn-sm products-calculator-toggle ${showProfitCalculator ? 'is-active' : ''}`}
             onClick={() => setShowProfitCalculator((prev) => !prev)}
@@ -1074,6 +1109,52 @@ export default function ProductosPage() {
           >
             <Calculator size={16} />
           </button>
+
+          <div style={{ position: 'relative' }}>
+            <button
+              className={`btn btn-secondary btn-sm ${showPriceListMenu ? 'is-active' : ''}`}
+              onClick={() => setShowPriceListMenu((prev) => !prev)}
+              disabled={priceListDownloading}
+              title="Descargar lista de precios"
+            >
+              <FileDown size={16} /> Listas de precios
+            </button>
+
+            {showPriceListMenu && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 12,
+                  boxShadow: '0 12px 30px rgba(0,0,0,0.25)',
+                  padding: 8,
+                  display: 'grid',
+                  gap: 4,
+                  minWidth: 220,
+                  zIndex: 50,
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text3)', padding: '2px 6px' }}>MAYORISTA</div>
+                <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => downloadPriceList('mayorista', 'pdf')}>
+                  <FileText size={14} /> Descargar PDF
+                </button>
+                <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => downloadPriceList('mayorista', 'excel')}>
+                  <FileSpreadsheet size={14} /> Descargar Excel
+                </button>
+
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text3)', padding: '6px 6px 2px' }}>MINORISTA</div>
+                <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => downloadPriceList('minorista', 'pdf')}>
+                  <FileText size={14} /> Descargar PDF
+                </button>
+                <button className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start' }} onClick={() => downloadPriceList('minorista', 'excel')}>
+                  <FileSpreadsheet size={14} /> Descargar Excel
+                </button>
+              </div>
+            )}
+          </div>
 
           <button className="btn btn-primary btn-sm" onClick={openCreate}>
             <Plus size={14} /> Nuevo producto

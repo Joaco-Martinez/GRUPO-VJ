@@ -6,9 +6,19 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-09-03-recorte-imagenes-sesion-14d';
+const WHATS_NEW_VERSION = '2026-09-04-proveedores-listas-precios';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Proveedores',
+    description:
+      'Nueva sección "Proveedores" para cargar razón social, CUIT, contacto, etc. (ningún dato es obligatorio) y asignarlos directamente a las compras.',
+  },
+  {
+    title: 'Listas de precios descargables',
+    description:
+      'Desde Productos ahora se puede descargar la lista de precios mayorista o minorista en PDF o Excel, lista para compartir.',
+  },
   {
     title: 'Recorte de fotos de producto',
     description:

@@ -21,7 +21,7 @@ export default function ImageCropModal({ imageSrc, onCancel, onConfirm }: ImageC
   }, []);
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 1000 }}>
+    <div className="modal-overlay" style={{ zIndex: 13100 }}>
       <div className="modal" style={{ maxWidth: 480 }}>
         <div className="modal-header">
           <b>Ajustar imagen</b>

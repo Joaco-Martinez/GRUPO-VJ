@@ -76,3 +76,17 @@ También quedan disponibles en `/arca-config`.
 ## Nota
 
 No se incluye `node_modules`. Instalalo con `npm install`.
+
+## ⚠️ Migración pendiente en producción
+
+Hay una migración de Prisma (`20260904120000_add_providers`) commiteada pero
+todavía no aplicada en la base de datos de producción. Esto rompe
+`GET /providers` con el error `P2021: table "public.Provider" does not
+exist`. Antes del próximo deploy hay que aplicarla una sola vez con:
+
+```bash
+npx prisma migrate deploy
+```
+
+o ejecutando `npm run migrate:prod` (usa `backend/run-migration.js`). Ver
+`backend/MIGRATION.md` para más detalle.

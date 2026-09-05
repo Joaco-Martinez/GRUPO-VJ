@@ -216,12 +216,15 @@ async function fetchPurchaseData() {
   const [p, c, pr] = await Promise.all([
     api.get("/products"),
     api.get("/categories"),
-    api.get("/providers"),
+    api.get("/providers").catch((e) => {
+      console.error("No se pudieron cargar los proveedores", e);
+      return null;
+    }),
   ]);
 
   const products = normalizeProductsPayload(p.data).filter((x) => isPurchasableProduct(x));
   const categories = normalizeArray<ProductCategory>(c.data);
-  const providers = normalizeArray<Provider>(pr.data?.providers ?? pr.data);
+  const providers = pr ? normalizeArray<Provider>(pr.data?.providers ?? pr.data) : [];
 
   return { products, categories, providers };
 }

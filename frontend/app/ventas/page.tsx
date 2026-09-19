@@ -535,6 +535,33 @@ function getSaleSellerLabel(sale: Sale) {
   return 'Sin vendedor';
 }
 
+function isCompositeProduct(product?: Product | null) {
+  return product?.type === 'COMPUESTO';
+}
+
+function getCompositeComponents(product?: Product | null) {
+  return (product?.components ?? []).filter((component) => component?.component);
+}
+
+function getComponentNeededQty(componentRelation: NonNullable<Product['components']>[number]) {
+  const componentProduct = componentRelation.component;
+  if (!componentProduct) return 0;
+
+  if (componentProduct.saleUnit === 'KG') {
+    return num(componentRelation.quantityKg ?? undefined, componentRelation.quantity ?? undefined);
+  }
+
+  return num(componentRelation.quantity ?? undefined, componentRelation.quantityKg ?? undefined);
+}
+
+function productRawStockByLocation(product: Product, stockLocation: 'LOCAL' | 'DEPOSITO') {
+  if (product.saleUnit === 'KG') {
+    return stockLocation === 'DEPOSITO' ? num(product.stockDepositoKg) : num(product.stockLocalKg);
+  }
+
+  return stockLocation === 'DEPOSITO' ? num(product.stockDeposito) : num(product.stockLocal);
+}
+
 function getStockLocationLabel(sale: Sale) {
   const location = String((sale as SaleExtra).stockLocation ?? '').toUpperCase();
 
@@ -1645,6 +1672,33 @@ export default function VentasPage() {
     for (const product of products) {
       const pid = String((product as any).id);
       const old = sameLocation ? oldEditSaleQtyMap.get(pid) ?? { qty: 0, kg: 0 } : { qty: 0, kg: 0 };
+
+      if (isCompositeProduct(product)) {
+        const components = getCompositeComponents(product);
+        const availableByComponent = components.length
+          ? components.map((componentRelation) => {
+              const componentProduct = componentRelation.component;
+              if (!componentProduct) return 0;
+
+              const neededQty = getComponentNeededQty(componentRelation);
+              if (neededQty <= 0) return 0;
+
+              const componentStock = productRawStockByLocation(componentProduct, editStockLocation);
+              // old.qty is composite units (cajones) already reserved by this same sale;
+              // convert back to component units before adding to the raw component stock.
+              const effectiveComponentStock = componentStock + old.qty * neededQty;
+
+              return Math.floor(effectiveComponentStock / neededQty);
+            })
+          : [0];
+
+        map.set(pid, {
+          units: Math.max(0, Math.min(...availableByComponent)),
+          kg: 0,
+        });
+        continue;
+      }
+
       const stockUnits = editStockLocation === 'DEPOSITO'
         ? num((product as any).stockDeposito)
         : num((product as any).stockLocal);

@@ -6,9 +6,14 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-09-04-proveedores-listas-precios';
+const WHATS_NEW_VERSION = '2026-09-22-cotizaciones-sin-stock';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Cotizaciones sin stock',
+    description:
+      'Nueva sección "Cotizaciones s/stock" para armar presupuestos que no reservan ni descuentan stock. Se puede elegir un cliente o cargar los datos a mano, usar precios minoristas o mayoristas, agregar ítems libres y descargar o enviar el PDF por WhatsApp.',
+  },
   {
     title: 'Proveedores',
     description:

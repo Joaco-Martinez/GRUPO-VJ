@@ -27,6 +27,7 @@ model User {
   Sale                 Sale[]
   StockMovements       StockMovement[]
   purchases            Purchase[]
+  quotations           Quotation[]
 
   @@index([role])
   @@index([isActive])
@@ -62,6 +63,7 @@ model Client {
   user              User?             @relation(fields: [userId], references: [id])
   remitos           Remito[]
   sales             Sale[]
+  quotations        Quotation[]
 
   @@index([dni])
   @@index([gmail])
@@ -148,6 +150,7 @@ model Product {
   SaleItem            SaleItem[]
   StockMovement       StockMovement[]
   purchaseItems       PurchaseItem[]
+  quotationItems      QuotationItem[]
 
   @@index([sku])
   @@index([categoryId])
@@ -464,22 +467,22 @@ model Sale {
 }
 
 model SaleItem {
-  id                    String       @id @default(uuid())
+  id                    String            @id @default(uuid())
   saleId                String
   productId             String
   quantity              Int
   quantityKg            Float?
   price                 Float
   priceType             SaleItemPriceType @default(PRICE)
-  subtotal              Float        @default(0)
+  subtotal              Float             @default(0)
   productNameSnapshot   String?
   productSkuSnapshot    String?
-  createdAt             DateTime     @default(now())
-  profit                Float        @default(0)
-  purchasePriceSnapshot Float        @default(0)
+  createdAt             DateTime          @default(now())
+  profit                Float             @default(0)
+  purchasePriceSnapshot Float             @default(0)
   boxContents           BoxContent[]
-  product               Product      @relation(fields: [productId], references: [id])
-  sale                  Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product               Product           @relation(fields: [productId], references: [id])
+  sale                  Sale              @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
   @@index([saleId])
   @@index([productId])
@@ -580,22 +583,22 @@ model Finance {
 }
 
 model StockMovement {
-  id         String       @id @default(uuid())
-  productId  String
-  userId     String?
-  purchaseId String?
-  type       MovementType
-  from       Location?
-  to         Location?
-  quantity   Int?
-  quantityKg Float?
-  reason     String?
-  reference  String?
-  isClientMovement Boolean @default(false)
-  createdAt  DateTime     @default(now())
-  product    Product      @relation(fields: [productId], references: [id])
-  user       User?        @relation(fields: [userId], references: [id])
-  purchase   Purchase?    @relation(fields: [purchaseId], references: [id])
+  id               String       @id @default(uuid())
+  productId        String
+  userId           String?
+  purchaseId       String?
+  type             MovementType
+  from             Location?
+  to               Location?
+  quantity         Int?
+  quantityKg       Float?
+  reason           String?
+  reference        String?
+  isClientMovement Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  product          Product      @relation(fields: [productId], references: [id])
+  user             User?        @relation(fields: [userId], references: [id])
+  purchase         Purchase?    @relation(fields: [purchaseId], references: [id])
 
   @@index([productId])
   @@index([userId])
@@ -634,18 +637,18 @@ model Purchase {
 }
 
 model Provider {
-  id            String   @id @default(uuid())
-  razonSocial   String?
+  id             String   @id @default(uuid())
+  razonSocial    String?
   nombreFantasia String?
-  cuit          String?
-  telefono      String?
-  email         String?
-  direccion     String?
+  cuit           String?
+  telefono       String?
+  email          String?
+  direccion      String?
   contactoNombre String?
-  notas         String?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  notas          String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   purchases Purchase[]
 
@@ -669,6 +672,55 @@ model PurchaseItem {
   product  Product  @relation(fields: [productId], references: [id])
 
   @@index([purchaseId])
+  @@index([productId])
+}
+
+// Cotizaciones sin stock: presupuestos independientes de las ventas.
+// No reservan ni descuentan stock.
+model Quotation {
+  id            String        @id @default(uuid())
+  number        Int           @unique @default(autoincrement())
+  userId        String?
+  clientId      String?
+  clientName    String?
+  clientPhone   String?
+  clientDoc     String?
+  clientAddress String?
+  priceType     String        @default("price")
+  subtotal      Float         @default(0)
+  discountType  DiscountType?
+  discountValue Float?
+  total         Float         @default(0)
+  notes         String?
+  expiresAt     DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user   User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  client Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  items  QuotationItem[]
+
+  @@index([clientId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model QuotationItem {
+  id                  String   @id @default(uuid())
+  quotationId         String
+  productId           String?
+  productNameSnapshot String
+  productSkuSnapshot  String?
+  saleUnit            SaleUnit @default(UNIT)
+  quantity            Float
+  price               Float
+  subtotal            Float
+  createdAt           DateTime @default(now())
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([quotationId])
   @@index([productId])
 }
 

@@ -25,6 +25,7 @@ import {
   MapPin,
   BadgeDollarSign,
   Truck,
+  FileText,
 } from 'lucide-react';
 
 const NAV = [
@@ -39,6 +40,12 @@ const NAV = [
     icon: Receipt,
     label: 'Historial Ventas',
     color: '#2563eb',
+  },
+  {
+    href: '/cotizaciones',
+    icon: FileText,
+    label: 'Cotizaciones s/stock',
+    color: '#8b5cf6',
   },
   {
     href: '/productos',

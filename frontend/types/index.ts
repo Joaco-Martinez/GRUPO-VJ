@@ -207,6 +207,45 @@ export interface Provider {
   };
 }
 
+export type QuotationPriceType = 'price' | 'wholesalePrice';
+
+export interface QuotationItem {
+  id: string;
+  quotationId?: string;
+  productId?: string | null;
+  product?: Pick<Product, 'id' | 'name' | 'sku' | 'imageUrl' | 'saleUnit'> | null;
+  productNameSnapshot: string;
+  productSkuSnapshot?: string | null;
+  saleUnit: SaleUnit;
+  quantity: number;
+  price: number;
+  subtotal: number;
+}
+
+// Cotización "sin stock": no reserva ni descuenta stock.
+export interface Quotation {
+  id: string;
+  number: number;
+  userId?: string | null;
+  user?: Pick<User, 'id' | 'name'> | null;
+  clientId?: string | null;
+  client?: Client | null;
+  clientName?: string | null;
+  clientPhone?: string | null;
+  clientDoc?: string | null;
+  clientAddress?: string | null;
+  priceType: QuotationPriceType;
+  subtotal: number;
+  discountType?: DiscountType | null;
+  discountValue?: number | null;
+  total: number;
+  notes?: string | null;
+  expiresAt?: string | null;
+  items: QuotationItem[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface SaleItem {
   id: string;
   saleId?: string;

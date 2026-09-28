@@ -425,7 +425,19 @@ export default function POSPage() {
   const receiptType: ReceiptType = "TICKET";
   const [defaultPriceType, setDefaultPriceType] = useState<CartItem["priceType"]>(RETAIL_PRICE_TYPE);
   const { user: me } = useAuthStore();
+  const canEditDeliveryPrice = me?.role === "ADMIN";
   const appliedOwnPreferencesRef = useRef(false);
+
+  // El precio por km lo define el admin en Configuración > Envíos.
+  useEffect(() => {
+    api
+      .get("/settings/delivery")
+      .then((res) => {
+        const value = num(res.data?.pricePerKm);
+        if (value > 0) setDeliveryPricePerKm(String(value));
+      })
+      .catch(() => {});
+  }, []);
   const [discountType, setDiscountType] = useState<DiscountType | "">("");
   const [discountValue, setDiscountValue] = useState("");
 
@@ -1991,6 +2003,8 @@ export default function POSPage() {
                                 <input
                                   type="number"
                                   value={deliveryPricePerKm}
+                                  readOnly={!canEditDeliveryPrice}
+                                  title={canEditDeliveryPrice ? undefined : "Lo configura el administrador en Configuración > Envíos"}
                                   onChange={(e) => {
                                     setDeliveryPricePerKm(e.target.value);
                                     setDeliveryCalculation(null);
@@ -2287,6 +2301,8 @@ export default function POSPage() {
                                 <input
                                   type="number"
                                   value={deliveryPricePerKm}
+                                  readOnly={!canEditDeliveryPrice}
+                                  title={canEditDeliveryPrice ? undefined : "Lo configura el administrador en Configuración > Envíos"}
                                   onChange={(e) => {
                                     setDeliveryPricePerKm(e.target.value);
                                     setDeliveryCalculation(null);

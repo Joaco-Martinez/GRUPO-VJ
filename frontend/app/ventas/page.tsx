@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
+import { useAuthStore } from '@/store/auth';
 import type { BusinessLocation, DiscountType, PaymentMethod, Product, Sale } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
 import { remitoApi, type Remito } from '@/service/remito.service';
@@ -786,6 +787,20 @@ export default function VentasPage() {
   const [editDeliveryEnabled, setEditDeliveryEnabled] = useState(false);
   const [editDeliveryDistanceKm, setEditDeliveryDistanceKm] = useState('');
   const [editDeliveryPricePerKm, setEditDeliveryPricePerKm] = useState(String(DEFAULT_DELIVERY_PRICE_PER_KM));
+  const [configuredDeliveryPricePerKm, setConfiguredDeliveryPricePerKm] = useState(DEFAULT_DELIVERY_PRICE_PER_KM);
+  const { user: me } = useAuthStore();
+  const canEditDeliveryPrice = me?.role === 'ADMIN';
+
+  // El precio por km lo define el admin en Configuración > Envíos.
+  useEffect(() => {
+    api
+      .get('/settings/delivery')
+      .then((res) => {
+        const value = num(res.data?.pricePerKm);
+        if (value > 0) setConfiguredDeliveryPricePerKm(value);
+      })
+      .catch(() => {});
+  }, []);
   const [editBusinessLocationId, setEditBusinessLocationId] = useState('');
   const [editDeliveryCalculation, setEditDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
   const [editCalculatingDelivery, setEditCalculatingDelivery] = useState(false);
@@ -1582,14 +1597,14 @@ export default function VentasPage() {
     setEditDeliveryPricePerKm(
       saleExtra.deliveryPricePerKm !== null && saleExtra.deliveryPricePerKm !== undefined
         ? String(saleExtra.deliveryPricePerKm)
-        : String(DEFAULT_DELIVERY_PRICE_PER_KM)
+        : String(configuredDeliveryPricePerKm)
     );
     setEditBusinessLocationId(defaultBusinessLocation?.id ?? '');
     setEditDeliveryCalculation(
       hasDeliveryData && deliveryCost > 0
         ? {
             distanceKm: num(saleExtra.deliveryDistanceKm),
-            pricePerKm: num(saleExtra.deliveryPricePerKm, DEFAULT_DELIVERY_PRICE_PER_KM),
+            pricePerKm: num(saleExtra.deliveryPricePerKm, configuredDeliveryPricePerKm),
             deliveryCost,
             businessLocationId: defaultBusinessLocation?.id ?? saleExtra.businessLocationId ?? '',
             businessLocationName: defaultBusinessLocation?.name ?? saleExtra.businessLocation?.name ?? 'Ubicación',
@@ -2030,7 +2045,7 @@ export default function VentasPage() {
         deliveryDistanceKm: deliveryLine
           ? num(editDeliveryCalculation?.distanceKm ?? editDeliveryDistanceKm)
           : null,
-        deliveryPricePerKm: deliveryLine ? num(editDeliveryPricePerKm, DEFAULT_DELIVERY_PRICE_PER_KM) : null,
+        deliveryPricePerKm: deliveryLine ? num(editDeliveryPricePerKm, configuredDeliveryPricePerKm) : null,
         deliveryCost,
         discountType: editDiscountType || null,
         discountValue: editDiscountType ? num(editDiscountValue) : 0,
@@ -2047,7 +2062,7 @@ export default function VentasPage() {
       setEditLines([]);
       setEditDeliveryEnabled(false);
       setEditDeliveryDistanceKm('');
-      setEditDeliveryPricePerKm(String(DEFAULT_DELIVERY_PRICE_PER_KM));
+      setEditDeliveryPricePerKm(String(configuredDeliveryPricePerKm));
       setEditBusinessLocationId('');
       setEditDeliveryCalculation(null);
       setEditDiscountType('');
@@ -3944,6 +3959,8 @@ export default function VentasPage() {
                       type="number"
                       min={0}
                       value={editDeliveryPricePerKm}
+                      readOnly={!canEditDeliveryPrice}
+                      title={canEditDeliveryPrice ? undefined : 'Lo configura el administrador en Configuración > Envíos'}
                       onChange={(e) => {
                         setEditDeliveryPricePerKm(e.target.value);
                         setEditDeliveryCalculation(null);

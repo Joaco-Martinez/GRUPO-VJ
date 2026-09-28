@@ -904,3 +904,10 @@ enum SaleItemPriceType {
   WHOLESALE_PRICE
   MANUAL
 }
+
+// Ajustes generales del negocio editables desde Configuración (clave → valor).
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

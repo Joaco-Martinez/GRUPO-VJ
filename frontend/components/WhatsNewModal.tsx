@@ -6,9 +6,14 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-09-22-cotizaciones-sin-stock';
+const WHATS_NEW_VERSION = '2026-09-28-precio-envio-configurable';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Precio de envío configurable',
+    description:
+      'El precio por km del envío ahora lo define el administrador desde Configuración > Envíos. El POS y la edición de ventas lo toman automáticamente, y solo el administrador puede cambiarlo.',
+  },
   {
     title: 'Cotizaciones sin stock',
     description:

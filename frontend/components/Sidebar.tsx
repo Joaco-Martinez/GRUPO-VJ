@@ -26,6 +26,7 @@ import {
   BadgeDollarSign,
   Truck,
   FileText,
+  Route,
 } from 'lucide-react';
 
 const NAV = [
@@ -139,6 +140,12 @@ const ADMIN_NAV = [
     icon: MapPin,
     label: 'Sucursales y depósitos',
     color: '#38bdf8',
+  },
+  {
+    href: '/configuracion/envios',
+    icon: Route,
+    label: 'Envíos',
+    color: '#f97316',
   },
   {
     href: '/configuracion/arca',

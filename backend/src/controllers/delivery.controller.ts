@@ -29,7 +29,8 @@ export const deliveryController = {
       const result = await deliveryService.calculate({
         businessLocationId,
         clientId,
-        pricePerKm: toNumber(req.body.pricePerKm),
+        // Solo el admin puede usar un precio por km distinto al configurado.
+        pricePerKm: (req as any).user?.role === "ADMIN" ? toNumber(req.body.pricePerKm) : undefined,
       });
 
       return res.json({

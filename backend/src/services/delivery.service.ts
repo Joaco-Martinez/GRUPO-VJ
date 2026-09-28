@@ -1,6 +1,6 @@
 import prisma from "../prisma";
+import { settingsService } from "./settings.service";
 
-const DEFAULT_PRICE_PER_KM = Number(process.env.DELIVERY_PRICE_PER_KM ?? 8000);
 const ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/driving-car/json";
 const ORS_TIMEOUT_MS = Number(process.env.ORS_TIMEOUT_MS ?? 8000);
 const DELIVERY_FALLBACK_MULTIPLIER = Number(process.env.DELIVERY_FALLBACK_MULTIPLIER ?? 1.4);
@@ -240,7 +240,8 @@ export const deliveryService = {
     clientId: string;
     pricePerKm?: number | null;
   }) {
-    const pricePerKm = Number(params.pricePerKm ?? DEFAULT_PRICE_PER_KM);
+    // Sin precio explícito se usa el configurado por el admin en Configuración.
+    const pricePerKm = Number(params.pricePerKm ?? (await settingsService.getDeliveryPricePerKm()));
 
     if (!Number.isFinite(pricePerKm) || pricePerKm <= 0) {
       throw new Error("El precio por km debe ser mayor a 0");

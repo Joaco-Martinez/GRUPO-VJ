@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
-import type { BusinessLocation, DiscountType, PaymentMethod, Product, Sale } from '@/types';
+import type { BusinessLocation, DeliveryStatus, DiscountType, PaymentMethod, Product, Sale } from '@/types';
 import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
 import { remitoApi, type Remito } from '@/service/remito.service';
 import toast from 'react-hot-toast';
@@ -587,6 +587,42 @@ function countsAsMoney(sale: Sale) {
 
 function canEditSaleItems(sale: Sale) {
   return sale.status === 'PENDING' && !isSaleInvoiced(sale);
+}
+
+const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
+  NONE: 'Sin preparar',
+  PENDING: 'Envío pendiente',
+  PREPARING: 'En preparación',
+  IN_TRANSIT: 'En camino',
+  DELIVERED: 'Entregado',
+  CANCELLED: 'Entrega cancelada',
+};
+
+// NONE/PENDING = el pedido todavía no se empezó a preparar (el cliente puede
+// modificarlo desde la tienda).
+function isDeliveryStatusOpen(status?: string | null) {
+  return !status || status === 'NONE' || status === 'PENDING';
+}
+
+function getDeliveryStatusLabel(status?: string | null) {
+  return DELIVERY_STATUS_LABELS[(status || 'NONE') as DeliveryStatus] ?? status ?? '';
+}
+
+function deliveryStatusBadge(status?: string | null) {
+  if (status === 'PREPARING') return 'badge-orange';
+  if (status === 'IN_TRANSIT') return 'badge-blue';
+  if (status === 'DELIVERED') return 'badge-green';
+  if (status === 'CANCELLED') return 'badge-red';
+  return 'badge-gray';
+}
+
+// Estados que se ofrecen al admin según cómo se entrega el pedido.
+function getDeliveryStatusOptions(sale: Sale): DeliveryStatus[] {
+  const isPickup = !(sale as SaleExtra).deliveryMethod || (sale as SaleExtra).deliveryMethod === 'PICKUP';
+
+  return isPickup
+    ? ['NONE', 'PREPARING', 'DELIVERED']
+    : ['PENDING', 'PREPARING', 'IN_TRANSIT', 'DELIVERED'];
 }
 
 function isDeliveryProduct(product: Product | any) {
@@ -1174,6 +1210,27 @@ export default function VentasPage() {
       toast.success('Venta actualizada correctamente', { id: toastId });
     } catch (error) {
       toast.error(getErrorMessage(error, 'No se pudo actualizar la venta'), { id: toastId });
+    }
+  };
+
+  const setDeliveryStatus = async (s: Sale, next: DeliveryStatus) => {
+    if ((s as SaleExtra).deliveryStatus === next) return;
+
+    const toastId = toast.loading('Actualizando estado del pedido...');
+
+    try {
+      await api.patch(`/sales/${s.id}/delivery-status`, { deliveryStatus: next });
+      await load();
+      toast.success(
+        next === 'PREPARING'
+          ? 'Pedido en preparación. El cliente ya no puede modificarlo.'
+          : `Pedido marcado como: ${getDeliveryStatusLabel(next)}`,
+        { id: toastId }
+      );
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'No se pudo actualizar el estado del pedido'), {
+        id: toastId,
+      });
     }
   };
 
@@ -2036,7 +2093,12 @@ export default function VentasPage() {
         stockLocation: editStockLocation,
         businessLocationId: deliveryLine ? editBusinessLocationId || null : editBusinessLocationId || null,
         deliveryMethod: deliveryLine ? 'LOCAL_DELIVERY' : 'PICKUP',
-        deliveryStatus: deliveryLine ? 'PENDING' : 'NONE',
+        // Si el pedido ya avanzó (en preparación, en camino...) no lo pisamos.
+        deliveryStatus: isDeliveryStatusOpen((editItemsSale as SaleExtra).deliveryStatus)
+          ? deliveryLine
+            ? 'PENDING'
+            : 'NONE'
+          : undefined,
         deliveryAddressSnapshot: deliveryLine
           ? editDeliveryCalculation?.deliveryAddressSnapshot ||
             editDeliveryCalculation?.destinationAddress ||
@@ -2608,6 +2670,12 @@ export default function VentasPage() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <span className={`badge ${badge(s.status)}`}>{s.status}</span>
 
+                          {!isDeliveryStatusOpen((s as SaleExtra).deliveryStatus) && (
+                            <span className={`badge ${deliveryStatusBadge((s as SaleExtra).deliveryStatus)}`}>
+                              {getDeliveryStatusLabel((s as SaleExtra).deliveryStatus)}
+                            </span>
+                          )}
+
                           {s.status === 'PENDING' && quotationExpirationLabel && (
                             <small style={{ color: 'var(--text3)' }}>
                               Vence: {quotationExpirationLabel}
@@ -2693,6 +2761,12 @@ export default function VentasPage() {
                   </div>
 
                   <div className="sales-mobile-badges">
+                    {!isDeliveryStatusOpen((s as SaleExtra).deliveryStatus) && (
+                      <span className={`badge ${deliveryStatusBadge((s as SaleExtra).deliveryStatus)}`}>
+                        {getDeliveryStatusLabel((s as SaleExtra).deliveryStatus)}
+                      </span>
+                    )}
+
                     <span className="badge badge-gray">
                       {(s as SaleExtra).payments?.length ? 'MIXTO' : s.paymentMethod}
                     </span>
@@ -2903,6 +2977,13 @@ export default function VentasPage() {
                     </div>
 
                     <div>
+                      <small>Pedido</small>
+                      <span className={`badge ${deliveryStatusBadge((s as SaleExtra).deliveryStatus)}`}>
+                        {getDeliveryStatusLabel((s as SaleExtra).deliveryStatus)}
+                      </span>
+                    </div>
+
+                    <div>
                       <small>AFIP</small>
                       <span className={`badge ${invoiceBadge(invoiceStatus)}`}>
                         {invoiceStatus === 'NONE' ? 'SIN FACTURA' : invoiceStatus}
@@ -2965,6 +3046,60 @@ export default function VentasPage() {
                           <small>Agregar o modificar productos antes de confirmar</small>
                         </div>
                       </button>
+                    )}
+
+                    {s.status !== 'CANCELLED' &&
+                      isDeliveryStatusOpen((s as SaleExtra).deliveryStatus) && (
+                        <button
+                          className="sales-action-row"
+                          onClick={() => {
+                            setDeliveryStatus(s, 'PREPARING');
+                            setMobileActionsSale(null);
+                          }}
+                        >
+                          <span>
+                            <Package size={17} />
+                          </span>
+                          <div>
+                            <b>Marcar en preparación</b>
+                            <small>
+                              {(s as SaleExtra).isWebSale
+                                ? 'El cliente ya no podrá modificar el pedido desde la tienda'
+                                : 'Indicar que el pedido se está armando'}
+                            </small>
+                          </div>
+                        </button>
+                      )}
+
+                    {s.status !== 'CANCELLED' && (
+                      <label className="sales-action-row sales-delivery-status-row">
+                        <span>
+                          <Truck size={17} />
+                        </span>
+                        <div>
+                          <b>Estado del pedido</b>
+                          <small>Pendiente, en preparación, en camino o entregado</small>
+                        </div>
+                        <select
+                          className="input sales-delivery-status-select"
+                          value={(s as SaleExtra).deliveryStatus || 'NONE'}
+                          onChange={(e) => {
+                            setDeliveryStatus(s, e.target.value as DeliveryStatus);
+                            setMobileActionsSale(null);
+                          }}
+                        >
+                          {Array.from(
+                            new Set([
+                              ...getDeliveryStatusOptions(s),
+                              ((s as SaleExtra).deliveryStatus || 'NONE') as DeliveryStatus,
+                            ])
+                          ).map((status) => (
+                            <option key={status} value={status}>
+                              {getDeliveryStatusLabel(status)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     )}
 
                     {s.status === 'PENDING' && (
@@ -5897,6 +6032,27 @@ export default function VentasPage() {
 
         .sales-action-row-danger > span {
           color: var(--danger);
+        }
+
+        .sales-delivery-status-row {
+          grid-template-columns: 38px 1fr auto;
+          cursor: default;
+        }
+
+        .sales-delivery-status-select {
+          width: auto;
+          min-width: 150px;
+        }
+
+        @media (max-width: 768px) {
+          .sales-delivery-status-row {
+            grid-template-columns: 36px 1fr;
+          }
+
+          .sales-delivery-status-select {
+            grid-column: 1 / -1;
+            width: 100%;
+          }
         }
 
         @media (max-width: 768px) {

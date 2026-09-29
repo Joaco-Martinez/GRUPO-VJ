@@ -877,6 +877,7 @@ export const catalogService = {
       createdAt: sale.createdAt,
       total: sale.total,
       status: sale.status,
+      deliveryStatus: sale.deliveryStatus,
       paymentMethod: sale.paymentMethod,
       receiptType: sale.receiptType,
       clientId: sale.clientId,

@@ -41,6 +41,7 @@ type Sale = {
   finalTotal?: number | null;
   totalAmount?: number | null;
   status?: string | null;
+  deliveryStatus?: string | null;
   paymentMethod?: string | null;
   receiptType?: string | null;
   clientId?: string | null;
@@ -90,6 +91,18 @@ function statusLabel(status?: string | null) {
   if (status === "PENDING") return "Pendiente";
   if (status === "CANCELLED") return "Cancelada";
   return status || "Sin estado";
+}
+
+// Estado del pedido para el cliente: si el local ya empezó a prepararlo,
+// eso es lo que más le importa ver (y por qué ya no puede modificarlo).
+function saleStatusLabel(sale: Sale) {
+  if (sale.status === "PENDING") {
+    if (sale.deliveryStatus === "PREPARING") return "En preparación";
+    if (sale.deliveryStatus === "IN_TRANSIT") return "En camino";
+    if (sale.deliveryStatus === "DELIVERED") return "Entregado";
+  }
+
+  return statusLabel(sale.status);
 }
 
 export default function TiendaCuentaPage() {
@@ -829,7 +842,7 @@ export default function TiendaCuentaPage() {
 
                           <div className="sale-total">
                             <strong>{formatMoney(saleTotal(sale))}</strong>
-                            <span>{statusLabel(sale.status)}</span>
+                            <span>{saleStatusLabel(sale)}</span>
                             {sale.editable && (
                               <Link
                                 href={`/tienda/pedido/${sale.id}`}

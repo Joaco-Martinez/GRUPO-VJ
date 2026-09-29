@@ -65,6 +65,7 @@ export type ShopOrderSummary = {
   createdAt: string;
   total: number;
   status: "PENDING" | "COMPLETED" | "CANCELLED";
+  deliveryStatus?: string | null;
   paymentMethod?: string | null;
   receiptType?: string | null;
   clientId?: string | null;

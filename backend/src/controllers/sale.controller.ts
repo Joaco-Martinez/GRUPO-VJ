@@ -269,6 +269,12 @@ export const saleController = {
         delete payload.stockLocation;
       }
 
+      // Igual con deliveryStatus: normalizeSaleBody lo completa con "NONE",
+      // y al editar ítems no queremos pisar un pedido ya "en preparación".
+      if (req.body.deliveryStatus === undefined) {
+        delete payload.deliveryStatus;
+      }
+
       const updated = await saleService.updateItems(
         getParamAsString(req.params.id, "id"),
         {
@@ -314,6 +320,28 @@ export const saleController = {
       );
 
       res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async updateDeliveryStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { deliveryStatus } = req.body as { deliveryStatus: DeliveryStatus };
+
+      if (!isDeliveryStatus(deliveryStatus)) {
+        return res.status(400).json({
+          message:
+            "Estado de entrega inválido. Usá NONE, PENDING, PREPARING, IN_TRANSIT, DELIVERED o CANCELLED",
+        });
+      }
+
+      const updated = await saleService.updateDeliveryStatus(
+        getParamAsString(req.params.id, "id"),
+        deliveryStatus
+      );
+
+      res.json(safeJson(updated));
     } catch (err) {
       next(err);
     }

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { saleController } from "../controllers/sale.controller";
-import { authMiddleware } from "../middleware/auth";
+import { authMiddleware, requireAnyRole } from "../middleware/auth";
 
 const router = Router();
 
@@ -15,7 +15,14 @@ router.patch("/:id/items", authMiddleware, saleController.updateItems);
 
 router.patch("/:id/status", authMiddleware, saleController.updateStatus);
 
-router.patch("/:id/payment", authMiddleware, saleController.updatePaymentMethod);
+router.patch(
+  "/:id/delivery-status",
+  authMiddleware,
+  requireAnyRole(["ADMIN", "EMPLEADO"]),
+  saleController.updateDeliveryStatus
+);
+
+router.patch("/:id/payment",authMiddleware, saleController.updatePaymentMethod);
 
 router.patch("/:id/payments", authMiddleware, saleController.updatePayments);
 

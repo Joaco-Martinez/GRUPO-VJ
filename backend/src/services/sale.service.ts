@@ -2109,6 +2109,30 @@ export const saleService = {
     return updated;
   },
 
+  // Solo cambia el estado de entrega (no toca ítems, stock ni pagos). Pasar un
+  // pedido a PREPARING o más adelante bloquea que el cliente lo edite desde la
+  // tienda (ver getOrderEditBlockReason en catalog.service.ts).
+  async updateDeliveryStatus(id: string, deliveryStatus: DeliveryStatus) {
+    const sale = await prisma.sale.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
+
+    if (!sale) {
+      throw new Error("Venta no encontrada");
+    }
+
+    if (sale.status === SaleStatus.CANCELLED) {
+      throw new Error("No se puede cambiar el estado de entrega de una venta cancelada");
+    }
+
+    return prisma.sale.update({
+      where: { id },
+      data: { deliveryStatus },
+      include: buildSaleInclude(),
+    });
+  },
+
   async updateStatus(id: string, status: SaleStatus) {
     const sale = await prisma.sale.findUnique({
       where: {

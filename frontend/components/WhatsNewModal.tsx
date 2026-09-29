@@ -6,9 +6,14 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-09-28-clientes-editan-pedidos';
+const WHATS_NEW_VERSION = '2026-09-29-pedidos-en-preparacion';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Pedidos en preparación',
+    description:
+      'En Ventas > Opciones ahora se puede marcar un pedido como "En preparación", "En camino" o "Entregado". Al pasarlo a preparación, el cliente ya no puede modificarlo desde la tienda (si se vuelve a pendiente, puede editarlo otra vez). El cliente ve el estado de su pedido en Mi cuenta.',
+  },
   {
     title: 'Los clientes pueden modificar sus pedidos',
     description:

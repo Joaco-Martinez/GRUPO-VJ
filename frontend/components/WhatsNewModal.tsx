@@ -6,9 +6,14 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-09-28-precio-envio-configurable';
+const WHATS_NEW_VERSION = '2026-09-28-clientes-editan-pedidos';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Los clientes pueden modificar sus pedidos',
+    description:
+      'Desde la tienda, en Mi cuenta, los clientes pueden sumar productos, cambiar cantidades o quitar ítems de sus pedidos web mientras sigan pendientes. Se valida el stock al guardar y se respetan el envío y los precios manuales. Si el pedido ya tiene pagos, está facturado o en preparación, ya no lo pueden tocar.',
+  },
   {
     title: 'Precio de envío configurable',
     description:

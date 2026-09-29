@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   LogOut,
+  Pencil,
   Mail,
   Phone,
   ReceiptText,
@@ -16,12 +17,10 @@ import {
   Wallet,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { formatMoney } from "@/lib/shop";
+import { formatMoney, shopApi } from "@/lib/shop";
 import { useCartStore } from "@/store/cart";
 import { useShopAuth } from "@/context/ShopAuthContext";
 import { formatDateTimeAR } from '@/lib/dateAR';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 type SaleItem = {
   id?: string;
@@ -46,6 +45,7 @@ type Sale = {
   receiptType?: string | null;
   clientId?: string | null;
   client?: { id?: string | null } | null;
+  editable?: boolean;
   items?: SaleItem[];
 };
 
@@ -66,29 +66,6 @@ function getErrorMessage(error: unknown, fallback: string) {
     apiError.response?.data?.error ??
     fallback
   );
-}
-
-async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    let message = "No se pudo conectar con el servidor";
-
-    try {
-      const data = await res.json();
-      message = data?.message ?? data?.error ?? message;
-    } catch {
-      // Ignoramos parse error.
-    }
-
-    throw new Error(message);
-  }
-
-  return res.json();
 }
 
 function normalizeSales(data: any): Sale[] {
@@ -159,20 +136,12 @@ export default function TiendaCuentaPage() {
       if (loading) return;
       if (!user?.id) return;
 
-      const clientId = client?.id;
-
       setSalesLoading(true);
       setError("");
 
       try {
-        const salesData = await apiGet<any>("/sales");
-        const allSales = normalizeSales(salesData);
-
-        const mySales = clientId
-          ? allSales.filter(
-              (sale) => sale.clientId === clientId || sale.client?.id === clientId
-            )
-          : [];
+        // El backend ya devuelve sólo los pedidos del cliente logueado.
+        const mySales = normalizeSales(await shopApi.getOrders());
 
         if (!alive) return;
 
@@ -596,6 +565,25 @@ export default function TiendaCuentaPage() {
           font-weight: 900;
         }
 
+        .edit-order-link {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          margin-top: 8px;
+          border-radius: 999px;
+          background: var(--primary);
+          color: #fff;
+          padding: 7px 12px;
+          font-size: 12px;
+          font-weight: 900;
+          text-decoration: none;
+        }
+
+        .edit-order-link:hover {
+          background: var(--primary-hover);
+        }
+
         .empty,
         .loading,
         .err-box {
@@ -842,6 +830,15 @@ export default function TiendaCuentaPage() {
                           <div className="sale-total">
                             <strong>{formatMoney(saleTotal(sale))}</strong>
                             <span>{statusLabel(sale.status)}</span>
+                            {sale.editable && (
+                              <Link
+                                href={`/tienda/pedido/${sale.id}`}
+                                className="edit-order-link"
+                              >
+                                <Pencil size={13} />
+                                Modificar pedido
+                              </Link>
+                            )}
                           </div>
                         </article>
                       );

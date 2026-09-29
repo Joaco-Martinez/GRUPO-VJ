@@ -1,15 +1,17 @@
 import prisma from "../prisma";
 import {
   CategoryClient,
+  DeliveryStatus,
   PaymentMethod,
   ProductType,
   ReceiptType,
   Role,
+  SaleItemPriceType,
   SaleStatus,
   SaleUnit,
   Location,
 } from "@prisma/client";
-import { saleService } from "./sale.service";
+import { isDeliverySku, saleService } from "./sale.service";
 import { whatsappService } from "./whatsapp.service";
 import { cached } from "../utils/simpleCache";
 
@@ -32,6 +34,12 @@ type CheckoutInput = {
   items: CheckoutItemInput[];
   paymentMethod?: PaymentMethod;
   customerNotes?: string;
+};
+
+type UpdateOrderInput = {
+  userId: string;
+  saleId: string;
+  items: CheckoutItemInput[];
 };
 
 type CustomerContext = {
@@ -283,6 +291,119 @@ function mapProduct(product: any, customer: CustomerContext) {
     updatedAt: product.updatedAt,
   };
 }
+
+function httpError(status: number, message: string) {
+  const err: any = new Error(message);
+  err.status = status;
+  return err;
+}
+
+const CLIENT_EDITABLE_DELIVERY_STATUSES: DeliveryStatus[] = [
+  DeliveryStatus.NONE,
+  DeliveryStatus.PENDING,
+];
+
+// Motivo por el que el cliente NO puede editar su pedido desde la tienda
+// (null = se puede editar).
+function getOrderEditBlockReason(sale: any): string | null {
+  if (sale.status !== SaleStatus.PENDING) {
+    return "Solo se pueden modificar pedidos pendientes.";
+  }
+
+  if (!sale.isWebSale) {
+    return "Este pedido fue cargado por el local. Para modificarlo contactanos.";
+  }
+
+  if (sale.isInvoiced || sale.invoiceStatus === "INVOICED" || sale.invoiceAfip) {
+    return "El pedido ya fue facturado. Para modificarlo contactanos.";
+  }
+
+  if (!CLIENT_EDITABLE_DELIVERY_STATUSES.includes(sale.deliveryStatus)) {
+    return "El pedido ya se está preparando o enviando. Para modificarlo contactanos.";
+  }
+
+  if (Array.isArray(sale.payments) && sale.payments.length > 0) {
+    return "El pedido ya tiene pagos registrados. Para modificarlo contactanos.";
+  }
+
+  return null;
+}
+
+function isOrderDeliveryItem(item: any) {
+  return isDeliverySku(item.productSkuSnapshot ?? item.product?.sku);
+}
+
+function getSaleItemQuantity(item: any) {
+  if (item.product?.saleUnit === SaleUnit.KG) {
+    return Number(item.quantityKg ?? item.quantity ?? 0);
+  }
+
+  return Number(item.quantity ?? 0);
+}
+
+// Cantidad de cada producto que ya tiene reservada este pedido. Como la
+// venta pendiente ya descontó ese stock, al editar el cliente puede usarlo
+// además del stock disponible.
+function getReservedByProduct(sale: any, customer: CustomerContext) {
+  const reserved = new Map<string, number>();
+
+  if (sale.stockLocation !== getStockLocationByCategory(customer.category)) {
+    return reserved;
+  }
+
+  for (const item of sale.items ?? []) {
+    if (isOrderDeliveryItem(item)) continue;
+
+    reserved.set(
+      item.productId,
+      round2((reserved.get(item.productId) ?? 0) + getSaleItemQuantity(item)),
+    );
+  }
+
+  return reserved;
+}
+
+function mapProductForOrder(
+  product: any,
+  customer: CustomerContext,
+  reservedQty: number,
+) {
+  const mapped = mapProduct(product, customer);
+
+  if (reservedQty <= 0) return mapped;
+
+  const isKg = product.saleUnit === SaleUnit.KG;
+  const availableQuantity = isKg
+    ? mapped.availableQuantity
+    : round2(Number(mapped.availableQuantity || 0) + reservedQty);
+  const availableKg = isKg
+    ? round2(Number(mapped.availableKg || 0) + reservedQty)
+    : mapped.availableKg;
+  const available = isKg ? availableKg : availableQuantity;
+
+  return {
+    ...mapped,
+    availableQuantity,
+    availableKg,
+    canSell: available > 0,
+    stockLabel: `${isKg ? `${available} kg` : available} disponibles para este pedido`,
+  };
+}
+
+const ORDER_INCLUDE = {
+  payments: true,
+  invoiceAfip: true,
+  items: {
+    include: {
+      product: {
+        include: {
+          category: true,
+          components: { include: { component: true } },
+        },
+      },
+    },
+  },
+} as const;
 
 function buildWhatsappUrl(message: string) {
   const phone = whatsappService.normalizePhone(
@@ -705,5 +826,252 @@ export const catalogService = {
       whatsappApi,
       sale,
     };
+  },
+  async findClientOrder(userId: string, saleId: string) {
+    if (!userId) {
+      throw httpError(401, "Tenés que iniciar sesión");
+    }
+
+    const customer = await this.getCustomerContext(userId);
+
+    if (!customer.clientId) {
+      throw httpError(403, "Solo los usuarios cliente pueden ver sus pedidos");
+    }
+
+    const sale = await prisma.sale.findFirst({
+      where: { id: saleId, clientId: customer.clientId },
+      include: ORDER_INCLUDE,
+    });
+
+    if (!sale) {
+      throw httpError(404, "Pedido no encontrado");
+    }
+
+    return { customer, sale };
+  },
+
+  async getOrders(userId: string) {
+    if (!userId) {
+      throw httpError(401, "Tenés que iniciar sesión");
+    }
+
+    const customer = await this.getCustomerContext(userId);
+
+    if (!customer.clientId) return [];
+
+    const sales = await prisma.sale.findMany({
+      where: { clientId: customer.clientId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      include: {
+        payments: true,
+        invoiceAfip: true,
+        items: {
+          include: { product: { select: { name: true, sku: true, saleUnit: true } } },
+        },
+      },
+    });
+
+    return sales.map((sale: any) => ({
+      id: sale.id,
+      createdAt: sale.createdAt,
+      total: sale.total,
+      status: sale.status,
+      paymentMethod: sale.paymentMethod,
+      receiptType: sale.receiptType,
+      clientId: sale.clientId,
+      editable: !getOrderEditBlockReason(sale),
+      items: sale.items.map((item: any) => ({
+        id: item.id,
+        quantity: item.quantity,
+        quantityKg: item.quantityKg,
+        price: item.price,
+        subtotal: item.subtotal,
+        product: {
+          name: item.productNameSnapshot ?? item.product?.name,
+          saleUnit: item.product?.saleUnit,
+        },
+      })),
+    }));
+  },
+
+  async getOrder(userId: string, saleId: string) {
+    const { customer, sale } = await this.findClientOrder(userId, saleId);
+    const reserved = getReservedByProduct(sale, customer);
+    const blockReason = getOrderEditBlockReason(sale);
+
+    return {
+      id: sale.id,
+      status: sale.status,
+      createdAt: sale.createdAt,
+      subtotal: sale.subtotal,
+      total: sale.total,
+      editable: !blockReason,
+      blockReason,
+      items: sale.items
+        .filter((item: any) => !isOrderDeliveryItem(item))
+        .map((item: any) => ({
+          id: item.id,
+          productId: item.productId,
+          name: item.productNameSnapshot ?? item.product?.name ?? "Producto",
+          saleUnit: item.product?.saleUnit ?? SaleUnit.UNIT,
+          quantity: getSaleItemQuantity(item),
+          price: item.price,
+          subtotal: item.subtotal,
+          product: item.product
+            ? mapProductForOrder(
+                item.product,
+                customer,
+                reserved.get(item.productId) ?? 0,
+              )
+            : null,
+        })),
+      extras: sale.items
+        .filter((item: any) => isOrderDeliveryItem(item))
+        .map((item: any) => ({
+          id: item.id,
+          name: item.productNameSnapshot ?? item.product?.name ?? "Envío",
+          subtotal: item.subtotal,
+        })),
+    };
+  },
+
+  async updateOrder(data: UpdateOrderInput) {
+    const { customer, sale } = await this.findClientOrder(
+      data.userId,
+      data.saleId,
+    );
+
+    const blockReason = getOrderEditBlockReason(sale);
+
+    if (blockReason) {
+      throw httpError(400, blockReason);
+    }
+
+    // Unificamos productos repetidos y descartamos cantidades en cero.
+    const requestedByProduct = new Map<string, number>();
+
+    for (const item of Array.isArray(data.items) ? data.items : []) {
+      const productId = String(item.productId || "");
+      const qty = Number(item.quantityKg ?? item.quantity ?? 0);
+
+      if (!productId) {
+        throw httpError(400, "Hay un producto inválido en el pedido");
+      }
+
+      if (!Number.isFinite(qty) || qty < 0) {
+        throw httpError(400, "Hay una cantidad inválida en el pedido");
+      }
+
+      requestedByProduct.set(
+        productId,
+        round2((requestedByProduct.get(productId) ?? 0) + qty),
+      );
+    }
+
+    for (const [productId, qty] of [...requestedByProduct]) {
+      if (qty <= 0) requestedByProduct.delete(productId);
+    }
+
+    if (requestedByProduct.size === 0) {
+      throw httpError(
+        400,
+        "El pedido tiene que tener al menos un producto. Si querés cancelarlo, contactanos.",
+      );
+    }
+
+    const existingByProduct = new Map<string, any>(
+      sale.items
+        .filter((item: any) => !isOrderDeliveryItem(item))
+        .map((item: any) => [item.productId, item]),
+    );
+
+    const products: any[] = await prisma.product.findMany({
+      where: { id: { in: [...requestedByProduct.keys()] } },
+      include: {
+        category: true,
+        components: { include: { component: true } },
+      },
+    });
+
+    const productMap = new Map<string, any>(
+      products.map((product: any) => [product.id, product]),
+    );
+
+    const reserved = getReservedByProduct(sale, customer);
+    const saleItems: any[] = [];
+
+    for (const [productId, qty] of requestedByProduct) {
+      const product = productMap.get(productId);
+      const existing = existingByProduct.get(productId);
+
+      // Productos nuevos: tienen que estar publicados en la tienda.
+      // Los que ya estaban en el pedido se pueden mantener aunque se hayan ocultado.
+      if (
+        !product ||
+        (!existing && (!product.isActive || !product.isVisibleToPublic)) ||
+        isDeliverySku(product.sku)
+      ) {
+        throw httpError(400, "Uno de los productos ya no está disponible en la tienda.");
+      }
+
+      const isKg = product.saleUnit === SaleUnit.KG;
+
+      if (!isKg && !Number.isInteger(qty)) {
+        throw httpError(400, `La cantidad de ${product.name} tiene que ser un número entero.`);
+      }
+
+      if (!existing && resolvePrice(product, customer.category).price <= 0) {
+        throw httpError(400, `${product.name} no tiene precio configurado para tu lista.`);
+      }
+
+      const stock = getProductStock(product, customer.category);
+      const available = round2(
+        getAvailableQuantityForProduct(product, stock) +
+          (reserved.get(productId) ?? 0),
+      );
+
+      if (qty > available) {
+        throw httpError(
+          400,
+          available > 0
+            ? `De ${product.name} solo hay ${formatStockAmountForProduct(product, available)} disponible${available === 1 && !isKg ? "" : "s"}.`
+            : `${product.name} no tiene stock disponible.`,
+        );
+      }
+
+      const saleItem: any = {
+        productId,
+        ...(isKg ? { quantityKg: qty } : { quantity: qty }),
+      };
+
+      // Si el local le puso un precio manual a un producto, lo respetamos.
+      if (existing?.priceType === SaleItemPriceType.MANUAL) {
+        saleItem.priceType = SaleItemPriceType.MANUAL;
+        saleItem.price = existing.price;
+      }
+
+      saleItems.push(saleItem);
+    }
+
+    // El envío no lo edita el cliente: se conserva tal cual.
+    for (const item of sale.items.filter((i: any) => isOrderDeliveryItem(i))) {
+      saleItems.push({
+        productId: item.productId,
+        quantity: item.quantity,
+        price: item.price,
+        priceType: SaleItemPriceType.MANUAL,
+      });
+    }
+
+    // updateItems vuelve a validar el stock dentro de la transacción y sólo
+    // mueve la diferencia contra lo que el pedido ya tenía descontado.
+    await saleService.updateItems(sale.id, {
+      userId: data.userId,
+      items: saleItems,
+      payments: [],
+    });
+
+    return this.getOrder(data.userId, sale.id);
   },
 };

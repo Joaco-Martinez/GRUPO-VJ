@@ -138,6 +138,10 @@ function normalizeText(value?: string | null) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+export function isDeliverySku(sku?: string | null) {
+  return normalizeText(sku) === DELIVERY_SKU;
+}
+
 function isDeliverySaleItem(item: ResolvedSaleItem) {
   return normalizeText(item.productSku) === DELIVERY_SKU;
 }

@@ -60,6 +60,48 @@ export type CartValidationResult = {
   items: CartValidationItem[];
 };
 
+export type ShopOrderSummary = {
+  id: string;
+  createdAt: string;
+  total: number;
+  status: "PENDING" | "COMPLETED" | "CANCELLED";
+  paymentMethod?: string | null;
+  receiptType?: string | null;
+  clientId?: string | null;
+  editable: boolean;
+  items: {
+    id: string;
+    quantity?: number | null;
+    quantityKg?: number | null;
+    price?: number | null;
+    subtotal?: number | null;
+    product?: { name?: string | null; saleUnit?: string | null } | null;
+  }[];
+};
+
+export type ShopOrderItem = {
+  id: string;
+  productId: string;
+  name: string;
+  saleUnit: "UNIT" | "KG";
+  quantity: number;
+  price: number;
+  subtotal: number;
+  product: CatalogProduct | null;
+};
+
+export type ShopOrder = {
+  id: string;
+  status: "PENDING" | "COMPLETED" | "CANCELLED";
+  createdAt: string;
+  subtotal: number;
+  total: number;
+  editable: boolean;
+  blockReason: string | null;
+  items: ShopOrderItem[];
+  extras: { id: string; name: string; subtotal: number }[];
+};
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_URL}${path}`;
 
@@ -170,6 +212,21 @@ export const shopApi = {
       whatsappApi?: unknown;
     }>("/catalog/checkout-whatsapp", {
       method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getOrders() {
+    return request<ShopOrderSummary[]>("/catalog/orders");
+  },
+
+  getOrder(id: string) {
+    return request<ShopOrder>(`/catalog/orders/${encodeURIComponent(id)}`);
+  },
+
+  updateOrder(id: string, payload: { items: CheckoutItem[] }) {
+    return request<ShopOrder>(`/catalog/orders/${encodeURIComponent(id)}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     });
   },

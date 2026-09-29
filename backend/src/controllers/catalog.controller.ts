@@ -100,4 +100,48 @@ export const catalogController = {
       next(err);
     }
   },
+
+  async getOrders(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user;
+      const result = await catalogService.getOrders(user?.id);
+
+      res.json({ ok: true, content: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getOrder(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user;
+      const result = await catalogService.getOrder(user?.id, String(req.params.id));
+
+      res.json({ ok: true, content: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async updateOrder(req: Request, res: Response, next: NextFunction) {
+    try {
+      const user = (req as any).user;
+
+      const result = await catalogService.updateOrder({
+        userId: user?.id,
+        saleId: String(req.params.id),
+        items: Array.isArray(req.body.items)
+          ? req.body.items.map((item: any) => ({
+              productId: item.productId,
+              quantity: toNumber(item.quantity),
+              quantityKg: toNumber(item.quantityKg),
+            }))
+          : [],
+      });
+
+      res.json({ ok: true, content: result });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

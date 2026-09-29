@@ -13,7 +13,11 @@
     "expire:quotations:prod": "node dist/jobs/expirePendingQuotations.js",
     "worker": "ts-node src/worker.ts",
     "start": "node dist/index.js",
-    "prisma:studio": "npx prisma studio"
+    "prisma:studio": "npx prisma studio",
+    "testdb": "node scripts/test-db.mjs",
+    "testdb:push": "node scripts/with-test-db.mjs npx prisma db push --skip-generate",
+    "seed:test": "node scripts/with-test-db.mjs ts-node src/seedTest.ts",
+    "dev:test": "node scripts/with-test-db.mjs nodemon --exec ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -64,6 +68,7 @@
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
     "@types/xml2js": "^0.4.14",
+    "embedded-postgres": "^18.4.0-beta.17",
     "nodemon": "^3.1.10",
     "prisma": "^6.19.3",
     "ts-node": "^10.9.2",

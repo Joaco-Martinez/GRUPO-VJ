@@ -3,3 +3,6 @@ node_modules
 .env
 
 /generated/prisma
+
+# Base local de testeo (npm run testdb)
+.testdb/

@@ -72,13 +72,14 @@ async function main() {
 
   const client = await prisma.client.upsert({
     where: { userId: clienteUser.id },
-    update: { isActive: true, category: CategoryClient.Price },
+    update: { isActive: true, category: CategoryClient.Price, isAccountEnabled: true },
     create: {
       nombre: "Cliente",
       apellido: "Test",
       gmail: "cliente@test.com",
       telefono: "1122334455",
       category: CategoryClient.Price,
+      isAccountEnabled: true,
       userId: clienteUser.id,
       addressStreet: "Av. Corrientes",
       addressNumber: "1234",
@@ -115,7 +116,13 @@ async function main() {
     }
   }
 
+  const ofClient = { sale: { clientId: client.id } };
+  await prisma.accountMovement.deleteMany({ where: { clientId: client.id } });
+  await prisma.invoice.deleteMany({ where: ofClient });
+  await prisma.invoiceAfip.deleteMany({ where: ofClient });
+  await prisma.remito.deleteMany({ where: ofClient });
   await prisma.sale.deleteMany({ where: { clientId: client.id } });
+  await prisma.client.update({ where: { id: client.id }, data: { currentBalance: 0 } });
 
   // Mismo camino que el checkout de la tienda: venta web pendiente que
   // descuenta DEPÓSITO para clientes minoristas.
@@ -147,6 +154,19 @@ async function main() {
 
   const editableId = editable.sale?.id ?? editable.id;
 
+  // Venta del local en cuenta corriente, para probar abonos.
+  const aceite = products[3];
+  const ccSale: any = await saleService.create({
+    userId: vendedor.id,
+    clientId: client.id,
+    paymentMethod: PaymentMethod.CUENTA_CORRIENTE,
+    receiptType: ReceiptType.TICKET,
+    status: SaleStatus.COMPLETED,
+    stockLocation: "LOCAL",
+    items: [{ productId: aceite.id, quantity: 10, price: 5000, priceType: "MANUAL" as any }],
+  });
+  const ccSaleId = ccSale.sale?.id ?? ccSale.id;
+
   console.log("");
   console.log("✅ Listo. Usuarios (email / contraseña):");
   console.log("   Admin     admin@test.com / admin123");
@@ -156,6 +176,9 @@ async function main() {
   console.log("📦 Pedidos web del cliente:");
   console.log(`   #${editableId.slice(-8)}  PENDIENTE  -> el cliente lo puede modificar`);
   console.log(`   #${preparingId.slice(-8)}  EN PREPARACIÓN -> bloqueado para el cliente`);
+  console.log("");
+  console.log("💳 Cuenta corriente:");
+  console.log(`   #${ccSaleId.slice(-8)}  venta completada de $50.000 en cuenta corriente`);
   console.log("");
 }
 

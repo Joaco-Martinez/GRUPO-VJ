@@ -9,6 +9,14 @@ import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helper
 import toast from 'react-hot-toast';
 import { RefreshCcw, Search, Wallet, X } from 'lucide-react';
 
+type SaleWithDebt = {
+  id: string;
+  createdAt: string;
+  status: string;
+  total: number;
+  accountDebtAmount: number;
+};
+
 const methods: PaymentMethod[] = [
   'EFECTIVO',
   'TRANSFERENCIA',
@@ -55,6 +63,8 @@ export default function CuentasCorrientesPage() {
     description: '',
   });
   const [saving, setSaving] = useState(false);
+  const [salesWithDebt, setSalesWithDebt] = useState<SaleWithDebt[]>([]);
+  const [saleId, setSaleId] = useState('');
 
   const load = async (showSuccess = false) => {
     setLoading(true);
@@ -121,6 +131,14 @@ export default function CuentasCorrientesPage() {
       reference: '',
       description: '',
     });
+    setSaleId('');
+    setSalesWithDebt([]);
+
+    // Ventas con deuda del cliente: el abono se aplica a ellas.
+    api
+      .get(`/accounts/clients/${c.id}`)
+      .then((res) => setSalesWithDebt(normalizeArray<SaleWithDebt>(res.data?.salesWithDebt)))
+      .catch(() => setSalesWithDebt([]));
   };
 
   const closePaymentModal = () => {
@@ -153,6 +171,7 @@ export default function CuentasCorrientesPage() {
       await api.post(`/accounts/clients/${client.id}/payment`, {
         ...payment,
         amount,
+        saleId: saleId || undefined,
       });
 
       setClient(null);
@@ -546,6 +565,25 @@ export default function CuentasCorrientesPage() {
                   </select>
                 </div>
               </div>
+
+              {salesWithDebt.length > 0 && (
+                <div className="form-group">
+                  <label className="form-label">Aplicar a venta</label>
+                  <select value={saleId} onChange={(e) => setSaleId(e.target.value)}>
+                    <option value="">Automático (primero las más viejas)</option>
+                    {salesWithDebt.map((sale) => (
+                      <option key={sale.id} value={sale.id}>
+                        #{sale.id.slice(-8)} · {fmtDate(sale.createdAt)} · debe {fmtMoney(sale.accountDebtAmount)}
+                        {sale.status === 'PENDING' ? ' (pendiente)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <small style={{ color: 'var(--text3)' }}>
+                    El pago queda registrado en la venta y baja su deuda. Si sobra, se aplica a las
+                    siguientes.
+                  </small>
+                </div>
+              )}
 
               <div className="form-group">
                 <label className="form-label">Referencia</label>

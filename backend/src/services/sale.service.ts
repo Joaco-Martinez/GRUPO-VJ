@@ -948,7 +948,22 @@ function calculatePaymentState(params: {
   }
 
   totalPaid = round2(totalPaid);
-  const debtAmount = round2(params.total - totalPaid);
+  let debtAmount = round2(params.total - totalPaid);
+
+  // Totales con centavos (ej: 127.304,64) se suelen cobrar redondeados
+  // (127.305). Si el excedente es menor a $1 se toma como redondeo: se
+  // descuenta del último pago y la venta queda saldada.
+  if (debtAmount < 0 && debtAmount > -1 && paymentsToPersist.length > 0) {
+    const last = paymentsToPersist[paymentsToPersist.length - 1];
+    last.amount = round2(last.amount + debtAmount);
+
+    if (last.amount > 0) {
+      totalPaid = round2(params.total);
+      debtAmount = 0;
+    } else {
+      last.amount = round2(last.amount - debtAmount);
+    }
+  }
 
   if (debtAmount < 0) {
     throw new Error(
@@ -1321,9 +1336,12 @@ async function buildSalesStats(params: GetSalesParams = {}) {
           _count: { _all: true },
         }),
         prisma.sale.aggregate({ where: confirmedWhere, _sum: { total: true } }),
-        prisma.sale.aggregate({
-          where: confirmedWhere,
-          _sum: { accountDebtAmount: true },
+        // "Deuda real" = lo que deben hoy los clientes en cuenta corriente
+        // (mismo número que "Total pendiente" en Cuentas corrientes). No
+        // depende de los filtros del listado.
+        prisma.client.aggregate({
+          where: { currentBalance: { gt: 0 } },
+          _sum: { currentBalance: true },
         }),
         // El envío se vende como un ítem más de la venta (SKU ENVIO-FLETE2),
         // no siempre queda reflejado en Sale.deliveryCost/deliveryMethod
@@ -1355,7 +1373,7 @@ async function buildSalesStats(params: GetSalesParams = {}) {
         completedCount: countByStatus.get(SaleStatus.COMPLETED) ?? 0,
         cancelledCount: countByStatus.get(SaleStatus.CANCELLED) ?? 0,
         confirmedTotal: round2(Number(confirmedTotal._sum.total ?? 0)),
-        debt: round2(Number(debt._sum.accountDebtAmount ?? 0)),
+        debt: round2(Number(debt._sum.currentBalance ?? 0)),
         deliveryTotal: round2(Number(deliveryTotal._sum.subtotal ?? 0)),
       };
     }

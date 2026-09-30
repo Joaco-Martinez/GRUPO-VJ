@@ -4,7 +4,9 @@ import {
   CategoryFinance,
   FinanceType,
   PaymentMethod,
+  SaleStatus,
 } from "@prisma/client";
+import { ACCOUNT_PAYMENT_MARKER } from "../utils/accountPayment";
 
 function round2(n: number) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -69,6 +71,21 @@ export const accountService = {
       },
       balance: client.currentBalance,
       movements: client.accountMovements,
+      salesWithDebt: await prisma.sale.findMany({
+        where: {
+          clientId,
+          status: { not: SaleStatus.CANCELLED },
+          accountDebtAmount: { gt: 0 },
+        },
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          createdAt: true,
+          status: true,
+          total: true,
+          accountDebtAmount: true,
+        },
+      }),
     };
   },
 
@@ -238,12 +255,16 @@ export const accountService = {
     reference?: string | null;
     description?: string | null;
     createFinance?: boolean;
+    saleId?: string | null;
   }) {
     const amount = assertPositiveAmount(data.amount);
 
     if (data.method === PaymentMethod.CUENTA_CORRIENTE) {
       throw new Error("Un abono no puede pagarse con CUENTA_CORRIENTE");
     }
+
+    const reference = data.reference?.trim() || null;
+    const description = data.description?.trim() || null;
 
     return prisma.$transaction(async (tx) => {
       const client = await tx.client.findUnique({
@@ -252,6 +273,8 @@ export const accountService = {
         },
         select: {
           id: true,
+          nombre: true,
+          apellido: true,
           currentBalance: true,
         },
       });
@@ -260,41 +283,125 @@ export const accountService = {
         throw new Error("Cliente no encontrado");
       }
 
-      const previousBalance = round2(client.currentBalance);
-      const newBalance = round2(Math.max(previousBalance - amount, 0));
-
-      await tx.client.update({
+      // El abono se aplica a las ventas con deuda del cliente (la elegida
+      // primero, después de la más vieja a la más nueva), para que la venta
+      // refleje el pago igual que si se hubiera cargado desde el historial.
+      const salesWithDebt = await tx.sale.findMany({
         where: {
-          id: data.clientId,
+          clientId: data.clientId,
+          status: { not: SaleStatus.CANCELLED },
+          accountDebtAmount: { gt: 0 },
         },
-        data: {
-          currentBalance: newBalance,
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          total: true,
+          accountDebtAmount: true,
+          paymentMethod: true,
+          _count: { select: { payments: true } },
         },
       });
 
-      const movement = await tx.accountMovement.create({
-        data: {
-          clientId: data.clientId,
-          userId: data.userId ?? null,
-          saleId: null,
-          type: AccountMovementType.PAYMENT,
-          amount,
-          previousBalance,
-          newBalance,
-          paymentMethod: data.method,
-          reference: data.reference ?? null,
-          description: data.description ?? "Abono de cuenta corriente",
-        },
-        include: {
-          client: true,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
+      if (data.saleId) {
+        const index = salesWithDebt.findIndex((sale) => sale.id === data.saleId);
+
+        if (index === -1) {
+          throw new Error("La venta elegida no es de este cliente o no tiene deuda");
+        }
+
+        salesWithDebt.unshift(...salesWithDebt.splice(index, 1));
+      }
+
+      let remaining = amount;
+      let balance = round2(client.currentBalance);
+      let firstMovement: any = null;
+
+      const createMovement = async (movementAmount: number, saleId: string | null) => {
+        const previousBalance = balance;
+        balance = round2(Math.max(previousBalance - movementAmount, 0));
+
+        const movement = await tx.accountMovement.create({
+          data: {
+            clientId: data.clientId,
+            userId: data.userId ?? null,
+            saleId,
+            type: AccountMovementType.PAYMENT,
+            amount: movementAmount,
+            previousBalance,
+            newBalance: balance,
+            paymentMethod: data.method,
+            reference,
+            description:
+              description ??
+              (saleId
+                ? `Abono de cuenta corriente - venta #${saleId.slice(-8)}`
+                : "Abono de cuenta corriente"),
+          },
+          include: {
+            client: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
             },
           },
-        },
+        });
+
+        firstMovement ??= movement;
+      };
+
+      for (const sale of salesWithDebt) {
+        if (remaining <= 0) break;
+
+        const debt = round2(sale.accountDebtAmount);
+        const applied = round2(Math.min(remaining, debt));
+        const newDebt = round2(debt - applied);
+        const alreadyPaid = round2(Number(sale.total) - debt);
+
+        const paymentsToCreate: any[] = [];
+
+        // Venta sin líneas de pago pero con una parte ya cobrada: se deja
+        // explícita esa parte para que al recalcular (total - pagos) la
+        // deuda siga dando lo mismo.
+        if (
+          sale._count.payments === 0 &&
+          alreadyPaid > 0 &&
+          sale.paymentMethod !== PaymentMethod.CUENTA_CORRIENTE
+        ) {
+          paymentsToCreate.push({ method: sale.paymentMethod, amount: alreadyPaid });
+        }
+
+        paymentsToCreate.push({
+          method: data.method,
+          amount: applied,
+          reference,
+          notes: `${ACCOUNT_PAYMENT_MARKER} Abono desde Cuentas Corrientes`,
+        });
+
+        await tx.sale.update({
+          where: { id: sale.id },
+          data: {
+            accountDebtAmount: newDebt,
+            isAccountSale: newDebt > 0,
+            payments: { create: paymentsToCreate },
+          },
+        });
+
+        await createMovement(applied, sale.id);
+        remaining = round2(remaining - applied);
+      }
+
+      // Lo que no se aplicó a ninguna venta (deuda cargada por ajuste, o un
+      // pago mayor a la deuda de las ventas) baja el saldo igual que antes.
+      if (remaining > 0) {
+        await createMovement(remaining, null);
+      }
+
+      await tx.client.update({
+        where: { id: data.clientId },
+        data: { currentBalance: balance },
       });
 
       if (data.createFinance !== false) {
@@ -305,14 +412,14 @@ export const accountService = {
             category: CategoryFinance.COBRANZA,
             paymentMethod: data.method,
             description:
-              data.description ??
-              `Abono cuenta corriente cliente ${movement.client.nombre} ${movement.client.apellido}`,
+              description ??
+              `Abono cuenta corriente cliente ${client.nombre} ${client.apellido}`,
             date: new Date(),
           },
         });
       }
 
-      return movement;
+      return firstMovement;
     });
   },
 

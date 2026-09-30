@@ -88,6 +88,7 @@ export const accountController = {
         userId,
         reference: req.body.reference ?? null,
         description: req.body.description ?? null,
+        saleId: req.body.saleId || null,
       });
 
       res.status(201).json(result);

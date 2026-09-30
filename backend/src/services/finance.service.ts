@@ -1,6 +1,7 @@
 import prisma from "../prisma";
 import { CategoryFinance, FinanceType, Location, SaleStatus } from "@prisma/client";
 import ExcelJS from "exceljs";
+import { isAccountPaymentLine } from "../utils/accountPayment";
 import PDFDocument from "pdfkit";
 import { Response } from "express";
 import {
@@ -278,9 +279,12 @@ export const financeService = {
     const marker = `[sale:${sale.id}]`;
     const deliveryMarker = `[sale-envio:${sale.id}]`;
 
+    // Los pagos que vienen de abonos de cuenta corriente ya se registraron
+    // como COBRANZA al momento del abono: no se cuentan de nuevo acá.
     const paidAmount = sale.payments?.length
       ? sale.payments
           .filter((payment) => payment.method !== "CUENTA_CORRIENTE")
+          .filter((payment) => !isAccountPaymentLine(payment))
           .reduce((acc, payment) => acc + Number(payment.amount || 0), 0)
       : sale.paymentMethod === "CUENTA_CORRIENTE"
         ? 0

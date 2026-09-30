@@ -15,6 +15,7 @@ import toast from 'react-hot-toast';
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   FileText,
   Package,
   Plus,
@@ -798,7 +799,10 @@ export default function VentasPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [status, setStatus] = useState('');
+  // Por defecto se ven las pendientes (lo que hay que preparar/confirmar).
+  const [status, setStatus] = useState('PENDING');
+  // El resumen (totales, deuda, envíos) arranca cerrado.
+  const [statsOpen, setStatsOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -1558,6 +1562,34 @@ export default function VentasPage() {
         notes: p.notes ?? '',
       }))
     );
+  };
+
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const payPaidTotal = round2(
+    payments
+      .filter((p) => p.method !== 'CUENTA_CORRIENTE')
+      .reduce((acc, p) => acc + num(p.amount), 0)
+  );
+  const payRemaining = payEdit ? round2(num(payEdit.total) - payPaidTotal) : 0;
+
+  // Carga el saldo exacto (con centavos): completa una línea vacía o agrega una nueva.
+  const completePaymentBalance = () => {
+    if (payRemaining <= 0) return;
+
+    setPayments((prev) => {
+      const emptyIndex = prev.findIndex(
+        (p) => p.method !== 'CUENTA_CORRIENTE' && num(p.amount) <= 0
+      );
+
+      if (emptyIndex !== -1) {
+        return prev.map((p, i) => (i === emptyIndex ? { ...p, amount: payRemaining } : p));
+      }
+
+      return [
+        ...prev.filter((p) => p.method !== 'CUENTA_CORRIENTE'),
+        { method: 'EFECTIVO', amount: payRemaining },
+      ];
+    });
   };
 
   const savePayments = async () => {
@@ -2384,6 +2416,18 @@ export default function VentasPage() {
       }
     >
       {isAdmin && (
+        <button
+          type="button"
+          className="sales-stats-toggle"
+          onClick={() => setStatsOpen((open) => !open)}
+          aria-expanded={statsOpen}
+        >
+          <span>Resumen de ventas</span>
+          <ChevronDown size={16} className={statsOpen ? 'is-open' : ''} />
+        </button>
+      )}
+
+      {isAdmin && statsOpen && (
         <div
           className="sales-stats-grid"
           style={{
@@ -2429,7 +2473,7 @@ export default function VentasPage() {
             >
               {fmtMoney(debt)}
             </div>
-            <div className="stat-label">Deuda real</div>
+            <div className="stat-label">Deuda real (cuentas corrientes)</div>
           </div>
 
           <div className="stat-card">
@@ -4429,6 +4473,8 @@ export default function VentasPage() {
 
                   <input
                     type="number"
+                    step="0.01"
+                    min="0"
                     value={p.amount || ''}
                     disabled={p.method === 'CUENTA_CORRIENTE'}
                     onChange={(e) =>
@@ -4454,14 +4500,38 @@ export default function VentasPage() {
                 </div>
               ))}
 
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() =>
-                  setPayments((prev) => [...prev, { method: 'TRANSFERENCIA', amount: 0 }])
-                }
-              >
-                Agregar pago
-              </button>
+              <div className="sales-payment-actions">
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() =>
+                    setPayments((prev) => [...prev, { method: 'TRANSFERENCIA', amount: 0 }])
+                  }
+                >
+                  Agregar pago
+                </button>
+
+                {payRemaining > 0 && (
+                  <button className="btn btn-secondary btn-sm" onClick={completePaymentBalance}>
+                    Completar saldo ({fmtMoney(payRemaining)})
+                  </button>
+                )}
+              </div>
+
+              <p className="sales-payment-summary">
+                Pagado: <b>{fmtMoney(payPaidTotal)}</b>
+                {payRemaining > 0 ? (
+                  <>
+                    {' '}· Queda en cuenta corriente: <b style={{ color: 'var(--warn)' }}>{fmtMoney(payRemaining)}</b>
+                  </>
+                ) : payRemaining < 0 ? (
+                  <>
+                    {' '}· Excede el total por <b style={{ color: 'var(--danger)' }}>{fmtMoney(-payRemaining)}</b>
+                    {payRemaining > -1 ? ' (redondeo, se ajusta solo)' : ''}
+                  </>
+                ) : (
+                  <> · Venta saldada</>
+                )}
+              </p>
             </div>
 
             <div className="modal-footer">
@@ -6032,6 +6102,41 @@ export default function VentasPage() {
 
         .sales-action-row-danger > span {
           color: var(--danger);
+        }
+
+        .sales-payment-actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .sales-payment-summary {
+          margin-top: 12px;
+          color: var(--text2);
+          font-size: 13px;
+        }
+
+        .sales-stats-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 12px;
+          padding: 6px 12px;
+          border: 1px solid var(--border);
+          border-radius: 999px;
+          background: var(--surface2);
+          color: var(--text2);
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .sales-stats-toggle :global(svg) {
+          transition: transform 0.15s ease;
+        }
+
+        .sales-stats-toggle :global(svg.is-open) {
+          transform: rotate(180deg);
         }
 
         .sales-delivery-status-row {

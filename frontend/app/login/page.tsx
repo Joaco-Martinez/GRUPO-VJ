@@ -240,6 +240,16 @@ export default function LoginPage() {
           }}
         >
           © 2026 Grupo VJ · Sistema ERP
+          <br />
+          Desarrollado por{' '}
+          <a
+            href="https://www.byjoaco.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--text2)', textDecoration: 'none' }}
+          >
+            www.byjoaco.com
+          </a>
         </p>
       </div>
     </div>

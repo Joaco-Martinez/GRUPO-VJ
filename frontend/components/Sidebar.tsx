@@ -507,6 +507,25 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           <LogOut size={14} />
           {!collapsed && 'Cerrar sesión'}
         </button>
+
+        {!collapsed && (
+          <a
+            href="https://www.byjoaco.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'block',
+              marginTop: 8,
+              textAlign: 'center',
+              fontSize: 10,
+              fontFamily: 'var(--mono)',
+              color: 'var(--text3)',
+              textDecoration: 'none',
+            }}
+          >
+            Desarrollado por www.byjoaco.com
+          </a>
+        )}
       </div>
     </div>
   );

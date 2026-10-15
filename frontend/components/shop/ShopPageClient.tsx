@@ -2061,6 +2061,24 @@ export default function TiendaPage() {
           color: var(--text);
         }
 
+        .footer-credit {
+          border-top: 1px solid var(--line);
+          padding: 12px 28px 16px;
+          text-align: center;
+          font-size: 12px;
+          color: var(--muted);
+        }
+
+        .footer-credit a {
+          color: var(--text);
+          font-weight: 700;
+          text-decoration: none;
+        }
+
+        .footer-credit a:hover {
+          text-decoration: underline;
+        }
+
         .shop-scanner-overlay {
           position: fixed;
           inset: 0;
@@ -2775,6 +2793,13 @@ export default function TiendaPage() {
 
               {isLoggedIn && <Link href="/tienda/carrito">Carrito</Link>}
             </div>
+          </div>
+
+          <div className="footer-credit">
+            Desarrollado por{" "}
+            <a href="https://www.byjoaco.com" target="_blank" rel="noopener noreferrer">
+              www.byjoaco.com
+            </a>
           </div>
         </footer>
 

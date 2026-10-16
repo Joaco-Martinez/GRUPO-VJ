@@ -2797,8 +2797,8 @@ export default function TiendaPage() {
 
           <div className="footer-credit">
             Desarrollado por{" "}
-            <a href="https://www.byjoaco.com" target="_blank" rel="noopener noreferrer">
-              www.byjoaco.com
+            <a href="https://www.joacodev.com.ar" target="_blank" rel="noopener noreferrer">
+              www.joacodev.com.ar
             </a>
           </div>
         </footer>

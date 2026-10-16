@@ -243,12 +243,12 @@ export default function LoginPage() {
           <br />
           Desarrollado por{' '}
           <a
-            href="https://www.byjoaco.com"
+            href="https://www.joacodev.com.ar"
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: 'var(--text2)', textDecoration: 'none' }}
           >
-            www.byjoaco.com
+            www.joacodev.com.ar
           </a>
         </p>
       </div>

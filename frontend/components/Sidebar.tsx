@@ -510,7 +510,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
         {!collapsed && (
           <a
-            href="https://www.byjoaco.com"
+            href="https://www.joacodev.com.ar"
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -523,7 +523,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
               textDecoration: 'none',
             }}
           >
-            Desarrollado por www.byjoaco.com
+            Desarrollado por www.joacodev.com.ar
           </a>
         )}
       </div>

@@ -48,6 +48,11 @@ const invoiceBadge = (s?: string | null) =>
         ? 'badge-red'
         : 'badge-gray';
 
+// Línea CUENTA_CORRIENTE generada por el backend al usar saldo a favor del
+// cliente: cuenta como pagado (no es deuda).
+const isCreditLine = (p: { method: string; notes?: string | null }) =>
+  p.method === 'CUENTA_CORRIENTE' && String(p.notes ?? '').startsWith('[abono-cc]');
+
 const methods: PaymentMethod[] = [
   'EFECTIVO',
   'TRANSFERENCIA',
@@ -1567,7 +1572,7 @@ export default function VentasPage() {
   const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
   const payPaidTotal = round2(
     payments
-      .filter((p) => p.method !== 'CUENTA_CORRIENTE')
+      .filter((p) => p.method !== 'CUENTA_CORRIENTE' || isCreditLine(p))
       .reduce((acc, p) => acc + num(p.amount), 0)
   );
   const payRemaining = payEdit ? round2(num(payEdit.total) - payPaidTotal) : 0;
@@ -1578,7 +1583,7 @@ export default function VentasPage() {
 
     setPayments((prev) => {
       const emptyIndex = prev.findIndex(
-        (p) => p.method !== 'CUENTA_CORRIENTE' && num(p.amount) <= 0
+        (p) => p.method !== 'CUENTA_CORRIENTE' && !isCreditLine(p) && num(p.amount) <= 0
       );
 
       if (emptyIndex !== -1) {
@@ -1586,7 +1591,7 @@ export default function VentasPage() {
       }
 
       return [
-        ...prev.filter((p) => p.method !== 'CUENTA_CORRIENTE'),
+        ...prev.filter((p) => p.method !== 'CUENTA_CORRIENTE' || isCreditLine(p)),
         { method: 'EFECTIVO', amount: payRemaining },
       ];
     });
@@ -4451,6 +4456,8 @@ export default function VentasPage() {
                 >
                   <select
                     value={p.method}
+                    disabled={isCreditLine(p)}
+                    title={isCreditLine(p) ? 'Pagado con saldo a favor del cliente' : undefined}
                     onChange={(e) =>
                       setPayments((prev) =>
                         prev.map((x, i) =>

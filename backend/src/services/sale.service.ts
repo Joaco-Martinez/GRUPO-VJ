@@ -15,6 +15,7 @@ import {
   SaleUnit,
 } from "@prisma/client";
 import { financeService } from "./finance.service";
+import { ACCOUNT_PAYMENT_MARKER, isAccountPaymentLine } from "../utils/accountPayment";
 import { generateInvoicePDF } from "../utils/pdfGenerator";
 import alertService from "./alert.service";
 import { productStatsService } from "./productStats.service";
@@ -932,7 +933,12 @@ function calculatePaymentState(params: {
       throw new Error("Cada pago necesita amount > 0");
     }
 
-    if (payment.method === PaymentMethod.CUENTA_CORRIENTE) {
+    // Una línea CUENTA_CORRIENTE marcada es saldo a favor ya usado: cuenta
+    // como pagado. Sin marca, es la parte que queda debiendo.
+    if (
+      payment.method === PaymentMethod.CUENTA_CORRIENTE &&
+      !isAccountPaymentLine(payment)
+    ) {
       hasAccountPaymentLine = true;
       continue;
     }
@@ -1029,7 +1035,7 @@ async function createAccountDebtMovement(
     data: { currentBalance: newBalance },
   });
 
-  return tx.accountMovement.create({
+  const movement = await tx.accountMovement.create({
     data: {
       clientId: data.clientId,
       saleId: data.saleId,
@@ -1043,12 +1049,88 @@ async function createAccountDebtMovement(
       description: data.description ?? "Deuda generada por venta en cuenta corriente",
     },
   });
+
+  await applyClientCreditToSale(tx, data.saleId, previousBalance, debtAmount);
+
+  return movement;
+}
+
+// Si el cliente tenía saldo a favor (saldo negativo) cuando la venta le
+// generó deuda, ese saldo cubre la deuda de la venta: se agrega como pago
+// CUENTA_CORRIENTE marcado y baja la deuda de la venta. El saldo del cliente
+// ya quedó bien con el movimiento de deuda, así que no se vuelve a tocar.
+async function applyClientCreditToSale(
+  tx: any,
+  saleId: string,
+  previousBalance: number,
+  debtAdded: number
+) {
+  const credit = round2(Math.max(-previousBalance, 0));
+
+  if (credit <= 0 || debtAdded <= 0) return 0;
+
+  const sale = await tx.sale.findUnique({
+    where: { id: saleId },
+    select: {
+      total: true,
+      accountDebtAmount: true,
+      paymentMethod: true,
+      _count: { select: { payments: true } },
+    },
+  });
+
+  if (!sale) return 0;
+
+  const debt = round2(Number(sale.accountDebtAmount ?? 0));
+  const applied = round2(Math.min(credit, debtAdded, debt));
+
+  if (applied <= 0) return 0;
+
+  const newDebt = round2(debt - applied);
+  const alreadyPaid = round2(Number(sale.total) - debt);
+  const paymentsToCreate: any[] = [];
+
+  if (
+    sale._count.payments === 0 &&
+    alreadyPaid > 0 &&
+    sale.paymentMethod !== PaymentMethod.CUENTA_CORRIENTE
+  ) {
+    paymentsToCreate.push({ method: sale.paymentMethod, amount: alreadyPaid });
+  }
+
+  paymentsToCreate.push({
+    method: PaymentMethod.CUENTA_CORRIENTE,
+    amount: applied,
+    notes: `${ACCOUNT_PAYMENT_MARKER} Saldo a favor de cuenta corriente`,
+  });
+
+  await tx.sale.update({
+    where: { id: saleId },
+    data: {
+      accountDebtAmount: newDebt,
+      isAccountSale: newDebt > 0,
+      payments: { create: paymentsToCreate },
+    },
+  });
+
+  return applied;
 }
 
 async function reverseAccountDebtFromSale(tx: any, sale: any) {
   const debtAmount = round2(Number(sale.accountDebtAmount ?? 0));
 
-  if (!sale.clientId || debtAmount <= 0) return null;
+  // Lo que se pagó por cuenta corriente (abonos y saldo a favor usado)
+  // vuelve al cliente como saldo a favor al cancelar la venta.
+  const accountPayments = await tx.salePayment.findMany({
+    where: { saleId: sale.id, notes: { startsWith: ACCOUNT_PAYMENT_MARKER } },
+    select: { amount: true },
+  });
+  const accountPaid = round2(
+    accountPayments.reduce((acc: number, payment: any) => acc + Number(payment.amount || 0), 0)
+  );
+  const reverseAmount = round2(debtAmount + accountPaid);
+
+  if (!sale.clientId || reverseAmount <= 0) return null;
 
   const existingReverse = await tx.accountMovement.findFirst({
     where: {
@@ -1068,7 +1150,7 @@ async function reverseAccountDebtFromSale(tx: any, sale: any) {
   if (!client) throw new Error("Cliente no encontrado");
 
   const previousBalance = round2(client.currentBalance);
-  const newBalance = round2(Math.max(previousBalance - debtAmount, 0));
+  const newBalance = round2(previousBalance - reverseAmount);
 
   await tx.client.update({
     where: { id: sale.clientId },
@@ -1089,12 +1171,15 @@ async function reverseAccountDebtFromSale(tx: any, sale: any) {
       saleId: sale.id,
       userId: sale.userId ?? null,
       type: AccountMovementType.CREDIT_NOTE,
-      amount: debtAmount,
+      amount: reverseAmount,
       previousBalance,
       newBalance,
       paymentMethod: null,
       reference: sale.id,
-      description: "Reversión de deuda por cancelación de venta",
+      description:
+        accountPaid > 0
+          ? "Reversión por cancelación de venta (lo abonado queda a favor)"
+          : "Reversión de deuda por cancelación de venta",
     },
   });
 }
@@ -1986,6 +2071,8 @@ export const saleService = {
           },
         });
 
+        let balanceBeforeDebt: number | null = null;
+
         if (debtDelta !== 0 && clientId) {
           const currentClient = await tx.client.findUnique({
             where: { id: clientId },
@@ -2004,7 +2091,8 @@ export const saleService = {
           }
 
           const previousBalance = round2(currentClient.currentBalance);
-          const newBalance = round2(Math.max(previousBalance + debtDelta, 0));
+          balanceBeforeDebt = previousBalance;
+          const newBalance = round2(previousBalance + debtDelta);
 
           if (
             debtDelta > 0 &&
@@ -2108,6 +2196,22 @@ export const saleService = {
           pendingAlerts,
           isClientMovement
         );
+
+        if (debtDelta > 0 && balanceBeforeDebt !== null) {
+          const applied = await applyClientCreditToSale(
+            tx,
+            sale.id,
+            balanceBeforeDebt,
+            debtDelta
+          );
+
+          if (applied > 0) {
+            return tx.sale.findUniqueOrThrow({
+              where: { id: sale.id },
+              include: buildSaleInclude(),
+            });
+          }
+        }
 
         return editedSale;
       },
@@ -2589,6 +2693,8 @@ export const saleService = {
     const primary = payments[0]?.method ?? sale.paymentMethod;
 
     const updatedSale = await prisma.$transaction(async (tx) => {
+      let balanceBeforeDebt: number | null = null;
+
       if (debtDelta !== 0 && sale.clientId) {
         const client = await tx.client.findUnique({
           where: { id: sale.clientId },
@@ -2607,7 +2713,8 @@ export const saleService = {
         }
 
         const previousBalance = round2(client.currentBalance);
-        const newBalance = round2(Math.max(previousBalance + debtDelta, 0));
+        const newBalance = round2(previousBalance + debtDelta);
+        balanceBeforeDebt = previousBalance;
 
         if (
           debtDelta > 0 &&
@@ -2648,7 +2755,7 @@ export const saleService = {
         });
       }
 
-      return tx.sale.update({
+      await tx.sale.update({
         where: { id },
         data: {
           isAccountSale: paymentState.isAccountSale,
@@ -2664,6 +2771,14 @@ export const saleService = {
           },
           ...(setAsPrimary ? { paymentMethod: primary } : {}),
         },
+      });
+
+      if (debtDelta > 0 && balanceBeforeDebt !== null) {
+        await applyClientCreditToSale(tx, id, balanceBeforeDebt, debtDelta);
+      }
+
+      return tx.sale.findUniqueOrThrow({
+        where: { id },
         include: {
           payments: true,
           businessLocation: true,

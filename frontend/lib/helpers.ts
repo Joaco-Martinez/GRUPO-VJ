@@ -2,6 +2,12 @@ import type { Client, Product, ProductCategory } from '@/types';
 import { formatDateTimeAR } from '@/lib/dateAR';
 
 export const fmtMoney = (n: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(Number.isFinite(Number(n)) ? Number(n) : 0);
+// Saldo de cuenta corriente: positivo = deuda, negativo = plata a favor del cliente.
+export const fmtBalance = (balance: unknown) => {
+  const value = Number(balance);
+  const safe = Number.isFinite(value) ? value : 0;
+  return safe < 0 ? `${fmtMoney(-safe)} a favor` : fmtMoney(safe);
+};
 export const fmtDate = (value?: string | null) => formatDateTimeAR(value);
 export const num = (value: unknown, fallback = 0) => { const n = Number(value); return Number.isFinite(n) ? n : fallback; };
 export const normalizeArray = <T,>(response: unknown): T[] => {

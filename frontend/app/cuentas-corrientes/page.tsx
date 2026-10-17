@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import AppLayout from '@/components/AppLayout';
 import api from '@/lib/api';
 import type { AccountMovement, Client, PaymentMethod } from '@/types';
-import { clientName, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
+import { clientName, fmtBalance, fmtDate, fmtMoney, normalizeArray, num } from '@/lib/helpers';
 import toast from 'react-hot-toast';
 import { RefreshCcw, Search, Wallet, X } from 'lucide-react';
 
@@ -114,7 +114,10 @@ export default function CuentasCorrientesPage() {
     };
   }, []);
 
-  const total = debtors.reduce((a, c) => a + num(c.currentBalance), 0);
+  // Saldo positivo = deuda; negativo = saldo a favor del cliente.
+  const withDebt = debtors.filter((c) => num(c.currentBalance) > 0);
+  const total = withDebt.reduce((a, c) => a + num(c.currentBalance), 0);
+  const totalCredit = debtors.reduce((a, c) => a + Math.max(-num(c.currentBalance), 0), 0);
 
   const filtered = debtors.filter(
     (c) =>
@@ -205,13 +208,13 @@ export default function CuentasCorrientesPage() {
         className="cc-stats-grid"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
+          gridTemplateColumns: 'repeat(4, 1fr)',
           gap: 12,
           marginBottom: 18,
         }}
       >
         <div className="stat-card">
-          <div className="stat-value">{debtors.length}</div>
+          <div className="stat-value">{withDebt.length}</div>
           <div className="stat-label">Clientes con deuda</div>
         </div>
 
@@ -223,6 +226,13 @@ export default function CuentasCorrientesPage() {
             {fmtMoney(total)}
           </div>
           <div className="stat-label">Total pendiente</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-value" style={{ color: 'var(--accent)' }}>
+            {fmtMoney(totalCredit)}
+          </div>
+          <div className="stat-label">Saldo a favor de clientes</div>
         </div>
 
         <div className="stat-card">
@@ -260,7 +270,7 @@ export default function CuentasCorrientesPage() {
             fontWeight: 800,
           }}
         >
-          Clientes con saldo pendiente
+          Clientes con saldo
         </div>
 
         <div className="table-wrap cc-desktop-table">
@@ -297,10 +307,10 @@ export default function CuentasCorrientesPage() {
                       style={{
                         fontFamily: 'var(--mono)',
                         fontWeight: 900,
-                        color: 'var(--warn)',
+                        color: num(c.currentBalance) < 0 ? 'var(--accent)' : 'var(--warn)',
                       }}
                     >
-                      {fmtMoney(c.currentBalance)}
+                      {fmtBalance(c.currentBalance)}
                     </td>
 
                     <td>{c.creditLimit ? fmtMoney(c.creditLimit) : 'Sin límite'}</td>
@@ -329,7 +339,7 @@ export default function CuentasCorrientesPage() {
           {!loading && !filtered.length && (
             <div className="empty-state">
               <Wallet size={36} />
-              <p>No hay deudas pendientes</p>
+              <p>No hay clientes con saldo</p>
             </div>
           )}
         </div>
@@ -365,7 +375,9 @@ export default function CuentasCorrientesPage() {
 
                   <div>
                     <small>Saldo</small>
-                    <strong className="cc-warn">{fmtMoney(c.currentBalance)}</strong>
+                    <strong className={num(c.currentBalance) < 0 ? 'cc-credit' : 'cc-warn'}>
+                      {fmtBalance(c.currentBalance)}
+                    </strong>
                   </div>
 
                   <div>
@@ -384,7 +396,7 @@ export default function CuentasCorrientesPage() {
           {!loading && !filtered.length && (
             <div className="empty-state">
               <Wallet size={36} />
-              <p>No hay deudas pendientes</p>
+              <p>No hay clientes con saldo</p>
             </div>
           )}
         </div>
@@ -439,9 +451,9 @@ export default function CuentasCorrientesPage() {
                     {fmtMoney(m.amount)}
                   </td>
 
-                  <td>{fmtMoney(m.previousBalance)}</td>
+                  <td>{fmtBalance(m.previousBalance)}</td>
 
-                  <td>{fmtMoney(m.newBalance)}</td>
+                  <td>{fmtBalance(m.newBalance)}</td>
 
                   <td>{m.description ?? m.reference ?? '—'}</td>
                 </tr>
@@ -485,12 +497,12 @@ export default function CuentasCorrientesPage() {
 
                 <div>
                   <small>Saldo anterior</small>
-                  <strong>{fmtMoney(m.previousBalance)}</strong>
+                  <strong>{fmtBalance(m.previousBalance)}</strong>
                 </div>
 
                 <div>
                   <small>Saldo nuevo</small>
-                  <strong>{fmtMoney(m.newBalance)}</strong>
+                  <strong>{fmtBalance(m.newBalance)}</strong>
                 </div>
               </div>
 
@@ -528,7 +540,7 @@ export default function CuentasCorrientesPage() {
 
             <div className="modal-body">
               <p style={{ color: 'var(--text2)', marginBottom: 14 }}>
-                {clientName(client)} · saldo actual {fmtMoney(client.currentBalance)}
+                {clientName(client)} · saldo actual {fmtBalance(client.currentBalance)}
               </p>
 
               <div className="form-row cc-form-row">
@@ -580,7 +592,7 @@ export default function CuentasCorrientesPage() {
                   </select>
                   <small style={{ color: 'var(--text3)' }}>
                     El pago queda registrado en la venta y baja su deuda. Si sobra, se aplica a las
-                    siguientes.
+                    siguientes y lo que exceda la deuda queda como saldo a favor.
                   </small>
                 </div>
               )}
@@ -756,6 +768,10 @@ export default function CuentasCorrientesPage() {
 
           .cc-warn {
             color: var(--warn);
+          }
+
+          .cc-credit {
+            color: var(--accent);
           }
 
           .cc-mobile-pay-btn {

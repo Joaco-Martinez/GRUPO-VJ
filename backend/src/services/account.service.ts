@@ -140,11 +140,12 @@ export const accountService = {
     });
   },
 
+  // Clientes con saldo distinto de 0: positivo = deuda, negativo = saldo a favor.
   async getDebtors() {
     return prisma.client.findMany({
       where: {
         currentBalance: {
-          gt: 0,
+          not: 0,
         },
       },
       orderBy: {
@@ -318,7 +319,7 @@ export const accountService = {
 
       const createMovement = async (movementAmount: number, saleId: string | null) => {
         const previousBalance = balance;
-        balance = round2(Math.max(previousBalance - movementAmount, 0));
+        balance = round2(previousBalance - movementAmount);
 
         const movement = await tx.accountMovement.create({
           data: {
@@ -394,7 +395,8 @@ export const accountService = {
       }
 
       // Lo que no se aplicó a ninguna venta (deuda cargada por ajuste, o un
-      // pago mayor a la deuda de las ventas) baja el saldo igual que antes.
+      // pago mayor a la deuda) baja el saldo; si sobra, queda saldo a favor
+      // (saldo negativo) que se usa en las próximas ventas en cuenta corriente.
       if (remaining > 0) {
         await createMovement(remaining, null);
       }
@@ -453,7 +455,7 @@ export const accountService = {
       const isPositive = data.type === "POSITIVE";
       const newBalance = isPositive
         ? round2(previousBalance + amount)
-        : round2(Math.max(previousBalance - amount, 0));
+        : round2(previousBalance - amount);
 
       await tx.client.update({
         where: {

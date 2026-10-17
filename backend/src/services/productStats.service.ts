@@ -586,6 +586,7 @@ export const productStatsService = {
     });
 
     const currentDebtAgg = await prisma.client.aggregate({
+      where: { currentBalance: { gt: 0 } },
       _sum: {
         currentBalance: true,
       },

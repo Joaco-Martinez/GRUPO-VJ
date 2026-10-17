@@ -6,9 +6,14 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-09-29-pedidos-en-preparacion';
+const WHATS_NEW_VERSION = '2026-10-17-saldo-a-favor';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Saldo a favor en cuenta corriente',
+    description:
+      'Los clientes ahora pueden tener plata a favor. Si un abono supera la deuda (o se carga un abono a un cliente que no debe nada desde Clientes), lo que sobra queda como saldo a favor y se usa solo en la próxima venta en cuenta corriente. Si se cancela una venta, lo que se había pagado por cuenta corriente vuelve como saldo a favor. En Cuentas corrientes se ve en verde como "$X a favor".',
+  },
   {
     title: 'Pedidos en preparación',
     description:

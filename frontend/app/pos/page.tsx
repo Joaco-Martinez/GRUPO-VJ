@@ -21,6 +21,7 @@ import type {
 import {
   categoryName,
   clientName,
+  fmtBalance,
   fmtMoney,
   normalizeArray,
   num,
@@ -1527,7 +1528,7 @@ export default function POSPage() {
                     onClick={() => handleClientChange(client.id)}
                   >
                     <b>{clientName(client)}</b>
-                    <span>{clientCategoryLabel(client.category)} · DNI {client.dni || "-"} · deuda {fmtMoney(client.currentBalance)}</span>
+                    <span>{clientCategoryLabel(client.category)} · DNI {client.dni || "-"} · {num(client.currentBalance) < 0 ? "saldo" : "deuda"} {fmtBalance(client.currentBalance)}</span>
                   </button>
                 ))
               ) : (

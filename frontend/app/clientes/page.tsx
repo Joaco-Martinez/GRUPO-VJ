@@ -14,6 +14,7 @@ import type {
 } from "@/types";
 import {
   clientName,
+  fmtBalance,
   fmtDate,
   fmtMoney,
   normalizeArray,
@@ -808,6 +809,8 @@ export default function ClientesPage() {
                 const address = clientAddress(c);
                 const balance = num(c.currentBalance);
                 const accountDisabled = c.isAccountEnabled === false;
+                // El abono también sirve para dejar plata a favor.
+                const canPay = !accountDisabled || balance !== 0;
 
                 return (
                   <article
@@ -924,7 +927,7 @@ export default function ClientesPage() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {fmtMoney(balance)}
+                          {fmtBalance(balance)}
                         </strong>
                       </div>
 
@@ -1068,11 +1071,11 @@ export default function ClientesPage() {
                       style={{
                         display: "grid",
                         gridTemplateColumns:
-                          balance > 0 ? "1fr 1fr 1fr" : "1fr 1fr",
+                          canPay ? "1fr 1fr 1fr" : "1fr 1fr",
                         gap: 7,
                       }}
                     >
-                      {balance > 0 && (
+                      {canPay && (
                         <button
                           className="btn btn-secondary btn-sm"
                           onClick={() => openPayment(c)}
@@ -1260,7 +1263,7 @@ export default function ClientesPage() {
                               : "badge-green"
                           }`}
                         >
-                          {fmtMoney(num(c.currentBalance))}
+                          {fmtBalance(c.currentBalance)}
                         </span>
                         <div
                           style={{
@@ -1297,7 +1300,10 @@ export default function ClientesPage() {
                               <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={() => openPayment(c)}
-                                disabled={num(c.currentBalance) <= 0}
+                                disabled={
+                                  c.isAccountEnabled === false &&
+                                  num(c.currentBalance) === 0
+                                }
                               >
                                 <Wallet size={13} /> Abono
                               </button>
@@ -1584,7 +1590,7 @@ export default function ClientesPage() {
                             : "var(--accent)",
                       }}
                     >
-                      {fmtMoney(num(mobileClientSheet.currentBalance))}
+                      {fmtBalance(mobileClientSheet.currentBalance)}
                     </b>
                   </div>
                   <div
@@ -1782,7 +1788,8 @@ export default function ClientesPage() {
                 style={{
                   display: "grid",
                   gridTemplateColumns:
-                    num(mobileClientSheet.currentBalance) > 0
+                    mobileClientSheet.isAccountEnabled !== false ||
+                    num(mobileClientSheet.currentBalance) !== 0
                       ? "1fr 1fr"
                       : "1fr",
                   gap: 8,
@@ -1793,7 +1800,8 @@ export default function ClientesPage() {
               >
                 {isClientActive(mobileClientSheet) ? (
                   <>
-                    {num(mobileClientSheet.currentBalance) > 0 && (
+                    {(mobileClientSheet.isAccountEnabled !== false ||
+                      num(mobileClientSheet.currentBalance) !== 0) && (
                       <button
                         className="btn btn-secondary"
                         onClick={() => {
@@ -2553,7 +2561,7 @@ export default function ClientesPage() {
                   overflowWrap: "anywhere",
                 }}
               >
-                {clientName(editing)} · saldo {fmtMoney(editing.currentBalance)}
+                {clientName(editing)} · saldo {fmtBalance(editing.currentBalance)}
               </p>
 
               <div

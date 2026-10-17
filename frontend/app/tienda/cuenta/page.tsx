@@ -788,7 +788,9 @@ export default function TiendaCuentaPage() {
                   <small>Cuenta corriente</small>
                   <strong>
                     {client?.isAccountEnabled
-                      ? `Saldo: ${formatMoney(Number(client.currentBalance ?? 0))}`
+                      ? Number(client.currentBalance ?? 0) < 0
+                        ? `Saldo a favor: ${formatMoney(-Number(client.currentBalance))}`
+                        : `Saldo: ${formatMoney(Number(client.currentBalance ?? 0))}`
                       : "No habilitada"}
                   </strong>
                 </article>

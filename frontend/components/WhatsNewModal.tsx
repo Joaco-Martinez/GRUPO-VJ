@@ -6,7 +6,7 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-10-17-saldo-a-favor';
+const WHATS_NEW_VERSION = '2026-10-18-saldo-a-favor-excedentes';
 
 const WHATS_NEW_ITEMS = [
   {

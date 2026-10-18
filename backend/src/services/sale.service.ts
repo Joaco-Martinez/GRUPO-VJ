@@ -885,6 +885,7 @@ type PaymentCalcResult = {
   hasPayments: boolean;
   totalPaid: number;
   debtAmount: number;
+  overpaidAmount?: number;
   isAccountSale: boolean;
   paymentsToPersist: {
     method: PaymentMethod;
@@ -903,6 +904,7 @@ function calculatePaymentState(params: {
     reference?: string;
     notes?: string;
   }[];
+  allowOverpay?: boolean;
 }): PaymentCalcResult {
   const hasPayments = Array.isArray(params.payments) && params.payments.length > 0;
 
@@ -971,6 +973,15 @@ function calculatePaymentState(params: {
     }
   }
 
+  // Con cliente, lo que se paga de más queda como saldo a favor en su
+  // cuenta corriente (lo aplica quien llama, según overpaidAmount).
+  let overpaidAmount = 0;
+
+  if (debtAmount < 0 && params.allowOverpay) {
+    overpaidAmount = round2(-debtAmount);
+    debtAmount = 0;
+  }
+
   if (debtAmount < 0) {
     throw new Error(
       `La suma de pagos (${totalPaid}) no puede superar el total (${params.total})`
@@ -981,9 +992,23 @@ function calculatePaymentState(params: {
     hasPayments: paymentsToPersist.length > 0,
     totalPaid,
     debtAmount,
+    overpaidAmount,
     isAccountSale: debtAmount > 0 || hasAccountPaymentLine,
     paymentsToPersist,
   };
+}
+
+// Excedente de pago que la venta ya dejó como saldo a favor del cliente
+// (pagos guardados por encima del total).
+function getSaleOverpaid(sale: { total: number; payments?: any[] }) {
+  const paid = (sale.payments ?? [])
+    .filter(
+      (payment) =>
+        payment.method !== PaymentMethod.CUENTA_CORRIENTE || isAccountPaymentLine(payment)
+    )
+    .reduce((acc, payment) => acc + Number(payment.amount || 0), 0);
+
+  return round2(Math.max(paid - Number(sale.total || 0), 0));
 }
 
 async function createAccountDebtMovement(
@@ -2004,19 +2029,25 @@ export const saleService = {
     const paymentsForCalculation =
       data.payments !== undefined ? data.payments : getPaymentsFromExistingSale(sale);
 
+    const sameClient = Boolean(clientId) && clientId === sale.clientId;
+
     const paymentState = calculatePaymentState({
       total,
       paymentMethod: data.paymentMethod ?? sale.paymentMethod,
       payments: paymentsForCalculation,
+      allowOverpay: sameClient,
     });
 
     if (paymentState.isAccountSale && !clientId) {
       throw new Error("Para vender en cuenta corriente necesitás seleccionar un cliente");
     }
 
+    // Efecto en la cuenta del cliente = deuda - excedente (saldo a favor).
     const oldDebt = round2(Number(sale.accountDebtAmount ?? 0));
     const newDebt = round2(paymentState.debtAmount);
-    const debtDelta = round2(newDebt - oldDebt);
+    const oldOverpaid = sameClient ? getSaleOverpaid(sale) : 0;
+    const newOverpaid = round2(paymentState.overpaidAmount ?? 0);
+    const debtDelta = round2(newDebt - newOverpaid - (oldDebt - oldOverpaid));
 
     if (debtDelta !== 0 && !clientId) {
       throw new Error("Para ajustar deuda necesitás seleccionar cliente");
@@ -2681,15 +2712,19 @@ export const saleService = {
       total: sale.total,
       paymentMethod: sale.paymentMethod,
       payments,
+      allowOverpay: Boolean(sale.clientId),
     });
 
     if (paymentState.isAccountSale && !sale.clientId) {
       throw new Error("Para dejar saldo en cuenta corriente la venta debe tener cliente");
     }
 
+    // Efecto en la cuenta del cliente = deuda - excedente (saldo a favor).
     const oldDebt = round2(Number(sale.accountDebtAmount ?? 0));
     const newDebt = round2(paymentState.debtAmount);
-    const debtDelta = round2(newDebt - oldDebt);
+    const oldOverpaid = sale.clientId ? getSaleOverpaid(sale) : 0;
+    const newOverpaid = round2(paymentState.overpaidAmount ?? 0);
+    const debtDelta = round2(newDebt - newOverpaid - (oldDebt - oldOverpaid));
     const primary = payments[0]?.method ?? sale.paymentMethod;
 
     const updatedSale = await prisma.$transaction(async (tx) => {
@@ -2750,7 +2785,9 @@ export const saleService = {
             description:
               debtDelta > 0
                 ? "Aumento de deuda por actualización de pagos"
-                : "Reducción de deuda por actualización de pagos",
+                : newOverpaid > 0
+                  ? `Actualización de pagos (excedente de ${newOverpaid} queda a favor)`
+                  : "Reducción de deuda por actualización de pagos",
           },
         });
       }

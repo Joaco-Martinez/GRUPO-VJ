@@ -12,7 +12,7 @@ const WHATS_NEW_ITEMS = [
   {
     title: 'Saldo a favor en cuenta corriente',
     description:
-      'Los clientes ahora pueden tener plata a favor. Si un abono supera la deuda (o se carga un abono a un cliente que no debe nada desde Clientes), lo que sobra queda como saldo a favor y se usa solo en la próxima venta en cuenta corriente. Si se cancela una venta, lo que se había pagado por cuenta corriente vuelve como saldo a favor. En Cuentas corrientes se ve en verde como "$X a favor".',
+      'Los clientes ahora pueden tener plata a favor. Si un abono supera la deuda, si en Editar pagos de una venta se cobra de más, o si se carga un abono a un cliente que no debe nada desde Clientes, lo que sobra queda como saldo a favor y se usa solo en la próxima venta en cuenta corriente. Si se cancela una venta, lo que se había pagado por cuenta corriente vuelve como saldo a favor. En Cuentas corrientes se ve en verde como "$X a favor".',
   },
   {
     title: 'Pedidos en preparación',

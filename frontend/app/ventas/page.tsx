@@ -4532,8 +4532,21 @@ export default function VentasPage() {
                   </>
                 ) : payRemaining < 0 ? (
                   <>
-                    {' '}· Excede el total por <b style={{ color: 'var(--danger)' }}>{fmtMoney(-payRemaining)}</b>
-                    {payRemaining > -1 ? ' (redondeo, se ajusta solo)' : ''}
+                    {payRemaining > -1 ? (
+                      <>
+                        {' '}· Excede el total por <b>{fmtMoney(-payRemaining)}</b> (redondeo, se ajusta solo)
+                      </>
+                    ) : payEdit.clientId ? (
+                      <>
+                        {' '}· Excedente a favor del cliente:{' '}
+                        <b style={{ color: 'var(--accent)' }}>{fmtMoney(-payRemaining)}</b>
+                      </>
+                    ) : (
+                      <>
+                        {' '}· Excede el total por <b style={{ color: 'var(--danger)' }}>{fmtMoney(-payRemaining)}</b>{' '}
+                        (la venta no tiene cliente para dejarlo a favor)
+                      </>
+                    )}
                   </>
                 ) : (
                   <> · Venta saldada</>

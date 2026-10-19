@@ -6,13 +6,18 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-10-18-saldo-a-favor-excedentes';
+const WHATS_NEW_VERSION = '2026-10-19-saldo-a-favor-guia';
 
 const WHATS_NEW_ITEMS = [
   {
-    title: 'Saldo a favor en cuenta corriente',
+    title: 'Saldo a favor: cómo se genera',
     description:
-      'Los clientes ahora pueden tener plata a favor. Si un abono supera la deuda, si en Editar pagos de una venta se cobra de más, o si se carga un abono a un cliente que no debe nada desde Clientes, lo que sobra queda como saldo a favor y se usa solo en la próxima venta en cuenta corriente. Si se cancela una venta, lo que se había pagado por cuenta corriente vuelve como saldo a favor. En Cuentas corrientes se ve en verde como "$X a favor".',
+      'Los clientes pueden tener plata a favor. Queda a favor lo que sobra cuando: un abono supera la deuda; en Ventas > Editar pagos se cobra más que el total (se ve como "Excedente a favor del cliente"); se carga un ajuste negativo; o se cancela una venta que se había pagado por cuenta corriente. Para cobrar de más o hacer un ajuste no hace falta tener la cuenta corriente activada. El botón "Abono" en Clientes sí aparece solo si la cuenta está activada o si el cliente ya tiene saldo.',
+  },
+  {
+    title: 'Saldo a favor: dónde se ve y cómo se usa',
+    description:
+      'Se ve en verde como "$X a favor" en Cuentas corrientes (lista "Clientes con saldo", total en "Saldo a favor de clientes" y en cada movimiento), en Clientes, en el POS, en Ventas y en Mi cuenta de la tienda. Se descuenta solo en la próxima venta que el cliente deje en cuenta corriente. Importante: para usarlo, el cliente tiene que tener la cuenta corriente activada; si está desactivada, el saldo queda guardado pero no se puede aplicar a una venta.',
   },
   {
     title: 'Pedidos en preparación',

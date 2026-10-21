@@ -861,7 +861,7 @@ export default function CotizacionesPage() {
                         key={item.key}
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: isMobile ? '1fr 1fr' : 'minmax(0, 1fr) 130px 130px 110px auto',
+                          gridTemplateColumns: isMobile ? '1fr 1fr' : 'minmax(0, 1fr) 160px 130px 110px auto',
                           gap: 8,
                           alignItems: 'center',
                           padding: 10,
@@ -900,7 +900,7 @@ export default function CotizacionesPage() {
                             step={item.saleUnit === 'KG' ? 0.001 : 1}
                             value={item.quantity}
                             onChange={(e) => updateItem(item.key, { quantity: e.target.value })}
-                            style={{ width: '100%', textAlign: 'center' }}
+                            style={{ flex: 1, minWidth: 48, width: '100%', textAlign: 'center', paddingLeft: 4, paddingRight: 4 }}
                             title={item.saleUnit === 'KG' ? 'Kilos' : 'Cantidad'}
                           />
                           {item.saleUnit !== 'KG' ? (

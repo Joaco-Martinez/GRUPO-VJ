@@ -79,6 +79,11 @@ input:focus, select:focus, textarea:focus {
 }
 input::placeholder { color: var(--text3); }
 
+/* Inputs de cantidad con botones +/- propios: sin flechitas nativas */
+input.qty-input { padding: 10px 2px; -moz-appearance: textfield; appearance: textfield; }
+input.qty-input::-webkit-inner-spin-button,
+input.qty-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
 button { cursor: pointer; font-family: var(--sans); }
 
 .btn {

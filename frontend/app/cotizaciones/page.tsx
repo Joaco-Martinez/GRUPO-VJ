@@ -900,7 +900,8 @@ export default function CotizacionesPage() {
                             step={item.saleUnit === 'KG' ? 0.001 : 1}
                             value={item.quantity}
                             onChange={(e) => updateItem(item.key, { quantity: e.target.value })}
-                            style={{ flex: 1, minWidth: 48, width: '100%', textAlign: 'center', paddingLeft: 4, paddingRight: 4 }}
+                            className="qty-input"
+                            style={{ flex: 1, minWidth: 48, width: '100%', textAlign: 'center' }}
                             title={item.saleUnit === 'KG' ? 'Kilos' : 'Cantidad'}
                           />
                           {item.saleUnit !== 'KG' ? (

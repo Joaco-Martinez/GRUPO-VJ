@@ -6,9 +6,14 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-10-22-saldo-a-favor-pos-ticket';
+const WHATS_NEW_VERSION = '2026-10-22-envio-manual-editar-venta';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Envío en ventas de consumidor final',
+    description:
+      'Al editar una venta de consumidor final desde Ventas > Editar, ahora se puede agregar o cambiar el envío. Como no hay cliente para calcular por km, se carga a mano: escribís el costo de envío y, si querés, la dirección de entrega. Para sacarlo, dejá el costo en 0 o tocá "Quitar envío". Las ventas con cliente siguen calculando el envío por km como siempre.',
+  },
   {
     title: 'Saldo a favor: aviso en el POS',
     description:

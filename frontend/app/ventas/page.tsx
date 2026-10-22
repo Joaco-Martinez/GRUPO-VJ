@@ -832,6 +832,9 @@ export default function VentasPage() {
   const [editDeliveryEnabled, setEditDeliveryEnabled] = useState(false);
   const [editDeliveryDistanceKm, setEditDeliveryDistanceKm] = useState('');
   const [editDeliveryPricePerKm, setEditDeliveryPricePerKm] = useState(String(DEFAULT_DELIVERY_PRICE_PER_KM));
+  // Consumidor final: el envío se carga a mano, sin calcular por km.
+  const [editManualDeliveryCost, setEditManualDeliveryCost] = useState('');
+  const [editManualDeliveryAddress, setEditManualDeliveryAddress] = useState('');
   const [configuredDeliveryPricePerKm, setConfiguredDeliveryPricePerKm] = useState(DEFAULT_DELIVERY_PRICE_PER_KM);
   const { user: me } = useAuthStore();
   const canEditDeliveryPrice = me?.role === 'ADMIN';
@@ -1694,8 +1697,10 @@ export default function VentasPage() {
         : String(configuredDeliveryPricePerKm)
     );
     setEditBusinessLocationId(defaultBusinessLocation?.id ?? '');
+    setEditManualDeliveryCost(!saleExtra.client && deliveryCost > 0 ? String(deliveryCost) : '');
+    setEditManualDeliveryAddress(!saleExtra.client ? saleExtra.deliveryAddressSnapshot ?? '' : '');
     setEditDeliveryCalculation(
-      hasDeliveryData && deliveryCost > 0
+      saleExtra.client && hasDeliveryData && deliveryCost > 0
         ? {
             distanceKm: num(saleExtra.deliveryDistanceKm),
             pricePerKm: num(saleExtra.deliveryPricePerKm, configuredDeliveryPricePerKm),
@@ -1891,7 +1896,7 @@ export default function VentasPage() {
 
   const calculatedDeliveryCost = editDeliveryCalculation?.deliveryCost ?? 0;
 
-  const applyDeliveryToEditLines = (calculation: DeliveryCalculation) => {
+  const applyDeliveryToEditLines = (deliveryCost: number) => {
     if (!deliveryProduct) {
       toast.error(`No encontré el producto de envío con SKU ${DELIVERY_SKU}`);
       return;
@@ -1916,7 +1921,7 @@ export default function VentasPage() {
                 saleUnit: 'UNIT',
                 quantity: 1,
                 quantityKg: null,
-                price: calculation.deliveryCost,
+                price: deliveryCost,
                 priceType: 'MANUAL',
                 sku: DELIVERY_SKU,
                 isDelivery: true,
@@ -1934,7 +1939,7 @@ export default function VentasPage() {
           saleUnit: 'UNIT',
           quantity: 1,
           quantityKg: null,
-          price: calculation.deliveryCost,
+          price: deliveryCost,
           priceType: 'MANUAL',
           sku: DELIVERY_SKU,
           isDelivery: true,
@@ -1955,7 +1960,7 @@ export default function VentasPage() {
 
     setEditDeliveryDistanceKm(String(updated.distanceKm));
     setEditDeliveryCalculation(updated);
-    applyDeliveryToEditLines(updated);
+    applyDeliveryToEditLines(updated.deliveryCost);
   };
 
   const calculateEditDelivery = async () => {
@@ -2031,7 +2036,7 @@ export default function VentasPage() {
       setEditDeliveryDistanceKm(String(calculation.distanceKm));
       setEditDeliveryPricePerKm(String(calculation.pricePerKm));
       setEditDeliveryCalculation(calculation);
-      applyDeliveryToEditLines(calculation);
+      applyDeliveryToEditLines(calculation.deliveryCost);
 
       toast.success(
         calculation.source === 'ROUTING_SERVICE'
@@ -2053,6 +2058,12 @@ export default function VentasPage() {
     setEditLines((prev) =>
       prev.filter((line) => !line.isDelivery && String(line.sku ?? '').toUpperCase() !== DELIVERY_SKU)
     );
+  };
+
+  const changeEditManualDeliveryCost = (value: string) => {
+    setEditManualDeliveryCost(value);
+    if (num(value) > 0) applyDeliveryToEditLines(num(value));
+    else removeDeliveryFromEditSale();
   };
 
   const getEditProductSelectedLabel = (productId: string) => {
@@ -2125,6 +2136,7 @@ export default function VentasPage() {
         (line) => line.isDelivery || String(line.sku ?? '').toUpperCase() === DELIVERY_SKU
       );
       const deliveryCost = deliveryLine ? num(deliveryLine.price) : 0;
+      const isManualDelivery = !(editItemsSale as SaleExtra).client;
 
       await api.patch(`/sales/${editItemsSale.id}/items`, {
         stockLocation: editStockLocation,
@@ -2136,15 +2148,19 @@ export default function VentasPage() {
             ? 'PENDING'
             : 'NONE'
           : undefined,
-        deliveryAddressSnapshot: deliveryLine
-          ? editDeliveryCalculation?.deliveryAddressSnapshot ||
-            editDeliveryCalculation?.destinationAddress ||
-            buildClientAddress((editItemsSale as SaleExtra).client)
-          : null,
-        deliveryDistanceKm: deliveryLine
+        deliveryAddressSnapshot: !deliveryLine
+          ? null
+          : isManualDelivery
+            ? editManualDeliveryAddress.trim() || null
+            : editDeliveryCalculation?.deliveryAddressSnapshot ||
+              editDeliveryCalculation?.destinationAddress ||
+              buildClientAddress((editItemsSale as SaleExtra).client),
+        deliveryDistanceKm: deliveryLine && !isManualDelivery
           ? num(editDeliveryCalculation?.distanceKm ?? editDeliveryDistanceKm)
           : null,
-        deliveryPricePerKm: deliveryLine ? num(editDeliveryPricePerKm, configuredDeliveryPricePerKm) : null,
+        deliveryPricePerKm: deliveryLine && !isManualDelivery
+          ? num(editDeliveryPricePerKm, configuredDeliveryPricePerKm)
+          : null,
         deliveryCost,
         discountType: editDiscountType || null,
         discountValue: editDiscountType ? num(editDiscountValue) : 0,
@@ -4112,9 +4128,43 @@ export default function VentasPage() {
               <div className="sales-edit-delivery-card">
                 <div className="sales-edit-lines-head" style={{ position: 'static', margin: 0, padding: 0, borderBottom: 'none' }}>
                   <b>Envío</b>
-                  <span>{editDeliveryCalculation ? fmtMoney(editDeliveryCalculation.deliveryCost) : 'Opcional'}</span>
+                  <span>
+                    {editDeliveryCalculation
+                      ? fmtMoney(editDeliveryCalculation.deliveryCost)
+                      : !(editItemsSale as SaleExtra).client && num(editManualDeliveryCost) > 0
+                        ? fmtMoney(num(editManualDeliveryCost))
+                        : 'Opcional'}
+                  </span>
                 </div>
 
+                {!(editItemsSale as SaleExtra).client ? (
+                  <>
+                    <div className="sales-edit-delivery-grid manual">
+                      <label>
+                        <span>Costo de envío</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={editManualDeliveryCost}
+                          onChange={(e) => changeEditManualDeliveryCost(e.target.value)}
+                          placeholder="Ej: 3000"
+                          disabled={!deliveryProduct}
+                        />
+                      </label>
+                      <label>
+                        <span>Dirección de entrega</span>
+                        <input
+                          value={editManualDeliveryAddress}
+                          onChange={(e) => setEditManualDeliveryAddress(e.target.value)}
+                          placeholder="Opcional"
+                        />
+                      </label>
+                    </div>
+                    <small style={{ color: 'var(--text3)', lineHeight: 1.4 }}>
+                      Consumidor final: el envío se carga a mano, sin calcular por km.
+                    </small>
+                  </>
+                ) : (
                 <div className="sales-edit-delivery-grid">
                   <label>
                     <span>Sale desde</span>
@@ -4164,6 +4214,7 @@ export default function VentasPage() {
                     {editCalculatingDelivery ? 'Calculando...' : 'Calcular envío'}
                   </button>
                 </div>
+                )}
 
                 {editDeliveryCalculation && (
                   <div className={editDeliveryCalculation.source === 'COORDINATES_FALLBACK' ? 'sales-edit-delivery-ok fallback' : 'sales-edit-delivery-ok'}>
@@ -4205,7 +4256,10 @@ export default function VentasPage() {
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={removeDeliveryFromEditSale}
+                    onClick={() => {
+                      removeDeliveryFromEditSale();
+                      setEditManualDeliveryCost('');
+                    }}
                     disabled={!editLines.some((line) => line.isDelivery || String(line.sku ?? '').toUpperCase() === DELIVERY_SKU)}
                   >
                     Quitar envío
@@ -5412,6 +5466,10 @@ export default function VentasPage() {
         .sales-edit-delivery-grid {
           grid-template-columns: minmax(210px, 1.4fr) minmax(140px, 0.8fr) auto;
           align-items: end;
+        }
+
+        .sales-edit-delivery-grid.manual {
+          grid-template-columns: minmax(130px, 0.7fr) minmax(200px, 1.4fr);
         }
 
         .sales-edit-delivery-calc {

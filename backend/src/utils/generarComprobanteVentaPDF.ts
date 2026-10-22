@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
+import { getAccountBalanceText, getPaymentLines } from "./salePaymentSummary";
 
 type ComprobanteVentaSale = {
   id: string;
@@ -12,6 +13,16 @@ type ComprobanteVentaSale = {
   receiptType?: string | null;
   status?: string | null;
   createdAt: Date;
+
+  payments?: {
+    method: string;
+    amount: number;
+    notes?: string | null;
+  }[];
+
+  // Saldo de cuenta corriente del cliente después de la venta
+  // (positivo = deuda, negativo = a favor). null = no se muestra.
+  accountBalance?: number | null;
 
   user?: {
     name?: string | null;
@@ -114,23 +125,13 @@ function safe(value?: string | null) {
   return value?.trim() || "-";
 }
 
-function getPaymentMethodLabel(method?: string | null) {
-  if (!method) return "-";
-
-  const labels: Record<string, string> = {
-    EFECTIVO: "Efectivo",
-    TARJETA: "Tarjeta",
-    TRANSFERENCIA: "Transferencia",
-    QR: "QR",
-    DEBITO: "Débito",
-    CREDITO: "Crédito",
-    QR_NACION: "QR Nación",
-    QR_MERCADOPAGO: "QR Mercado Pago",
-    TARJETA_DEBITO: "Tarjeta de débito",
-    TARJETA_CREDITO: "Tarjeta de crédito",
-  };
-
-  return labels[method] || method;
+// Una línea por pago, con su monto si la venta tiene pagos detallados.
+function getPaymentText(sale: ComprobanteVentaSale) {
+  return getPaymentLines(sale)
+    .map((line) =>
+      line.amount === null ? line.label : `${line.label}: ${money(line.amount)}`
+    )
+    .join("\n");
 }
 
 function getCategoryLabel(client?: ComprobanteVentaSale["client"]) {
@@ -372,9 +373,18 @@ function drawInfo(doc: PDFKit.PDFDocument, sale: ComprobanteVentaSale) {
     },
     {
       label: "Forma de pago",
-      value: getPaymentMethodLabel(sale.paymentMethod),
+      value: getPaymentText(sale),
       detail: "",
     },
+    ...(sale.accountBalance !== null && sale.accountBalance !== undefined
+      ? [
+          {
+            label: "Cuenta corriente",
+            value: getAccountBalanceText(sale.accountBalance),
+            detail: "",
+          },
+        ]
+      : []),
     {
       label: "Vendedor",
       value: safe(sale.user?.name),

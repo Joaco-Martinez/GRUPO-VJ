@@ -1559,7 +1559,19 @@ export default function POSPage() {
         </div>
 
         {selectedClient ? (
-          <small className="pos-client-help">Seleccionado: {clientName(selectedClient)} · {clientCategoryLabel(selectedClient.category)}</small>
+          <>
+            <small className="pos-client-help">Seleccionado: {clientName(selectedClient)} · {clientCategoryLabel(selectedClient.category)}</small>
+            {num(selectedClient.currentBalance) < 0 && (
+              <div className={selectedClient.isAccountEnabled ? "pos-client-credit" : "pos-client-credit off"}>
+                <b>Este cliente tiene {fmtMoney(-num(selectedClient.currentBalance))} a favor.</b>
+                <span>
+                  {selectedClient.isAccountEnabled
+                    ? "Se descuenta solo si dejás la venta (o una parte) en cuenta corriente."
+                    : "Tiene la cuenta corriente desactivada: el saldo no se puede aplicar a esta venta."}
+                </span>
+              </div>
+            )}
+          </>
         ) : (
           <small className="pos-client-help">Consumidor final</small>
         )}
@@ -2978,6 +2990,17 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 .pos-client-suggestions span,
 .pos-client-no-results,
 .pos-client-help { color: var(--text3); font-size: 11px; }
+.pos-client-credit {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 6px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 12px;
+}
+.pos-client-credit b { color: var(--accent); }
+.pos-client-credit span { color: var(--text2); font-size: 11px; }
+.pos-client-credit.off { border-color: var(--border); background: transparent; }
+.pos-client-credit.off b { color: var(--text2); }
 .pos-client-no-results { padding: 10px; text-align: center; }
 .pos-help.danger { color: var(--danger); }
 .form-label {

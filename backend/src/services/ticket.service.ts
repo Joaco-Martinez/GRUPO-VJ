@@ -1,5 +1,11 @@
 import axios from "axios";
 import prisma from "../prisma";
+import {
+  getAccountBalanceText,
+  getClientBalanceAfterSale,
+  getPaymentLines,
+  getPaymentMethodLabel,
+} from "../utils/salePaymentSummary";
 
 function numberOrZero(value: unknown) {
   const n = Number(value ?? 0);
@@ -32,10 +38,10 @@ function getNombreCliente(client: any) {
 
 function getMetodoPago(sale: any) {
   if (sale.payments && sale.payments.length > 0) {
-    return sale.payments
+    return getPaymentLines(sale)
       .map(
-        (p: any) =>
-          `${p.method}: ${Number(p.amount).toLocaleString("es-AR", {
+        (line) =>
+          `${line.label}: ${Number(line.amount).toLocaleString("es-AR", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
           })}`
@@ -43,7 +49,7 @@ function getMetodoPago(sale: any) {
       .join(" | ");
   }
 
-  return sale.paymentMethod || "EFECTIVO";
+  return getPaymentMethodLabel(sale.paymentMethod || "EFECTIVO");
 }
 
 function getSellerName(sale: any) {
@@ -234,7 +240,7 @@ function formatComprobanteNumero(puntoVenta: number, numero: number) {
   return `${pv}-${nro}`;
 }
 
-function buildTicketPayload(sale: any) {
+function buildTicketPayload(sale: any, accountBalance: number | null = null) {
   const subtotal = numberOrZero(sale.subtotal);
   const total = numberOrZero(sale.total);
   const discount = subtotal > total ? subtotal - total : 0;
@@ -253,11 +259,19 @@ function buildTicketPayload(sale: any) {
     ? getTipoComprobanteLabel(invoiceAfip.tipoComprobante)
     : "TICKET NO FISCAL";
 
-  const footer = invoiceAfip
+  const baseFooter = invoiceAfip
     ? `CAE: ${invoiceAfip.cae ?? "-"} | Vto. CAE: ${
         invoiceAfip.caeVto ? formatFechaTicket(invoiceAfip.caeVto) : "-"
       }`
     : "Ticket no fiscal - Gracias por su compra";
+
+  // El saldo de cuenta va en el pie, que el POS local siempre imprime.
+  const accountBalanceText =
+    accountBalance !== null ? getAccountBalanceText(accountBalance) : "";
+
+  const footer = accountBalanceText
+    ? `${accountBalanceText} | ${baseFooter}`
+    : baseFooter;
 
   return {
     saleId,
@@ -350,6 +364,10 @@ function buildTicketPayload(sale: any) {
     discount,
     total,
 
+    ...(accountBalance !== null
+      ? { accountBalance, accountBalanceText }
+      : {}),
+
     footer,
   };
 }
@@ -405,7 +423,8 @@ export const ticketService = {
       throw new Error("Venta no encontrada");
     }
 
-    const payload = buildTicketPayload(sale);
+    const accountBalance = await getClientBalanceAfterSale(prisma, sale);
+    const payload = buildTicketPayload(sale, accountBalance);
 
     const posResponse = await enviarTicketAlPOSLocal(payload);
 

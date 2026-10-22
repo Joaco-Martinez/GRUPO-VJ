@@ -22,6 +22,7 @@ import { productStatsService } from "./productStats.service";
 import { generarTicketPedidoPDF } from "../utils/generarReciboPDF";
 import { generarCotizacionPDF } from "../utils/generarCotizacionPDF";
 import { generarComprobanteVentaPDF } from "../utils/generarComprobanteVentaPDF";
+import { getClientBalanceAfterSale } from "../utils/salePaymentSummary";
 import { cached, invalidateCache } from "../utils/simpleCache";
 import { optionalRangeAR } from "../utils/dateAR";
 
@@ -2581,6 +2582,7 @@ export const saleService = {
         },
         user: true,
         client: true,
+        payments: true,
       },
     });
 
@@ -2600,7 +2602,8 @@ export const saleService = {
       );
     }
 
-    const pdfBuffer = await generarComprobanteVentaPDF(sale);
+    const accountBalance = await getClientBalanceAfterSale(prisma, sale);
+    const pdfBuffer = await generarComprobanteVentaPDF({ ...sale, accountBalance });
 
     return {
       filename: `comprobante-${sale.id}.pdf`,

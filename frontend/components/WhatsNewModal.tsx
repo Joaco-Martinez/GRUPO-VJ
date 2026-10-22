@@ -6,9 +6,19 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-10-19-saldo-a-favor-guia';
+const WHATS_NEW_VERSION = '2026-10-22-saldo-a-favor-pos-ticket';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Saldo a favor: aviso en el POS',
+    description:
+      'Al elegir en el POS un cliente que tiene plata a favor, aparece el aviso "Este cliente tiene $X a favor". Si tiene la cuenta corriente activada, el saldo se descuenta solo cuando dejás la venta (o una parte) en cuenta corriente; si cobrás todo en efectivo u otro medio, el saldo no se usa y queda guardado. Si la cuenta está desactivada, el aviso lo indica: el saldo no se puede aplicar.',
+  },
+  {
+    title: 'Saldo a favor en el ticket y el comprobante',
+    description:
+      'El ticket y el comprobante PDF ahora muestran los pagos con nombres claros: "Saldo a favor aplicado" (lo que se pagó con saldo), "Queda en cta. cte." (lo que el cliente quedó debiendo) y "Abono cta. cte.". También muestran el saldo que le quedó al cliente después de la compra: "Saldo a favor restante" o "Saldo deudor en cta. cte.". Solo aparece para clientes con cuenta corriente activada o con algún saldo.',
+  },
   {
     title: 'Saldo a favor: cómo se genera',
     description:

@@ -421,6 +421,9 @@ export default function POSPage() {
   const [businessLocationId, setBusinessLocationId] = useState("");
   const [deliveryPricePerKm, setDeliveryPricePerKm] = useState("618");
   const [deliveryCalculation, setDeliveryCalculation] = useState<DeliveryCalculation | null>(null);
+  // Consumidor final: el envío se carga a mano (sin cliente no hay coordenadas para calcular).
+  const [manualDeliveryCost, setManualDeliveryCost] = useState("");
+  const [manualDeliveryAddress, setManualDeliveryAddress] = useState("");
   const [calculatingDelivery, setCalculatingDelivery] = useState(false);
 
   const receiptType: ReceiptType = "TICKET";
@@ -581,6 +584,7 @@ export default function POSPage() {
   }, [cart.length, clientId, clientGateMode]);
 
   const selectedClient = clients.find((c) => c.id === clientId) ?? null;
+  const isManualDelivery = deliveryMode === "LOCAL_DELIVERY" && !clientId;
   const selectedBusinessLocation =
     businessLocations.find((location) => location.id === businessLocationId) ?? null;
 
@@ -678,6 +682,7 @@ export default function POSPage() {
     setClientSearch(nextClient ? clientName(nextClient) : "");
     setClientSuggestionsOpen(false);
     setDeliveryCalculation(null);
+    setManualDeliveryCost("");
     if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
 
     if (!nextClient) {
@@ -1072,6 +1077,7 @@ export default function POSPage() {
 
     if (removed && deliveryProduct?.id === removed.product.id) {
       setDeliveryCalculation(null);
+      setManualDeliveryCost("");
       setDeliveryMode("PICKUP");
     }
   };
@@ -1082,7 +1088,7 @@ export default function POSPage() {
     setDeliveryCalculation(null);
   };
 
-  const applyDeliveryToCart = (calculation: DeliveryCalculation) => {
+  const applyDeliveryToCart = (deliveryCost: number) => {
     if (!deliveryProduct) {
       toast.error(`No encontré el producto ${DELIVERY_SKU}. Creá primero el producto ENVÍO / FLETE.`);
       return;
@@ -1098,7 +1104,7 @@ export default function POSPage() {
                 ...i,
                 quantity: 1,
                 quantityKg: undefined,
-                manualPrice: calculation.deliveryCost,
+                manualPrice: deliveryCost,
                 priceType: "price",
                 isDeliveryItem: true,
               }
@@ -1113,11 +1119,17 @@ export default function POSPage() {
           quantity: 1,
           quantityKg: undefined,
           priceType: "price",
-          manualPrice: calculation.deliveryCost,
+          manualPrice: deliveryCost,
           isDeliveryItem: true,
         },
       ];
     });
+  };
+
+  const changeManualDeliveryCost = (value: string) => {
+    setManualDeliveryCost(value);
+    if (num(value) > 0) applyDeliveryToCart(num(value));
+    else removeDeliveryFromCart();
   };
 
   const calculateDelivery = async () => {
@@ -1179,7 +1191,7 @@ export default function POSPage() {
       };
 
       setDeliveryCalculation(calculation);
-      applyDeliveryToCart(calculation);
+      applyDeliveryToCart(calculation.deliveryCost);
       toast.success(
         calculation.source === "ROUTING_SERVICE"
           ? `Envío calculado por ruta real: ${calculation.distanceKm} km · ${fmtMoney(calculation.deliveryCost)}`
@@ -1203,7 +1215,7 @@ export default function POSPage() {
       selectedOptionKey: option.key,
     };
     setDeliveryCalculation(next);
-    applyDeliveryToCart(next);
+    applyDeliveryToCart(next.deliveryCost);
   };
 
   const productsSubtotal = cart.reduce((a, item) => {
@@ -1272,12 +1284,17 @@ export default function POSPage() {
       return false;
     }
 
-    if (deliveryMode === "LOCAL_DELIVERY") {
-      if (!clientId) {
-        toast.error("Para envío tenés que seleccionar cliente");
+    if (isManualDelivery) {
+      if (!deliveryProduct) {
+        toast.error(`No encontré el producto ${DELIVERY_SKU}`);
         return false;
       }
 
+      if (deliveryCostForTotal <= 0) {
+        toast.error("Cargá el costo de envío");
+        return false;
+      }
+    } else if (deliveryMode === "LOCAL_DELIVERY") {
       if (!businessLocationId) {
         toast.error("Seleccioná la sucursal o ubicación de salida");
         return false;
@@ -1321,17 +1338,18 @@ export default function POSPage() {
         discountType: discountType || undefined,
         discountValue: discountType ? num(discountValue) : undefined,
         businessLocationId:
-          deliveryMode === "LOCAL_DELIVERY" ? businessLocationId : businessLocationId || null,
+          deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery ? businessLocationId : businessLocationId || null,
         deliveryMethod: deliveryMode,
         deliveryStatus: deliveryMode === "LOCAL_DELIVERY" ? "PENDING" : "NONE",
-        deliveryAddressSnapshot:
-          deliveryMode === "LOCAL_DELIVERY"
+        deliveryAddressSnapshot: isManualDelivery
+          ? manualDeliveryAddress.trim() || null
+          : deliveryMode === "LOCAL_DELIVERY"
             ? deliveryCalculation?.deliveryAddressSnapshot ||
               deliveryCalculation?.destinationAddress ||
               buildClientAddress(selectedClient)
             : null,
-        deliveryDistanceKm: deliveryMode === "LOCAL_DELIVERY" ? deliveryCalculation?.distanceKm : null,
-        deliveryPricePerKm: deliveryMode === "LOCAL_DELIVERY" ? num(deliveryPricePerKm) : null,
+        deliveryDistanceKm: deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery ? deliveryCalculation?.distanceKm : null,
+        deliveryPricePerKm: deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery ? num(deliveryPricePerKm) : null,
         deliveryCost: deliveryMode === "LOCAL_DELIVERY" ? deliveryCostForTotal : 0,
         items: [
           ...cart
@@ -1375,6 +1393,8 @@ export default function POSPage() {
       setPayments([{ method: "EFECTIVO", amount: 0 }]);
       setDeliveryMode("PICKUP");
       setDeliveryCalculation(null);
+      setManualDeliveryCost("");
+      setManualDeliveryAddress("");
       setPendingProductAdd(null);
       setClientGateMode(null);
       setConsumerFinalConfirmed(false);
@@ -1682,6 +1702,30 @@ export default function POSPage() {
     );
   };
 
+  const renderManualDeliveryFields = () => (
+    <>
+      <label>
+        <span>Costo de envío</span>
+        <input
+          type="number"
+          min={0}
+          value={manualDeliveryCost}
+          onChange={(e) => changeManualDeliveryCost(e.target.value)}
+          placeholder="Ej: 3000"
+        />
+      </label>
+      <label>
+        <span>Dirección de entrega</span>
+        <input
+          value={manualDeliveryAddress}
+          onChange={(e) => setManualDeliveryAddress(e.target.value)}
+          placeholder="Opcional"
+        />
+      </label>
+      <small className="pos-help">Consumidor final: el envío se carga a mano, sin calcular por km.</small>
+    </>
+  );
+
   const renderCartItem = (item: CartItem, compact = false, reactKey?: string) => {
     const lineKey = cartLineKey(item);
     const itemReactKey = reactKey ?? lineKey;
@@ -1975,6 +2019,7 @@ export default function POSPage() {
                                 const next = e.target.value as DeliveryMode;
                                 setDeliveryMode(next);
                                 setDeliveryCalculation(null);
+                                setManualDeliveryCost("");
                                 if (next === "PICKUP") removeDeliveryFromCart();
                               }}
                             >
@@ -1989,7 +2034,7 @@ export default function POSPage() {
                               onChange={(e) => {
                                 setBusinessLocationId(e.target.value);
                                 setDeliveryCalculation(null);
-                                if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
+                                if (deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery) removeDeliveryFromCart();
                               }}
                             >
                               <option value="">{businessLocations.length ? "Seleccionar" : "Sin ubicaciones"}</option>
@@ -1997,7 +2042,8 @@ export default function POSPage() {
                             </select>
                           </label>
 
-                          {deliveryMode === "LOCAL_DELIVERY" && (
+                          {isManualDelivery && renderManualDeliveryFields()}
+                          {deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery && (
                             <>
                               <label>
                                 <span>Precio por km</span>
@@ -2273,6 +2319,7 @@ export default function POSPage() {
                                 const next = e.target.value as DeliveryMode;
                                 setDeliveryMode(next);
                                 setDeliveryCalculation(null);
+                                setManualDeliveryCost("");
                                 if (next === "PICKUP") removeDeliveryFromCart();
                               }}
                             >
@@ -2287,7 +2334,7 @@ export default function POSPage() {
                               onChange={(e) => {
                                 setBusinessLocationId(e.target.value);
                                 setDeliveryCalculation(null);
-                                if (deliveryMode === "LOCAL_DELIVERY") removeDeliveryFromCart();
+                                if (deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery) removeDeliveryFromCart();
                               }}
                             >
                               <option value="">{businessLocations.length ? "Seleccionar" : "Sin ubicaciones"}</option>
@@ -2295,7 +2342,8 @@ export default function POSPage() {
                             </select>
                           </label>
 
-                          {deliveryMode === "LOCAL_DELIVERY" && (
+                          {isManualDelivery && renderManualDeliveryFields()}
+                          {deliveryMode === "LOCAL_DELIVERY" && !isManualDelivery && (
                             <>
                               <label>
                                 <span>Precio por km</span>

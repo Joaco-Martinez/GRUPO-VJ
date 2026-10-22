@@ -9,4 +9,5 @@ setInterval(async () => {
   } catch (err: any) {
     console.error("❌ Error en worker AFIP:", err?.message);
   }
+  
 }, 60 * 1000); // cada 1 minuto

@@ -1,0 +1,1923 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.saleService = void 0;
+const prisma_1 = __importDefault(require("../prisma"));
+const client_1 = require("@prisma/client");
+const finance_service_1 = require("./finance.service");
+const pdfGenerator_1 = require("../utils/pdfGenerator");
+const alert_service_1 = __importDefault(require("./alert.service"));
+const productStats_service_1 = require("./productStats.service");
+const generarReciboPDF_1 = require("../utils/generarReciboPDF");
+const generarCotizacionPDF_1 = require("../utils/generarCotizacionPDF");
+const generarComprobanteVentaPDF_1 = require("../utils/generarComprobanteVentaPDF");
+const simpleCache_1 = require("../utils/simpleCache");
+// Mismo prefijo que PRODUCTS_LIST_CACHE_PREFIX en product.service.ts. Las
+// ventas modifican stock directo con tx.product.update (no pasan por
+// productService), así que ese cache no se invalidaba solo al vender.
+const PRODUCTS_LIST_CACHE_PREFIX = "products:list:";
+const DELIVERY_SKU = "ENVIO-FLETE2";
+function normalizeText(value) {
+    return String(value ?? "")
+        .trim()
+        .toUpperCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+}
+function isDeliverySaleItem(item) {
+    return normalizeText(item.productSku) === DELIVERY_SKU;
+}
+function shouldDiscountStock(item) {
+    if (item.isService)
+        return false;
+    if (isDeliverySaleItem(item))
+        return false;
+    return true;
+}
+function round2(n) {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+function normalizeStockLocation(value) {
+    if (!value)
+        return "LOCAL";
+    if (value !== "LOCAL" && value !== "DEPOSITO") {
+        throw new Error("Depósito/origen de stock inválido. Usá LOCAL o DEPOSITO");
+    }
+    return value;
+}
+function getStockFieldNames(location) {
+    return location === "DEPOSITO"
+        ? { unit: "stockDeposito", kg: "stockDepositoKg" }
+        : { unit: "stockLocal", kg: "stockLocalKg" };
+}
+function getLocationLabel(location) {
+    return location === "DEPOSITO" ? "depósito" : "local";
+}
+function resolveQty(product, item) {
+    if (product.saleUnit === client_1.SaleUnit.KG) {
+        const q = Number(item.quantityKg);
+        if (!Number.isFinite(q) || q <= 0) {
+            throw new Error(`Cantidad KG inválida para ${product.name}`);
+        }
+        return {
+            quantity: 0,
+            quantityKg: q,
+            qtyUsedForTotal: q,
+        };
+    }
+    const q = Number(item.quantity);
+    if (!Number.isFinite(q) || q <= 0) {
+        throw new Error(`Cantidad UNIT inválida para ${product.name}`);
+    }
+    return {
+        quantity: q,
+        quantityKg: null,
+        qtyUsedForTotal: q,
+    };
+}
+function normalizeSaleItemPriceType(value, product, client, hasManualPrice) {
+    const raw = normalizeText(value);
+    if (raw === "PRICE" ||
+        raw === "RETAIL" ||
+        raw === "RETAILPRICE" ||
+        raw === "RETAIL_PRICE" ||
+        raw === "MINORISTA" ||
+        raw === "PUBLICO" ||
+        raw === "PÚBLICO") {
+        return client_1.SaleItemPriceType.PRICE;
+    }
+    if (raw === "WHOLESALE" ||
+        raw === "WHOLESALEPRICE" ||
+        raw === "WHOLESALE_PRICE" ||
+        raw === "MAYORISTA") {
+        return client_1.SaleItemPriceType.WHOLESALE_PRICE;
+    }
+    if (raw === "MANUAL" || raw === "CUSTOM" || raw === "CUSTOM_PRICE") {
+        return client_1.SaleItemPriceType.MANUAL;
+    }
+    // El envío siempre usa precio manual porque viene calculado por distancia.
+    if (normalizeText(product.sku) === DELIVERY_SKU && hasManualPrice) {
+        return client_1.SaleItemPriceType.MANUAL;
+    }
+    // Compatibilidad con el comportamiento anterior:
+    // si el frontend viejo no manda priceType, se usa la categoría del cliente.
+    if (client?.category === client_1.CategoryClient.Mayorista) {
+        return client_1.SaleItemPriceType.WHOLESALE_PRICE;
+    }
+    return client_1.SaleItemPriceType.PRICE;
+}
+function resolveUnitPrice(product, client, priceTypeInput, manualPriceInput) {
+    const isKg = product.saleUnit === client_1.SaleUnit.KG;
+    const hasManualPrice = manualPriceInput !== undefined &&
+        manualPriceInput !== null &&
+        Number.isFinite(Number(manualPriceInput));
+    const priceType = normalizeSaleItemPriceType(priceTypeInput, product, client, hasManualPrice);
+    const publicPrice = isKg ? product.pricePerKg : product.price;
+    const wholesalePrice = isKg
+        ? product.wholesalePricePerKg
+        : product.wholesalePrice;
+    const validate = (p, label) => {
+        if (!Number.isFinite(p)) {
+            throw new Error(`Falta precio ${label} (${isKg ? "KG" : "UNIT"}) en ${product.name}`);
+        }
+        if (p < 0) {
+            throw new Error(`El precio ${label} no puede ser negativo en ${product.name}`);
+        }
+        return round2(p);
+    };
+    if (priceType === client_1.SaleItemPriceType.MANUAL) {
+        if (!hasManualPrice) {
+            throw new Error(`Falta precio manual para ${product.name}`);
+        }
+        return {
+            unitPrice: validate(Number(manualPriceInput), "manual"),
+            priceType,
+        };
+    }
+    if (priceType === client_1.SaleItemPriceType.WHOLESALE_PRICE) {
+        return {
+            unitPrice: validate(Number(wholesalePrice ?? publicPrice), "mayorista"),
+            priceType,
+        };
+    }
+    return {
+        unitPrice: validate(Number(publicPrice), "minorista"),
+        priceType,
+    };
+}
+function resolvePurchasePriceSnapshot(product) {
+    if (product.type !== client_1.ProductType.COMPUESTO) {
+        const cost = Number(product.purchasePrice ?? 0);
+        return Number.isFinite(cost) ? cost : 0;
+    }
+    const components = Array.isArray(product.components) ? product.components : [];
+    return round2(components.reduce((acc, component) => {
+        const componentCost = Number(component.component?.purchasePrice ?? 0);
+        const unitQty = Number(component.quantity ?? 0);
+        const kgQty = Number(component.quantityKg ?? 0);
+        return acc + componentCost * unitQty + componentCost * kgQty;
+    }, 0));
+}
+async function resolveSaleItems(saleItems, client) {
+    const itemsWithPrices = [];
+    for (const item of saleItems) {
+        const product = await prisma_1.default.product.findUnique({
+            where: {
+                id: item.productId,
+            },
+            select: {
+                id: true,
+                name: true,
+                sku: true,
+                type: true,
+                saleUnit: true,
+                isService: true,
+                price: true,
+                pricePerKg: true,
+                purchasePrice: true,
+                clientPrice: true,
+                wholesalePrice: true,
+                clientPricePerKg: true,
+                wholesalePricePerKg: true,
+                components: {
+                    select: {
+                        componentId: true,
+                        quantity: true,
+                        quantityKg: true,
+                        component: {
+                            select: {
+                                id: true,
+                                name: true,
+                                purchasePrice: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        if (!product) {
+            throw new Error("Producto no encontrado");
+        }
+        const isDeliveryProduct = normalizeText(product.sku) === DELIVERY_SKU;
+        const { quantity, quantityKg, qtyUsedForTotal } = isDeliveryProduct
+            ? {
+                quantity: Number(item.quantity ?? 1),
+                quantityKg: null,
+                qtyUsedForTotal: Number(item.quantity ?? 1),
+            }
+            : resolveQty(product, item);
+        if (isDeliveryProduct && (!Number.isFinite(quantity) || quantity <= 0)) {
+            throw new Error(`Cantidad inválida para ${product.name}`);
+        }
+        const manualPrice = item.price !== undefined ? Number(item.price) : undefined;
+        if (item.price !== undefined &&
+            (!Number.isFinite(Number(item.price)) || Number(item.price) < 0)) {
+            throw new Error(`Precio inválido para ${product.name}`);
+        }
+        const resolvedPrice = resolveUnitPrice(product, client, item.priceType, manualPrice);
+        const unitPrice = resolvedPrice.unitPrice;
+        const itemPriceType = resolvedPrice.priceType;
+        const subtotal = round2(unitPrice * qtyUsedForTotal);
+        const purchasePriceSnapshot = resolvePurchasePriceSnapshot(product);
+        const costTotal = round2(purchasePriceSnapshot * qtyUsedForTotal);
+        let components = [];
+        if (product.type === client_1.ProductType.COMPUESTO) {
+            if (!product.components.length) {
+                throw new Error(`El producto compuesto "${product.name}" no tiene componentes`);
+            }
+            components = product.components.map((component) => ({
+                productId: component.componentId,
+                quantity: component.quantity ?? null,
+                quantityKg: component.quantityKg ?? null,
+            }));
+        }
+        else if (Array.isArray(item.boxContents) && item.boxContents.length > 0) {
+            components = item.boxContents.map((component) => ({
+                productId: component.productId,
+                quantity: component.quantity !== undefined ? Number(component.quantity) : null,
+                quantityKg: component.quantityKg !== undefined ? Number(component.quantityKg) : null,
+            }));
+        }
+        itemsWithPrices.push({
+            productId: product.id,
+            productName: product.name,
+            productSku: product.sku,
+            productType: product.type,
+            saleUnit: product.saleUnit,
+            isService: product.isService,
+            quantity,
+            quantityKg,
+            price: unitPrice,
+            priceType: itemPriceType,
+            subtotal,
+            purchasePriceSnapshot,
+            costTotal,
+            profit: 0,
+            components,
+        });
+    }
+    return itemsWithPrices;
+}
+function saleItemToResolved(item) {
+    const qtyForCost = item.quantityKg ?? item.quantity;
+    return {
+        productId: item.productId,
+        productName: item.productNameSnapshot ?? item.product?.name ?? "Producto",
+        productSku: item.productSkuSnapshot ?? item.product?.sku ?? null,
+        productType: item.product?.type,
+        saleUnit: item.product?.saleUnit,
+        isService: Boolean(item.product?.isService),
+        quantity: item.quantity,
+        quantityKg: item.quantityKg ?? null,
+        price: item.price,
+        priceType: item.priceType ?? client_1.SaleItemPriceType.PRICE,
+        subtotal: item.subtotal ?? round2(item.price * qtyForCost),
+        purchasePriceSnapshot: item.purchasePriceSnapshot ?? 0,
+        costTotal: round2((item.purchasePriceSnapshot ?? 0) * qtyForCost),
+        profit: item.profit ?? 0,
+        components: item.boxContents?.map((box) => ({
+            productId: box.productId,
+            quantity: box.quantity ?? null,
+            quantityKg: box.quantityKg ?? null,
+        })) ?? [],
+    };
+}
+function buildSaleItemCreateData(item) {
+    return {
+        productId: item.productId,
+        quantity: item.quantity,
+        quantityKg: item.quantityKg,
+        price: item.price,
+        priceType: item.priceType,
+        subtotal: item.subtotal,
+        purchasePriceSnapshot: item.purchasePriceSnapshot,
+        profit: item.profit,
+        productNameSnapshot: item.productName,
+        productSkuSnapshot: item.productSku,
+        boxContents: item.components.length
+            ? {
+                create: item.components.map((component) => ({
+                    productId: component.productId,
+                    quantity: component.quantity,
+                    quantityKg: component.quantityKg,
+                })),
+            }
+            : undefined,
+    };
+}
+function getPaymentsFromExistingSale(sale) {
+    if (Array.isArray(sale.payments) && sale.payments.length > 0) {
+        return sale.payments.map((payment) => ({
+            method: payment.method,
+            amount: Number(payment.amount),
+            reference: payment.reference ?? undefined,
+            notes: payment.notes ?? undefined,
+        }));
+    }
+    if (sale.paymentMethod === client_1.PaymentMethod.CUENTA_CORRIENTE) {
+        return [
+            {
+                method: client_1.PaymentMethod.CUENTA_CORRIENTE,
+                amount: Number(sale.total ?? 0),
+            },
+        ];
+    }
+    return undefined;
+}
+function applyDiscountAndProfitToItems(items, discountBaseSubtotal, discountAmount) {
+    let appliedDiscount = 0;
+    const lastDiscountableIndex = (() => {
+        for (let i = items.length - 1; i >= 0; i -= 1) {
+            if (!isDeliverySaleItem(items[i]))
+                return i;
+        }
+        return -1;
+    })();
+    return items.map((item, index) => {
+        const isDeliveryItem = isDeliverySaleItem(item);
+        const isLastDiscountable = index === lastDiscountableIndex;
+        const proportionalDiscount = !isDeliveryItem && discountBaseSubtotal > 0
+            ? isLastDiscountable
+                ? round2(discountAmount - appliedDiscount)
+                : round2(discountAmount * (item.subtotal / discountBaseSubtotal))
+            : 0;
+        appliedDiscount = round2(appliedDiscount + proportionalDiscount);
+        const netSubtotal = round2(item.subtotal - proportionalDiscount);
+        return {
+            ...item,
+            profit: round2(netSubtotal - item.costTotal),
+        };
+    });
+}
+function addStockLine(map, line) {
+    const existing = map.get(line.productId);
+    if (!existing) {
+        map.set(line.productId, {
+            productId: line.productId,
+            quantity: line.quantity,
+            quantityKg: line.quantityKg,
+            reason: line.reason,
+        });
+        return;
+    }
+    existing.quantity += line.quantity;
+    existing.quantityKg += line.quantityKg;
+}
+function buildStockLines(items) {
+    const stockMap = new Map();
+    for (const item of items) {
+        if (!shouldDiscountStock(item)) {
+            continue;
+        }
+        const soldQty = item.saleUnit === client_1.SaleUnit.KG ? item.quantityKg ?? 0 : item.quantity;
+        if (item.productType !== client_1.ProductType.COMPUESTO) {
+            addStockLine(stockMap, {
+                productId: item.productId,
+                quantity: item.saleUnit === client_1.SaleUnit.UNIT ? item.quantity : 0,
+                quantityKg: item.saleUnit === client_1.SaleUnit.KG ? item.quantityKg ?? 0 : 0,
+                reason: `Venta de ${item.productName}`,
+            });
+            continue;
+        }
+        for (const component of item.components) {
+            addStockLine(stockMap, {
+                productId: component.productId,
+                quantity: component.quantity ? component.quantity * soldQty : 0,
+                quantityKg: component.quantityKg ? component.quantityKg * soldQty : 0,
+                reason: `Componente de ${item.productName}`,
+            });
+        }
+    }
+    return Array.from(stockMap.values()).filter((line) => line.quantity > 0 || line.quantityKg > 0);
+}
+/**
+ * Compara las líneas de stock de la venta antes/después de editarla y devuelve
+ * sólo el delta neto por producto, para no generar un ingreso + egreso completos
+ * en cada edición sino un único movimiento por el cambio real.
+ */
+function diffStockLines(oldLines, newLines) {
+    const map = new Map();
+    for (const line of oldLines) {
+        const entry = map.get(line.productId) ?? {
+            productId: line.productId,
+            quantity: 0,
+            quantityKg: 0,
+            reason: line.reason,
+        };
+        entry.quantity -= line.quantity;
+        entry.quantityKg -= line.quantityKg;
+        map.set(line.productId, entry);
+    }
+    for (const line of newLines) {
+        const entry = map.get(line.productId) ?? {
+            productId: line.productId,
+            quantity: 0,
+            quantityKg: 0,
+            reason: line.reason,
+        };
+        entry.quantity += line.quantity;
+        entry.quantityKg += line.quantityKg;
+        entry.reason = line.reason;
+        map.set(line.productId, entry);
+    }
+    const toDiscount = [];
+    const toRestore = [];
+    for (const entry of map.values()) {
+        if (entry.quantity > 0 || entry.quantityKg > 0) {
+            toDiscount.push({
+                productId: entry.productId,
+                quantity: Math.max(entry.quantity, 0),
+                quantityKg: Math.max(entry.quantityKg, 0),
+                reason: `Ajuste por modificación de venta (${entry.reason})`,
+            });
+        }
+        else if (entry.quantity < 0 || entry.quantityKg < 0) {
+            toRestore.push({
+                productId: entry.productId,
+                quantity: Math.max(-entry.quantity, 0),
+                quantityKg: Math.max(-entry.quantityKg, 0),
+                reason: `Ajuste por modificación de venta (${entry.reason})`,
+            });
+        }
+    }
+    return { toDiscount, toRestore };
+}
+async function validateStockAvailability(tx, stockLines, stockLocation) {
+    for (const line of stockLines) {
+        const product = await tx.product.findUnique({
+            where: { id: line.productId },
+            select: {
+                id: true,
+                name: true,
+                saleUnit: true,
+                stockLocal: true,
+                stockDeposito: true,
+                stockLocalKg: true,
+                stockDepositoKg: true,
+            },
+        });
+        if (!product) {
+            throw new Error("Producto no encontrado para validar stock");
+        }
+        const fields = getStockFieldNames(stockLocation);
+        const availableUnits = Number(product[fields.unit] ?? 0);
+        const availableKg = Number(product[fields.kg] ?? 0);
+        const locationLabel = getLocationLabel(stockLocation);
+        if (line.quantity > 0 && availableUnits < line.quantity) {
+            throw new Error(`Stock insuficiente en ${locationLabel} para ${product.name}. Necesitás ${line.quantity}, disponible ${availableUnits}`);
+        }
+        if (line.quantityKg > 0 && availableKg < line.quantityKg) {
+            throw new Error(`Stock KG insuficiente en ${locationLabel} para ${product.name}. Necesitás ${line.quantityKg}, disponible ${availableKg}`);
+        }
+    }
+}
+async function discountStockLines(tx, stockLines, userId, saleId, stockLocation, pendingAlerts, isClientMovement = false) {
+    for (const line of stockLines) {
+        const data = {};
+        const fields = getStockFieldNames(stockLocation);
+        if (line.quantity > 0) {
+            data[fields.unit] = { decrement: line.quantity };
+        }
+        if (line.quantityKg > 0) {
+            data[fields.kg] = { decrement: line.quantityKg };
+        }
+        const updatedProduct = await tx.product.update({
+            where: { id: line.productId },
+            data,
+            select: {
+                id: true,
+            },
+        });
+        const movementData = {
+            type: client_1.MovementType.SALE,
+            from: stockLocation,
+            to: null,
+            quantity: line.quantity > 0 ? line.quantity : null,
+            quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
+            reason: line.reason,
+            reference: saleId,
+            isClientMovement,
+            product: {
+                connect: {
+                    id: line.productId,
+                },
+            },
+        };
+        if (userId) {
+            movementData.user = {
+                connect: {
+                    id: userId,
+                },
+            };
+        }
+        await tx.stockMovement.create({
+            data: movementData,
+        });
+        pendingAlerts.push(updatedProduct.id);
+    }
+}
+async function restoreStockLines(tx, stockLines, userId, saleId, stockLocation, pendingAlerts, isClientMovement = false) {
+    for (const line of stockLines) {
+        const data = {};
+        const fields = getStockFieldNames(stockLocation);
+        if (line.quantity > 0) {
+            data[fields.unit] = {
+                increment: line.quantity,
+            };
+        }
+        if (line.quantityKg > 0) {
+            data[fields.kg] = {
+                increment: line.quantityKg,
+            };
+        }
+        const updatedProduct = await tx.product.update({
+            where: {
+                id: line.productId,
+            },
+            data,
+            select: {
+                id: true,
+            },
+        });
+        pendingAlerts.push(updatedProduct.id);
+        const movementData = {
+            type: client_1.MovementType.SALE_CANCEL,
+            from: null,
+            to: stockLocation,
+            quantity: line.quantity > 0 ? line.quantity : null,
+            quantityKg: line.quantityKg > 0 ? line.quantityKg : null,
+            reason: "Cancelación de venta",
+            reference: saleId,
+            isClientMovement,
+            product: {
+                connect: {
+                    id: line.productId,
+                },
+            },
+        };
+        if (userId) {
+            movementData.user = {
+                connect: {
+                    id: userId,
+                },
+            };
+        }
+        await tx.stockMovement.create({
+            data: movementData,
+        });
+    }
+}
+function queueStockAlerts(productIds) {
+    const uniqueProductIds = [...new Set(productIds)];
+    if (uniqueProductIds.length === 0)
+        return;
+    (0, simpleCache_1.invalidateCache)(PRODUCTS_LIST_CACHE_PREFIX);
+    void Promise.all(uniqueProductIds.map(async (productId) => {
+        try {
+            await alert_service_1.default.checkProductStock(productId);
+        }
+        catch (error) {
+            console.error("Error revisando alerta de stock:", error);
+        }
+    }));
+}
+function calculatePaymentState(params) {
+    const hasPayments = Array.isArray(params.payments) && params.payments.length > 0;
+    if (!hasPayments) {
+        const isAccountSale = params.paymentMethod === client_1.PaymentMethod.CUENTA_CORRIENTE;
+        return {
+            hasPayments: false,
+            totalPaid: isAccountSale ? 0 : params.total,
+            debtAmount: isAccountSale ? params.total : 0,
+            isAccountSale,
+            paymentsToPersist: [],
+        };
+    }
+    let totalPaid = 0;
+    const paymentsToPersist = [];
+    let hasAccountPaymentLine = false;
+    for (const payment of params.payments) {
+        if (!payment.method) {
+            throw new Error("Cada pago necesita method");
+        }
+        const amount = Number(payment.amount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            throw new Error("Cada pago necesita amount > 0");
+        }
+        if (payment.method === client_1.PaymentMethod.CUENTA_CORRIENTE) {
+            hasAccountPaymentLine = true;
+            continue;
+        }
+        totalPaid += amount;
+        paymentsToPersist.push({
+            method: payment.method,
+            amount,
+            reference: payment.reference,
+            notes: payment.notes,
+        });
+    }
+    totalPaid = round2(totalPaid);
+    const debtAmount = round2(params.total - totalPaid);
+    if (debtAmount < 0) {
+        throw new Error(`La suma de pagos (${totalPaid}) no puede superar el total (${params.total})`);
+    }
+    return {
+        hasPayments: paymentsToPersist.length > 0,
+        totalPaid,
+        debtAmount,
+        isAccountSale: debtAmount > 0 || hasAccountPaymentLine,
+        paymentsToPersist,
+    };
+}
+async function createAccountDebtMovement(tx, data) {
+    const debtAmount = round2(data.amount);
+    if (debtAmount <= 0)
+        return null;
+    const client = await tx.client.findUnique({
+        where: { id: data.clientId },
+        select: {
+            id: true,
+            currentBalance: true,
+            isAccountEnabled: true,
+            creditLimit: true,
+        },
+    });
+    if (!client)
+        throw new Error("Cliente no encontrado");
+    if (!client.isAccountEnabled) {
+        throw new Error("La cuenta corriente de este cliente está deshabilitada");
+    }
+    const previousBalance = round2(client.currentBalance);
+    const newBalance = round2(previousBalance + debtAmount);
+    if (client.creditLimit !== null &&
+        client.creditLimit !== undefined &&
+        client.creditLimit > 0 &&
+        newBalance > client.creditLimit) {
+        throw new Error(`La deuda supera el límite de crédito del cliente. Límite: ${client.creditLimit}`);
+    }
+    await tx.client.update({
+        where: { id: data.clientId },
+        data: { currentBalance: newBalance },
+    });
+    return tx.accountMovement.create({
+        data: {
+            clientId: data.clientId,
+            saleId: data.saleId,
+            userId: data.userId ?? null,
+            type: client_1.AccountMovementType.DEBT,
+            amount: debtAmount,
+            previousBalance,
+            newBalance,
+            paymentMethod: null,
+            reference: data.saleId,
+            description: data.description ?? "Deuda generada por venta en cuenta corriente",
+        },
+    });
+}
+async function reverseAccountDebtFromSale(tx, sale) {
+    const debtAmount = round2(Number(sale.accountDebtAmount ?? 0));
+    if (!sale.clientId || debtAmount <= 0)
+        return null;
+    const existingReverse = await tx.accountMovement.findFirst({
+        where: {
+            saleId: sale.id,
+            type: client_1.AccountMovementType.CREDIT_NOTE,
+        },
+        select: { id: true },
+    });
+    if (existingReverse)
+        return null;
+    const client = await tx.client.findUnique({
+        where: { id: sale.clientId },
+        select: { id: true, currentBalance: true },
+    });
+    if (!client)
+        throw new Error("Cliente no encontrado");
+    const previousBalance = round2(client.currentBalance);
+    const newBalance = round2(Math.max(previousBalance - debtAmount, 0));
+    await tx.client.update({
+        where: { id: sale.clientId },
+        data: { currentBalance: newBalance },
+    });
+    await tx.sale.update({
+        where: { id: sale.id },
+        data: {
+            accountDebtAmount: 0,
+            isAccountSale: false,
+        },
+    });
+    return tx.accountMovement.create({
+        data: {
+            clientId: sale.clientId,
+            saleId: sale.id,
+            userId: sale.userId ?? null,
+            type: client_1.AccountMovementType.CREDIT_NOTE,
+            amount: debtAmount,
+            previousBalance,
+            newBalance,
+            paymentMethod: null,
+            reference: sale.id,
+            description: "Reversión de deuda por cancelación de venta",
+        },
+    });
+}
+const DEFAULT_QUOTATION_HOURS = Number(process.env.DEFAULT_QUOTATION_HOURS ?? 36);
+function addHours(date, hours) {
+    return new Date(date.getTime() + hours * 60 * 60 * 1000);
+}
+function resolveQuotationHours(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return DEFAULT_QUOTATION_HOURS;
+    }
+    return parsed;
+}
+function buildSaleInclude() {
+    return {
+        payments: true,
+        businessLocation: true,
+        items: {
+            include: {
+                product: {
+                    include: {
+                        category: true,
+                    },
+                },
+                boxContents: {
+                    include: {
+                        product: true,
+                    },
+                },
+            },
+        },
+        user: true,
+        client: true,
+        invoiceAfip: {
+            include: {
+                creditNotes: true,
+            },
+        },
+    };
+}
+// Include liviano para listados sin paginar (dashboard/finanzas/storefront):
+// evita traer relaciones profundas que esas vistas no usan.
+function buildSaleListInclude() {
+    return {
+        client: true,
+        items: {
+            include: {
+                product: {
+                    select: { id: true, name: true },
+                },
+            },
+        },
+    };
+}
+// Include para el listado paginado de /ventas (admin). A diferencia de
+// buildSaleInclude(), no trae items.boxContents ni items.product.category
+// (no se usan en la tabla/modal de detalle de ventas) y recorta
+// invoiceAfip.creditNotes a los campos que efectivamente se leen
+// (getCreditNoteSaleId solo necesita id/saleId). El resto de los campos
+// (items, payments, invoiceAfip, client, user, businessLocation) se
+// mantiene completo porque el modal de detalle reutiliza este mismo
+// objeto sin volver a pedirlo al backend.
+function buildSalePaginatedListInclude() {
+    return {
+        payments: true,
+        businessLocation: {
+            select: { id: true, name: true },
+        },
+        items: {
+            include: {
+                product: {
+                    select: { id: true, name: true, sku: true, saleUnit: true },
+                },
+            },
+        },
+        user: {
+            select: { id: true, name: true, email: true },
+        },
+        client: true,
+        invoiceAfip: {
+            include: {
+                creditNotes: {
+                    select: { id: true, saleId: true },
+                },
+            },
+        },
+    };
+}
+const UNPAGINATED_LIST_CAP = 300;
+function queueSalePdfGeneration(saleId) {
+    setImmediate(() => {
+        void (async () => {
+            try {
+                const sale = await prisma_1.default.sale.findUnique({
+                    where: { id: saleId },
+                    include: {
+                        payments: true,
+                        businessLocation: true,
+                        items: {
+                            include: {
+                                product: true,
+                                boxContents: {
+                                    include: {
+                                        product: true,
+                                    },
+                                },
+                            },
+                        },
+                        user: true,
+                        client: true,
+                    },
+                });
+                if (!sale)
+                    return;
+                const pdfPath = await (0, pdfGenerator_1.generateInvoicePDF)(sale);
+                await prisma_1.default.invoice.upsert({
+                    where: {
+                        saleId: sale.id,
+                    },
+                    create: {
+                        saleId: sale.id,
+                        pdfUrl: pdfPath,
+                    },
+                    update: {
+                        pdfUrl: pdfPath,
+                    },
+                });
+                await prisma_1.default.sale.update({
+                    where: { id: sale.id },
+                    data: {
+                        pdfUrl: pdfPath,
+                    },
+                });
+            }
+            catch (error) {
+                console.error("Error generando PDF de venta en segundo plano:", error);
+            }
+        })();
+    });
+}
+function normalizePositiveInt(value, fallback) {
+    if (value === undefined || value === null || value === "")
+        return fallback;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed))
+        return fallback;
+    const valueAsInt = Math.trunc(parsed);
+    return valueAsInt > 0 ? valueAsInt : fallback;
+}
+function normalizeSaleStatusFilter(value) {
+    if (!value)
+        return undefined;
+    const status = String(value).toUpperCase();
+    return Object.values(client_1.SaleStatus).includes(status)
+        ? status
+        : undefined;
+}
+function buildSalesWhere(params = {}, includeStatus = true) {
+    const where = {};
+    const status = includeStatus ? normalizeSaleStatusFilter(params.status) : undefined;
+    const search = String(params.search ?? "").trim();
+    if (status) {
+        where.status = status;
+    }
+    if (search) {
+        where.OR = [
+            { id: { contains: search, mode: "insensitive" } },
+            { client: { nombre: { contains: search, mode: "insensitive" } } },
+            { client: { apellido: { contains: search, mode: "insensitive" } } },
+            { client: { dni: { contains: search, mode: "insensitive" } } },
+            { client: { gmail: { contains: search, mode: "insensitive" } } },
+        ];
+    }
+    return where;
+}
+function getConfirmedMoneyWhere(baseWhere = {}) {
+    return {
+        AND: [
+            baseWhere,
+            { status: { not: client_1.SaleStatus.CANCELLED } },
+            {
+                OR: [
+                    { status: client_1.SaleStatus.COMPLETED },
+                    { isInvoiced: true },
+                    { invoiceStatus: client_1.InvoiceStatus.INVOICED },
+                ],
+            },
+        ],
+    };
+}
+const SALES_STATS_CACHE_TTL_MS = 8000;
+async function buildSalesStats(params = {}) {
+    const baseWhere = buildSalesWhere(params, false);
+    const confirmedWhere = getConfirmedMoneyWhere(baseWhere);
+    // Antes esto eran 6 queries (4 counts + 2 aggregates) recalculadas en
+    // cada request de listado, escaneando toda la tabla de ventas cada vez.
+    // Se agrupan los counts por status en una sola query y se cachea el
+    // resultado por unos segundos, ya que no necesita ser al instante.
+    return (0, simpleCache_1.cached)(`sales:stats:${JSON.stringify(baseWhere)}`, SALES_STATS_CACHE_TTL_MS, async () => {
+        const [statusCounts, confirmedTotal, debt] = await Promise.all([
+            prisma_1.default.sale.groupBy({
+                by: ["status"],
+                where: baseWhere,
+                _count: { _all: true },
+            }),
+            prisma_1.default.sale.aggregate({ where: confirmedWhere, _sum: { total: true } }),
+            prisma_1.default.sale.aggregate({
+                where: confirmedWhere,
+                _sum: { accountDebtAmount: true },
+            }),
+        ]);
+        const countByStatus = new Map(statusCounts.map((row) => [row.status, row._count._all]));
+        const totalCount = statusCounts.reduce((sum, row) => sum + row._count._all, 0);
+        return {
+            totalCount,
+            pendingCount: countByStatus.get(client_1.SaleStatus.PENDING) ?? 0,
+            completedCount: countByStatus.get(client_1.SaleStatus.COMPLETED) ?? 0,
+            cancelledCount: countByStatus.get(client_1.SaleStatus.CANCELLED) ?? 0,
+            confirmedTotal: round2(Number(confirmedTotal._sum.total ?? 0)),
+            debt: round2(Number(debt._sum.accountDebtAmount ?? 0)),
+        };
+    });
+}
+exports.saleService = {
+    async getAll(params = {}) {
+        const page = normalizePositiveInt(params.page);
+        const limit = normalizePositiveInt(params.limit);
+        const where = buildSalesWhere(params);
+        const mapSale = (sale) => ({
+            ...sale,
+            hasCreditNote: Boolean(sale.invoiceAfip?.creditNotes?.length),
+        });
+        // Compatibilidad: si no viene page/limit, devuelve un listado liviano
+        // (usado por dashboard/finanzas/storefront), acotado para no degradar
+        // con el crecimiento de la tabla.
+        if (!page || !limit) {
+            const sales = await prisma_1.default.sale.findMany({
+                where,
+                include: buildSaleListInclude(),
+                orderBy: {
+                    createdAt: "desc",
+                },
+                take: UNPAGINATED_LIST_CAP,
+            });
+            return sales.map(mapSale);
+        }
+        const safeLimit = Math.min(limit, 100);
+        const skip = (page - 1) * safeLimit;
+        const [items, totalItems, stats] = await Promise.all([
+            prisma_1.default.sale.findMany({
+                where,
+                include: buildSalePaginatedListInclude(),
+                orderBy: {
+                    createdAt: "desc",
+                },
+                skip,
+                take: safeLimit,
+            }),
+            prisma_1.default.sale.count({ where }),
+            buildSalesStats(params),
+        ]);
+        const totalPages = Math.max(1, Math.ceil(totalItems / safeLimit));
+        return {
+            items: items.map(mapSale),
+            meta: {
+                page,
+                limit: safeLimit,
+                totalItems,
+                totalPages,
+                hasNextPage: page < totalPages,
+                hasPrevPage: page > 1,
+            },
+            stats,
+        };
+    },
+    async getPending(params = {}) {
+        const limit = normalizePositiveInt(params.limit, UNPAGINATED_LIST_CAP);
+        return prisma_1.default.sale.findMany({
+            where: {
+                status: client_1.SaleStatus.PENDING,
+            },
+            include: {
+                payments: true,
+                businessLocation: true,
+                items: {
+                    include: {
+                        product: {
+                            include: {
+                                category: true,
+                            },
+                        },
+                        boxContents: {
+                            include: {
+                                product: true,
+                            },
+                        },
+                    },
+                },
+                user: true,
+                client: true,
+            },
+            orderBy: {
+                createdAt: "desc",
+            },
+            take: limit,
+        });
+    },
+    async getById(id) {
+        return prisma_1.default.sale.findUnique({
+            where: {
+                id,
+            },
+            include: buildSaleInclude(),
+        });
+    },
+    async bulkUpdatePending(action) {
+        const pendingSales = await prisma_1.default.sale.findMany({
+            where: {
+                status: client_1.SaleStatus.PENDING,
+            },
+            select: {
+                id: true,
+            },
+        });
+        const updatedSales = [];
+        for (const sale of pendingSales) {
+            const updated = await this.updateStatus(sale.id, action);
+            updatedSales.push(updated);
+        }
+        return updatedSales;
+    },
+    async create(data) {
+        if (!Array.isArray(data.items) || data.items.length === 0) {
+            throw new Error("La venta debe tener al menos un producto");
+        }
+        let client = null;
+        if (data.clientId) {
+            client = await prisma_1.default.client.findUnique({
+                where: {
+                    id: data.clientId,
+                },
+                select: {
+                    category: true,
+                },
+            });
+            if (!client) {
+                throw new Error("Cliente no encontrado");
+            }
+        }
+        if (data.businessLocationId) {
+            const location = await prisma_1.default.businessLocation.findUnique({
+                where: {
+                    id: data.businessLocationId,
+                },
+                select: {
+                    id: true,
+                    isActive: true,
+                },
+            });
+            if (!location) {
+                throw new Error("Sucursal/depósito no encontrado");
+            }
+            if (!location.isActive) {
+                throw new Error("La sucursal/depósito seleccionado está inactivo");
+            }
+        }
+        const itemsWithPrices = await resolveSaleItems(data.items, client);
+        const subtotal = round2(itemsWithPrices.reduce((acc, item) => acc + item.subtotal, 0));
+        const deliveryCost = round2(Number(data.deliveryCost ?? 0));
+        if (!Number.isFinite(deliveryCost) || deliveryCost < 0) {
+            throw new Error("El costo de envío no puede ser negativo");
+        }
+        const deliveryLineSubtotal = round2(itemsWithPrices
+            .filter(isDeliverySaleItem)
+            .reduce((acc, item) => acc + item.subtotal, 0));
+        const discountBaseSubtotal = round2(subtotal - deliveryLineSubtotal);
+        let discountAmount = 0;
+        if (data.discountType && typeof data.discountValue === "number") {
+            discountAmount =
+                data.discountType === "PERCENTAGE"
+                    ? discountBaseSubtotal * (data.discountValue / 100)
+                    : data.discountValue;
+        }
+        discountAmount = round2(discountAmount);
+        if ((data.deliveryMethod ?? client_1.DeliveryMethod.PICKUP) === client_1.DeliveryMethod.LOCAL_DELIVERY) {
+            if (deliveryCost <= 0) {
+                throw new Error("El costo de envío debe ser mayor a 0");
+            }
+            if (deliveryLineSubtotal <= 0) {
+                throw new Error(`El envío debe venir cargado como item (${DELIVERY_SKU}) en la venta`);
+            }
+            if (Math.abs(deliveryLineSubtotal - deliveryCost) > 0.01) {
+                throw new Error(`El item de envío (${round2(deliveryLineSubtotal)}) no coincide con deliveryCost (${deliveryCost})`);
+            }
+        }
+        // El envío ya entra dentro de subtotal porque se manda como un item de venta.
+        // Por eso NO se suma deliveryCost otra vez, para no duplicarlo.
+        const total = round2(subtotal - discountAmount);
+        const itemsWithProfit = applyDiscountAndProfitToItems(itemsWithPrices, discountBaseSubtotal, discountAmount);
+        const grossProfit = round2(itemsWithProfit.reduce((acc, item) => acc + item.profit, 0));
+        if (total < 0) {
+            throw new Error("El total no puede ser negativo");
+        }
+        const paymentState = calculatePaymentState({
+            total,
+            paymentMethod: data.paymentMethod,
+            payments: data.payments,
+        });
+        if (paymentState.isAccountSale && !data.clientId) {
+            throw new Error("Para vender en cuenta corriente necesitás seleccionar un cliente");
+        }
+        const stockLocation = normalizeStockLocation(data.stockLocation);
+        const stockLines = buildStockLines(itemsWithProfit);
+        const pendingAlerts = [];
+        const saleStatus = data.status ?? client_1.SaleStatus.PENDING;
+        const quotationExpiresAt = saleStatus === client_1.SaleStatus.PENDING
+            ? addHours(new Date(), resolveQuotationHours(data.quotationHours))
+            : null;
+        const result = await prisma_1.default.$transaction(async (tx) => {
+            await validateStockAvailability(tx, stockLines, stockLocation);
+            const sale = await tx.sale.create({
+                data: {
+                    userId: data.userId,
+                    clientId: data.clientId ?? null,
+                    businessLocationId: data.businessLocationId ?? null,
+                    subtotal,
+                    total,
+                    grossProfit,
+                    gmailSend: null,
+                    discountType: data.discountType ?? null,
+                    discountValue: data.discountValue ?? null,
+                    paymentMethod: data.paymentMethod,
+                    receiptType: data.receiptType,
+                    status: saleStatus,
+                    stockLocation,
+                    deliveryMethod: data.deliveryMethod ?? client_1.DeliveryMethod.PICKUP,
+                    deliveryStatus: data.deliveryStatus ?? client_1.DeliveryStatus.NONE,
+                    deliveryAddressSnapshot: data.deliveryAddressSnapshot ?? null,
+                    deliveryDistanceKm: data.deliveryDistanceKm ?? null,
+                    deliveryPricePerKm: data.deliveryPricePerKm ?? null,
+                    deliveryCost,
+                    transportName: data.transportName ?? null,
+                    transportCuit: data.transportCuit ?? null,
+                    packagesCount: data.packagesCount ?? null,
+                    declaredValue: data.declaredValue ?? null,
+                    quotationExpiresAt,
+                    quotationExpiredAt: null,
+                    isAccountSale: paymentState.isAccountSale,
+                    accountDebtAmount: paymentState.debtAmount,
+                    isWebSale: Boolean(data.isWebSale),
+                    items: {
+                        create: itemsWithProfit.map(buildSaleItemCreateData),
+                    },
+                    payments: paymentState.hasPayments
+                        ? {
+                            create: paymentState.paymentsToPersist.map((payment) => ({
+                                method: payment.method,
+                                amount: payment.amount,
+                                reference: payment.reference ?? null,
+                                notes: payment.notes ?? null,
+                            })),
+                        }
+                        : undefined,
+                },
+                include: {
+                    payments: true,
+                    businessLocation: true,
+                    items: {
+                        include: {
+                            product: true,
+                            boxContents: {
+                                include: {
+                                    product: true,
+                                },
+                            },
+                        },
+                    },
+                    user: true,
+                    client: true,
+                },
+            });
+            await discountStockLines(tx, stockLines, data.userId, sale.id, stockLocation, pendingAlerts, Boolean(data.isWebSale));
+            if (paymentState.isAccountSale && paymentState.debtAmount > 0 && data.clientId) {
+                await createAccountDebtMovement(tx, {
+                    clientId: data.clientId,
+                    saleId: sale.id,
+                    userId: data.userId ?? null,
+                    amount: paymentState.debtAmount,
+                });
+            }
+            return sale;
+        }, {
+            timeout: 20000,
+            maxWait: 20000,
+        });
+        queueStockAlerts(pendingAlerts);
+        queueSalePdfGeneration(result.id);
+        return {
+            sale: result,
+            invoice: null,
+            pdfQueued: true,
+        };
+    },
+    async updateItems(id, data) {
+        if (!Array.isArray(data.items) || data.items.length === 0) {
+            throw new Error("La venta debe tener al menos un producto");
+        }
+        const sale = await prisma_1.default.sale.findUnique({
+            where: { id },
+            include: {
+                payments: true,
+                accountMovements: true,
+                businessLocation: true,
+                items: {
+                    include: {
+                        product: true,
+                        boxContents: {
+                            include: {
+                                product: true,
+                            },
+                        },
+                    },
+                },
+                client: true,
+                user: true,
+                invoiceAfip: true,
+            },
+        });
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+        if (sale.status === client_1.SaleStatus.CANCELLED) {
+            throw new Error("No se puede editar una venta cancelada");
+        }
+        if (sale.status !== client_1.SaleStatus.PENDING) {
+            throw new Error("Solo se puede editar una venta pendiente antes de confirmarla");
+        }
+        if (sale.isInvoiced || sale.invoiceStatus === "INVOICED" || sale.invoiceAfip) {
+            throw new Error("No se puede editar una venta facturada. Emití una nota de crédito y generá una nueva venta");
+        }
+        const clientId = data.clientId !== undefined ? data.clientId : sale.clientId ?? undefined;
+        let client = null;
+        if (clientId) {
+            client = await prisma_1.default.client.findUnique({
+                where: { id: clientId },
+                select: { category: true },
+            });
+            if (!client) {
+                throw new Error("Cliente no encontrado");
+            }
+        }
+        const businessLocationId = data.businessLocationId !== undefined
+            ? data.businessLocationId
+            : sale.businessLocationId ?? null;
+        if (businessLocationId) {
+            const location = await prisma_1.default.businessLocation.findUnique({
+                where: { id: businessLocationId },
+                select: { id: true, isActive: true },
+            });
+            if (!location) {
+                throw new Error("Sucursal/depósito no encontrado");
+            }
+            if (!location.isActive) {
+                throw new Error("La sucursal/depósito seleccionado está inactiva");
+            }
+        }
+        const stockLocation = normalizeStockLocation(data.stockLocation ?? sale.stockLocation ?? "LOCAL");
+        const itemsWithPrices = await resolveSaleItems(data.items, client);
+        const subtotal = round2(itemsWithPrices.reduce((acc, item) => acc + item.subtotal, 0));
+        const deliveryMethod = data.deliveryMethod ?? sale.deliveryMethod ?? client_1.DeliveryMethod.PICKUP;
+        const deliveryStatus = data.deliveryStatus ?? sale.deliveryStatus ?? client_1.DeliveryStatus.NONE;
+        const deliveryCost = round2(Number(data.deliveryCost ?? sale.deliveryCost ?? 0));
+        if (!Number.isFinite(deliveryCost) || deliveryCost < 0) {
+            throw new Error("El costo de envío no puede ser negativo");
+        }
+        const deliveryLineSubtotal = round2(itemsWithPrices
+            .filter(isDeliverySaleItem)
+            .reduce((acc, item) => acc + item.subtotal, 0));
+        const discountType = data.discountType !== undefined ? data.discountType : sale.discountType ?? undefined;
+        const discountValue = data.discountValue !== undefined ? data.discountValue : sale.discountValue ?? undefined;
+        const discountBaseSubtotal = round2(subtotal - deliveryLineSubtotal);
+        let discountAmount = 0;
+        if (discountType && typeof discountValue === "number") {
+            discountAmount =
+                discountType === "PERCENTAGE"
+                    ? discountBaseSubtotal * (discountValue / 100)
+                    : discountValue;
+        }
+        discountAmount = round2(discountAmount);
+        if (deliveryMethod === client_1.DeliveryMethod.LOCAL_DELIVERY) {
+            if (deliveryCost <= 0) {
+                throw new Error("El costo de envío debe ser mayor a 0");
+            }
+            if (deliveryLineSubtotal <= 0) {
+                throw new Error(`El envío debe venir cargado como item (${DELIVERY_SKU}) en la venta`);
+            }
+            if (Math.abs(deliveryLineSubtotal - deliveryCost) > 0.01) {
+                throw new Error(`El item de envío (${round2(deliveryLineSubtotal)}) no coincide con deliveryCost (${deliveryCost})`);
+            }
+        }
+        const total = round2(subtotal - discountAmount);
+        if (total < 0) {
+            throw new Error("El total no puede ser negativo");
+        }
+        const itemsWithProfit = applyDiscountAndProfitToItems(itemsWithPrices, discountBaseSubtotal, discountAmount);
+        const grossProfit = round2(itemsWithProfit.reduce((acc, item) => acc + item.profit, 0));
+        const paymentsForCalculation = data.payments !== undefined ? data.payments : getPaymentsFromExistingSale(sale);
+        const paymentState = calculatePaymentState({
+            total,
+            paymentMethod: data.paymentMethod ?? sale.paymentMethod,
+            payments: paymentsForCalculation,
+        });
+        if (paymentState.isAccountSale && !clientId) {
+            throw new Error("Para vender en cuenta corriente necesitás seleccionar un cliente");
+        }
+        const oldDebt = round2(Number(sale.accountDebtAmount ?? 0));
+        const newDebt = round2(paymentState.debtAmount);
+        const debtDelta = round2(newDebt - oldDebt);
+        if (debtDelta !== 0 && !clientId) {
+            throw new Error("Para ajustar deuda necesitás seleccionar cliente");
+        }
+        const oldStockLocation = normalizeStockLocation(sale.stockLocation ?? "LOCAL");
+        const sameStockLocation = oldStockLocation === stockLocation;
+        const oldStockLines = buildStockLines(sale.items.map(saleItemToResolved));
+        const newStockLines = buildStockLines(itemsWithProfit);
+        // En vez de revertir TODO el stock viejo y descontar TODO el stock nuevo
+        // (lo que generaba un ingreso + egreso completos en cada edición), sólo
+        // movemos el delta neto por producto: si una venta pasa de 2 a 4
+        // unidades, se genera un único egreso de 2 (no un ingreso de 2 + egreso de 4).
+        // Si cambia el depósito/local de la venta no se puede compensar el delta
+        // entre ubicaciones distintas, así que en ese caso sí se revierte/descuenta todo.
+        const { toDiscount, toRestore } = sameStockLocation
+            ? diffStockLines(oldStockLines, newStockLines)
+            : { toDiscount: newStockLines, toRestore: oldStockLines };
+        const isClientMovement = Boolean(sale.isWebSale);
+        const pendingAlerts = [];
+        const updated = await prisma_1.default.$transaction(async (tx) => {
+            await restoreStockLines(tx, toRestore, sale.userId ?? undefined, sale.id, sameStockLocation ? stockLocation : oldStockLocation, pendingAlerts, isClientMovement);
+            await validateStockAvailability(tx, toDiscount, stockLocation);
+            await tx.boxContent.deleteMany({
+                where: {
+                    saleItem: {
+                        saleId: sale.id,
+                    },
+                },
+            });
+            await tx.saleItem.deleteMany({
+                where: {
+                    saleId: sale.id,
+                },
+            });
+            if (debtDelta !== 0 && clientId) {
+                const currentClient = await tx.client.findUnique({
+                    where: { id: clientId },
+                    select: {
+                        id: true,
+                        currentBalance: true,
+                        isAccountEnabled: true,
+                        creditLimit: true,
+                    },
+                });
+                if (!currentClient)
+                    throw new Error("Cliente no encontrado");
+                if (!currentClient.isAccountEnabled && debtDelta > 0) {
+                    throw new Error("La cuenta corriente de este cliente está deshabilitada");
+                }
+                const previousBalance = round2(currentClient.currentBalance);
+                const newBalance = round2(Math.max(previousBalance + debtDelta, 0));
+                if (debtDelta > 0 &&
+                    currentClient.creditLimit !== null &&
+                    currentClient.creditLimit !== undefined &&
+                    currentClient.creditLimit > 0 &&
+                    newBalance > currentClient.creditLimit) {
+                    throw new Error(`La deuda supera el límite de crédito del cliente. Límite: ${currentClient.creditLimit}`);
+                }
+                await tx.client.update({
+                    where: { id: clientId },
+                    data: { currentBalance: newBalance },
+                });
+                await tx.accountMovement.create({
+                    data: {
+                        clientId,
+                        saleId: sale.id,
+                        userId: sale.userId ?? null,
+                        type: debtDelta > 0
+                            ? client_1.AccountMovementType.ADJUSTMENT_POSITIVE
+                            : client_1.AccountMovementType.ADJUSTMENT_NEGATIVE,
+                        amount: Math.abs(debtDelta),
+                        previousBalance,
+                        newBalance,
+                        paymentMethod: null,
+                        reference: sale.id,
+                        description: debtDelta > 0
+                            ? "Aumento de deuda por edición de venta"
+                            : "Reducción de deuda por edición de venta",
+                    },
+                });
+            }
+            const editedSale = await tx.sale.update({
+                where: { id: sale.id },
+                data: {
+                    clientId: clientId ?? null,
+                    businessLocationId,
+                    subtotal,
+                    total,
+                    grossProfit,
+                    discountType: discountType ?? null,
+                    discountValue: discountValue ?? null,
+                    paymentMethod: data.paymentMethod ?? sale.paymentMethod,
+                    receiptType: data.receiptType ?? sale.receiptType,
+                    stockLocation,
+                    deliveryMethod,
+                    deliveryStatus,
+                    deliveryAddressSnapshot: data.deliveryAddressSnapshot !== undefined
+                        ? data.deliveryAddressSnapshot
+                        : sale.deliveryAddressSnapshot,
+                    deliveryDistanceKm: data.deliveryDistanceKm !== undefined
+                        ? data.deliveryDistanceKm
+                        : sale.deliveryDistanceKm,
+                    deliveryPricePerKm: data.deliveryPricePerKm !== undefined
+                        ? data.deliveryPricePerKm
+                        : sale.deliveryPricePerKm,
+                    deliveryCost,
+                    transportName: data.transportName !== undefined ? data.transportName : sale.transportName,
+                    transportCuit: data.transportCuit !== undefined ? data.transportCuit : sale.transportCuit,
+                    packagesCount: data.packagesCount !== undefined ? data.packagesCount : sale.packagesCount,
+                    declaredValue: data.declaredValue !== undefined ? data.declaredValue : sale.declaredValue,
+                    isAccountSale: paymentState.isAccountSale,
+                    accountDebtAmount: newDebt,
+                    items: {
+                        create: itemsWithProfit.map(buildSaleItemCreateData),
+                    },
+                    payments: {
+                        deleteMany: {},
+                        create: paymentState.paymentsToPersist.map((payment) => ({
+                            method: payment.method,
+                            amount: payment.amount,
+                            reference: payment.reference ?? null,
+                            notes: payment.notes ?? null,
+                        })),
+                    },
+                },
+                include: buildSaleInclude(),
+            });
+            await discountStockLines(tx, toDiscount, sale.userId ?? undefined, sale.id, stockLocation, pendingAlerts, isClientMovement);
+            return editedSale;
+        }, {
+            timeout: 30000,
+            maxWait: 30000,
+        });
+        queueStockAlerts(pendingAlerts);
+        queueSalePdfGeneration(updated.id);
+        if (updated.status === client_1.SaleStatus.COMPLETED) {
+            await finance_service_1.financeService.registerIncomeFromSale(id);
+        }
+        return updated;
+    },
+    async updateStatus(id, status) {
+        const sale = await prisma_1.default.sale.findUnique({
+            where: {
+                id,
+            },
+            include: {
+                items: {
+                    include: {
+                        product: true,
+                        boxContents: {
+                            include: {
+                                product: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+        if (sale.status === status) {
+            return prisma_1.default.sale.findUnique({
+                where: {
+                    id,
+                },
+                include: {
+                    payments: true,
+                    businessLocation: true,
+                    items: {
+                        include: {
+                            product: true,
+                            boxContents: {
+                                include: {
+                                    product: true,
+                                },
+                            },
+                        },
+                    },
+                    user: true,
+                    client: true,
+                },
+            });
+        }
+        if (sale.status === client_1.SaleStatus.CANCELLED && status !== client_1.SaleStatus.CANCELLED) {
+            throw new Error("No se puede cambiar el estado de una venta cancelada");
+        }
+        const restoredStockLines = [];
+        const stockLocation = normalizeStockLocation(sale.stockLocation ?? "LOCAL");
+        const pendingAlerts = [];
+        if (status === client_1.SaleStatus.CANCELLED) {
+            const resolvedItems = sale.items.map((item) => ({
+                productId: item.productId,
+                productName: item.product?.name ?? "Producto",
+                productSku: item.product?.sku ?? null,
+                productType: item.product?.type,
+                saleUnit: item.product?.saleUnit,
+                isService: Boolean(item.product?.isService),
+                quantity: item.quantity,
+                quantityKg: item.quantityKg ?? null,
+                price: item.price,
+                priceType: item.priceType ?? client_1.SaleItemPriceType.PRICE,
+                subtotal: item.subtotal ?? item.price * (item.quantityKg ?? item.quantity),
+                purchasePriceSnapshot: item.purchasePriceSnapshot ?? 0,
+                costTotal: (item.purchasePriceSnapshot ?? 0) *
+                    (item.quantityKg ?? item.quantity),
+                profit: item.profit ?? 0,
+                components: item.boxContents?.map((box) => ({
+                    productId: box.productId,
+                    quantity: box.quantity ?? null,
+                    quantityKg: box.quantityKg ?? null,
+                })) ?? [],
+            }));
+            restoredStockLines.push(...buildStockLines(resolvedItems));
+        }
+        const updated = await prisma_1.default.$transaction(async (tx) => {
+            if (status === client_1.SaleStatus.CANCELLED) {
+                await restoreStockLines(tx, restoredStockLines, sale.userId ?? undefined, sale.id, stockLocation, pendingAlerts);
+                await reverseAccountDebtFromSale(tx, sale);
+            }
+            return tx.sale.update({
+                where: {
+                    id,
+                },
+                data: {
+                    status,
+                    ...(status === client_1.SaleStatus.CANCELLED
+                        ? { quotationExpiredAt: sale.quotationExpiredAt ?? new Date() }
+                        : {}),
+                    ...(status === client_1.SaleStatus.COMPLETED
+                        ? { quotationExpiredAt: null }
+                        : {}),
+                },
+                include: {
+                    payments: true,
+                    businessLocation: true,
+                    items: {
+                        include: {
+                            product: true,
+                            boxContents: {
+                                include: {
+                                    product: true,
+                                },
+                            },
+                        },
+                    },
+                    user: true,
+                    client: true,
+                },
+            });
+        }, {
+            timeout: 20000,
+            maxWait: 20000,
+        });
+        queueStockAlerts(pendingAlerts);
+        if (status === client_1.SaleStatus.COMPLETED) {
+            await finance_service_1.financeService.registerIncomeFromSale(id);
+            await productStats_service_1.productStatsService.createStatsFromSale(sale.items
+                .filter((item) => !item.product?.isService)
+                .map((item) => {
+                const saleUnit = item.product?.saleUnit;
+                return {
+                    productId: item.productId,
+                    quantity: saleUnit === client_1.SaleUnit.KG ? 0 : item.quantity,
+                    quantityKg: saleUnit === client_1.SaleUnit.KG ? item.quantityKg ?? 0 : undefined,
+                };
+            }));
+        }
+        return updated;
+    },
+    async generarNotaPedido(saleId) {
+        const sale = await prisma_1.default.sale.findUnique({
+            where: {
+                id: saleId,
+            },
+            include: {
+                payments: true,
+                businessLocation: true,
+                items: {
+                    include: {
+                        product: true,
+                        boxContents: {
+                            include: {
+                                product: true,
+                            },
+                        },
+                    },
+                },
+                client: true,
+            },
+        });
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+        const products = sale.items.map((item) => {
+            const saleUnit = item.product?.saleUnit;
+            const qty = saleUnit === client_1.SaleUnit.KG ? item.quantityKg ?? 0 : item.quantity;
+            return {
+                name: item.productNameSnapshot ??
+                    item.product?.name ??
+                    "Producto",
+                quantity: qty,
+                price: item.price,
+            };
+        });
+        const metodoPago = sale.payments?.length ? "MIXTO" : sale.paymentMethod;
+        await (0, generarReciboPDF_1.generarTicketPedidoPDF)({
+            saleId: sale.id,
+            products,
+            total: sale.total,
+            metodoPago,
+            nombreCliente: sale.client
+                ? `${sale.client.nombre} ${sale.client.apellido}`
+                : "A CONSUMIDOR FINAL",
+        });
+        return {
+            ok: true,
+        };
+    },
+    async generarCotizacion(saleId) {
+        let sale = await prisma_1.default.sale.findUnique({
+            where: {
+                id: saleId,
+            },
+            include: {
+                payments: true,
+                businessLocation: true,
+                items: {
+                    include: {
+                        product: true,
+                        boxContents: {
+                            include: {
+                                product: true,
+                            },
+                        },
+                    },
+                },
+                user: true,
+                client: true,
+            },
+        });
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+        if (sale.status !== client_1.SaleStatus.PENDING) {
+            throw new Error("Solo se puede descargar cotización de una venta pendiente");
+        }
+        if (!sale.quotationExpiresAt) {
+            sale = await prisma_1.default.sale.update({
+                where: {
+                    id: sale.id,
+                },
+                data: {
+                    quotationExpiresAt: addHours(new Date(), DEFAULT_QUOTATION_HOURS),
+                },
+                include: {
+                    payments: true,
+                    businessLocation: true,
+                    items: {
+                        include: {
+                            product: true,
+                            boxContents: {
+                                include: {
+                                    product: true,
+                                },
+                            },
+                        },
+                    },
+                    user: true,
+                    client: true,
+                },
+            });
+        }
+        const pdfBuffer = await (0, generarCotizacionPDF_1.generarCotizacionPDF)(sale);
+        return {
+            filename: `cotizacion-${sale.id}.pdf`,
+            buffer: pdfBuffer,
+        };
+    },
+    async generarComprobanteVenta(saleId) {
+        const sale = await prisma_1.default.sale.findUnique({
+            where: {
+                id: saleId,
+            },
+            include: {
+                items: {
+                    include: {
+                        product: true,
+                    },
+                },
+                user: true,
+                client: true,
+            },
+        });
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+        if (sale.status !== client_1.SaleStatus.COMPLETED) {
+            throw new Error("Solo se puede generar el comprobante de una venta confirmada");
+        }
+        if (sale.isInvoiced) {
+            throw new Error("Esta venta ya fue facturada, descargue la factura correspondiente");
+        }
+        const pdfBuffer = await (0, generarComprobanteVentaPDF_1.generarComprobanteVentaPDF)(sale);
+        return {
+            filename: `comprobante-${sale.id}.pdf`,
+            buffer: pdfBuffer,
+        };
+    },
+    async expirePendingQuotations(limit = 100) {
+        const now = new Date();
+        const expiredSales = await prisma_1.default.sale.findMany({
+            where: {
+                status: client_1.SaleStatus.PENDING,
+                quotationExpiresAt: {
+                    lte: now,
+                },
+                quotationExpiredAt: null,
+            },
+            select: {
+                id: true,
+                quotationExpiresAt: true,
+            },
+            take: limit,
+            orderBy: {
+                quotationExpiresAt: "asc",
+            },
+        });
+        const results = [];
+        for (const sale of expiredSales) {
+            try {
+                const updated = await this.updateStatus(sale.id, client_1.SaleStatus.CANCELLED);
+                results.push({
+                    id: sale.id,
+                    ok: true,
+                    status: updated?.status ?? client_1.SaleStatus.CANCELLED,
+                });
+            }
+            catch (error) {
+                results.push({
+                    id: sale.id,
+                    ok: false,
+                    error: error?.message ?? "Error desconocido",
+                });
+            }
+        }
+        return {
+            checkedAt: now,
+            expiredCount: expiredSales.length,
+            results,
+        };
+    },
+    async updatePaymentMethod(id, method) {
+        const sale = await prisma_1.default.sale.findUnique({
+            where: {
+                id,
+            },
+        });
+        if (!sale) {
+            throw new Error("Venta no encontrada");
+        }
+        return prisma_1.default.sale.update({
+            where: {
+                id,
+            },
+            data: {
+                paymentMethod: method,
+            },
+            include: {
+                payments: true,
+                businessLocation: true,
+                items: true,
+                user: true,
+                client: true,
+            },
+        });
+    },
+    async updatePayments(id, payments, setAsPrimary) {
+        const sale = await prisma_1.default.sale.findUnique({
+            where: { id },
+            include: {
+                payments: true,
+                accountMovements: true,
+            },
+        });
+        if (!sale)
+            throw new Error("Venta no encontrada");
+        if (sale.status === client_1.SaleStatus.CANCELLED) {
+            throw new Error("No se pueden modificar pagos de una venta cancelada");
+        }
+        const paymentState = calculatePaymentState({
+            total: sale.total,
+            paymentMethod: sale.paymentMethod,
+            payments,
+        });
+        if (paymentState.isAccountSale && !sale.clientId) {
+            throw new Error("Para dejar saldo en cuenta corriente la venta debe tener cliente");
+        }
+        const oldDebt = round2(Number(sale.accountDebtAmount ?? 0));
+        const newDebt = round2(paymentState.debtAmount);
+        const debtDelta = round2(newDebt - oldDebt);
+        const primary = payments[0]?.method ?? sale.paymentMethod;
+        const updatedSale = await prisma_1.default.$transaction(async (tx) => {
+            if (debtDelta !== 0 && sale.clientId) {
+                const client = await tx.client.findUnique({
+                    where: { id: sale.clientId },
+                    select: {
+                        id: true,
+                        currentBalance: true,
+                        isAccountEnabled: true,
+                        creditLimit: true,
+                    },
+                });
+                if (!client)
+                    throw new Error("Cliente no encontrado");
+                if (!client.isAccountEnabled && debtDelta > 0) {
+                    throw new Error("La cuenta corriente de este cliente está deshabilitada");
+                }
+                const previousBalance = round2(client.currentBalance);
+                const newBalance = round2(Math.max(previousBalance + debtDelta, 0));
+                if (debtDelta > 0 &&
+                    client.creditLimit !== null &&
+                    client.creditLimit !== undefined &&
+                    client.creditLimit > 0 &&
+                    newBalance > client.creditLimit) {
+                    throw new Error(`La deuda supera el límite de crédito del cliente. Límite: ${client.creditLimit}`);
+                }
+                await tx.client.update({
+                    where: { id: sale.clientId },
+                    data: { currentBalance: newBalance },
+                });
+                await tx.accountMovement.create({
+                    data: {
+                        clientId: sale.clientId,
+                        saleId: sale.id,
+                        userId: sale.userId ?? null,
+                        type: debtDelta > 0
+                            ? client_1.AccountMovementType.ADJUSTMENT_POSITIVE
+                            : client_1.AccountMovementType.ADJUSTMENT_NEGATIVE,
+                        amount: Math.abs(debtDelta),
+                        previousBalance,
+                        newBalance,
+                        paymentMethod: null,
+                        reference: sale.id,
+                        description: debtDelta > 0
+                            ? "Aumento de deuda por actualización de pagos"
+                            : "Reducción de deuda por actualización de pagos",
+                    },
+                });
+            }
+            return tx.sale.update({
+                where: { id },
+                data: {
+                    isAccountSale: paymentState.isAccountSale,
+                    accountDebtAmount: newDebt,
+                    payments: {
+                        deleteMany: {},
+                        create: paymentState.paymentsToPersist.map((payment) => ({
+                            method: payment.method,
+                            amount: payment.amount,
+                            reference: payment.reference ?? null,
+                            notes: payment.notes ?? null,
+                        })),
+                    },
+                    ...(setAsPrimary ? { paymentMethod: primary } : {}),
+                },
+                include: {
+                    payments: true,
+                    businessLocation: true,
+                    items: true,
+                    user: true,
+                    client: true,
+                    accountMovements: true,
+                },
+            });
+        });
+        if (updatedSale.status === client_1.SaleStatus.COMPLETED) {
+            await finance_service_1.financeService.registerIncomeFromSale(id);
+        }
+        return updatedSale;
+    },
+};
+//# sourceMappingURL=sale.service.js.map

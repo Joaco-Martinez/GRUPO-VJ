@@ -1,0 +1,651 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.purchaseService = void 0;
+const prisma_1 = __importDefault(require("../prisma"));
+const client_1 = require("@prisma/client");
+const alert_service_1 = __importDefault(require("./alert.service"));
+const dateAR_1 = require("../utils/dateAR");
+const simpleCache_1 = require("../utils/simpleCache");
+// Mismo prefijo que PRODUCTS_LIST_CACHE_PREFIX en product.service.ts. Las
+// compras modifican stock directo con tx.product.update (no pasan por
+// productService), así que ese cache no se invalidaba solo al recibir
+// o cancelar una compra.
+const PRODUCTS_LIST_CACHE_PREFIX = "products:list:";
+function toNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : NaN;
+}
+function roundMoney(value) {
+    return Number(value.toFixed(2));
+}
+function validateLocation(value) {
+    if (value === client_1.Location.LOCAL || value === client_1.Location.DEPOSITO)
+        return value;
+    return client_1.Location.DEPOSITO;
+}
+function validatePaymentMethod(value) {
+    if (!value)
+        return undefined;
+    if (Object.values(client_1.PaymentMethod).includes(value))
+        return value;
+    throw new Error("Método de pago inválido");
+}
+function parseDate(value) {
+    if (!value)
+        return new Date();
+    const parsed = (0, dateAR_1.parseDateInputAR)(value);
+    if (!parsed)
+        throw new Error("Fecha inválida");
+    return parsed;
+}
+exports.purchaseService = {
+    async getAll() {
+        return prisma_1.default.purchase.findMany({
+            orderBy: { date: "desc" },
+            include: {
+                user: { select: { id: true, name: true, email: true } },
+                finance: true,
+                items: {
+                    include: {
+                        product: { select: { id: true, name: true, sku: true, saleUnit: true } },
+                    },
+                },
+            },
+        });
+    },
+    async getById(id) {
+        const purchase = await prisma_1.default.purchase.findUnique({
+            where: { id },
+            include: {
+                user: { select: { id: true, name: true, email: true } },
+                finance: true,
+                items: { include: { product: true } },
+                stockMovements: {
+                    include: {
+                        product: { select: { id: true, name: true, sku: true, saleUnit: true } },
+                    },
+                },
+            },
+        });
+        if (!purchase)
+            throw new Error("Compra no encontrada");
+        return purchase;
+    },
+    async create(data, userId) {
+        if (!userId)
+            throw new Error("Falta userId para registrar la compra");
+        if (!Array.isArray(data.items) || data.items.length === 0) {
+            throw new Error("La compra debe tener al menos un producto");
+        }
+        const to = validateLocation(data.to);
+        const paymentMethod = validatePaymentMethod(data.paymentMethod);
+        const date = parseDate(data.date);
+        const createdPurchase = await prisma_1.default.$transaction(async (tx) => {
+            const purchase = await tx.purchase.create({
+                data: {
+                    providerName: data.providerName?.trim() || null,
+                    invoiceNumber: data.invoiceNumber?.trim() || null,
+                    description: data.description?.trim() || null,
+                    paymentMethod,
+                    to,
+                    date,
+                    userId,
+                    status: client_1.PurchaseStatus.COMPLETED,
+                    totalAmount: 0,
+                },
+            });
+            let totalAmount = 0;
+            const productIds = data.items.map((item) => {
+                if (!item.productId)
+                    throw new Error("Cada item debe tener productId");
+                return item.productId;
+            });
+            const products = await tx.product.findMany({
+                where: { id: { in: productIds } },
+            });
+            const productById = new Map(products.map((p) => [p.id, p]));
+            const movements = [];
+            const purchaseItems = [];
+            for (const item of data.items) {
+                const product = productById.get(item.productId);
+                if (!product)
+                    throw new Error(`Producto no encontrado: ${item.productId}`);
+                if (!product.isActive)
+                    throw new Error(`El producto "${product.name}" está inactivo`);
+                if (product.isService)
+                    throw new Error(`"${product.name}" es un servicio, no puede ingresar stock`);
+                if (product.type === client_1.ProductType.COMPUESTO) {
+                    throw new Error(`No se puede comprar stock directo de "${product.name}" porque es un producto compuesto`);
+                }
+                const rawUnitCost = item.unitCost !== undefined && item.unitCost !== null && item.unitCost !== ""
+                    ? item.unitCost
+                    : product.purchasePrice ?? 0;
+                const unitCost = toNumber(rawUnitCost);
+                if (!Number.isFinite(unitCost) || unitCost < 0) {
+                    throw new Error(`El costo unitario de "${product.name}" debe ser válido`);
+                }
+                let quantity = null;
+                let quantityKg = null;
+                let subtotal = 0;
+                if (product.saleUnit === client_1.SaleUnit.UNIT) {
+                    const qty = toNumber(item.quantity);
+                    if (!Number.isFinite(qty) || qty <= 0)
+                        throw new Error(`Cantidad inválida para "${product.name}"`);
+                    quantity = Math.trunc(qty);
+                    subtotal = roundMoney(quantity * unitCost);
+                    await tx.product.update({
+                        where: { id: product.id },
+                        data: {
+                            ...(to === client_1.Location.LOCAL
+                                ? { stockLocal: { increment: quantity } }
+                                : { stockDeposito: { increment: quantity } }),
+                            purchasePrice: unitCost,
+                        },
+                    });
+                    movements.push({
+                        productId: product.id,
+                        userId,
+                        purchaseId: purchase.id,
+                        type: client_1.MovementType.INGRESS,
+                        from: null,
+                        to,
+                        quantity,
+                        reason: "Compra de mercadería",
+                        reference: `[purchase:${purchase.id}]`,
+                    });
+                }
+                if (product.saleUnit === client_1.SaleUnit.KG) {
+                    const qtyKg = toNumber(item.quantityKg);
+                    if (!Number.isFinite(qtyKg) || qtyKg <= 0)
+                        throw new Error(`Cantidad KG inválida para "${product.name}"`);
+                    quantityKg = qtyKg;
+                    subtotal = roundMoney(quantityKg * unitCost);
+                    await tx.product.update({
+                        where: { id: product.id },
+                        data: {
+                            ...(to === client_1.Location.LOCAL
+                                ? { stockLocalKg: { increment: quantityKg } }
+                                : { stockDepositoKg: { increment: quantityKg } }),
+                            purchasePrice: unitCost,
+                        },
+                    });
+                    movements.push({
+                        productId: product.id,
+                        userId,
+                        purchaseId: purchase.id,
+                        type: client_1.MovementType.INGRESS,
+                        from: null,
+                        to,
+                        quantityKg,
+                        reason: "Compra de mercadería",
+                        reference: `[purchase:${purchase.id}]`,
+                    });
+                }
+                totalAmount += subtotal;
+                purchaseItems.push({
+                    purchaseId: purchase.id,
+                    productId: product.id,
+                    quantity,
+                    quantityKg,
+                    unitCost,
+                    subtotal,
+                    productNameSnapshot: product.name,
+                    productSkuSnapshot: product.sku,
+                });
+            }
+            if (movements.length > 0) {
+                await tx.stockMovement.createMany({ data: movements });
+            }
+            if (purchaseItems.length > 0) {
+                await tx.purchaseItem.createMany({ data: purchaseItems });
+            }
+            const total = roundMoney(totalAmount);
+            const finance = await tx.finance.create({
+                data: {
+                    type: client_1.FinanceType.EGRESO,
+                    amount: total,
+                    category: client_1.CategoryFinance.CompraMercaderia,
+                    paymentMethod,
+                    description: `[purchase:${purchase.id}] Compra de mercadería${data.providerName ? ` - ${data.providerName}` : ""}`,
+                    date,
+                },
+            });
+            return tx.purchase.update({
+                where: { id: purchase.id },
+                data: { totalAmount: total, financeId: finance.id },
+                include: {
+                    finance: true,
+                    items: {
+                        include: {
+                            product: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    sku: true,
+                                    saleUnit: true,
+                                    stockLocal: true,
+                                    stockDeposito: true,
+                                    stockLocalKg: true,
+                                    stockDepositoKg: true,
+                                    purchasePrice: true,
+                                    isService: true,
+                                    isActive: true,
+                                    minStock: true,
+                                    minStockKg: true,
+                                    minStockDeposito: true,
+                                    minStockDepositoKg: true,
+                                },
+                            },
+                        },
+                    },
+                    stockMovements: true,
+                },
+            });
+        });
+        (0, simpleCache_1.invalidateCache)(PRODUCTS_LIST_CACHE_PREFIX);
+        for (const item of createdPurchase.items) {
+            await alert_service_1.default
+                .checkProductStockFromData(item.product)
+                .catch(() => undefined);
+        }
+        return createdPurchase;
+    },
+    async updateProvider(id, data) {
+        const providerName = data.providerName?.trim() || null;
+        const updatedPurchase = await prisma_1.default.$transaction(async (tx) => {
+            const purchase = await tx.purchase.findUnique({
+                where: { id },
+                select: { id: true, financeId: true },
+            });
+            if (!purchase)
+                throw new Error("Compra no encontrada");
+            const updated = await tx.purchase.update({
+                where: { id },
+                data: { providerName },
+                include: {
+                    user: { select: { id: true, name: true, email: true } },
+                    finance: true,
+                    items: {
+                        include: {
+                            product: { select: { id: true, name: true, sku: true, saleUnit: true } },
+                        },
+                    },
+                },
+            });
+            if (purchase.financeId) {
+                await tx.finance.update({
+                    where: { id: purchase.financeId },
+                    data: {
+                        description: `[purchase:${purchase.id}] Compra de mercadería${providerName ? ` - ${providerName}` : ""}`,
+                    },
+                });
+            }
+            return updated;
+        });
+        return updatedPurchase;
+    },
+    async update(id, data, userId) {
+        if (!userId)
+            throw new Error("Falta userId para editar la compra");
+        if (!Array.isArray(data.items) || data.items.length === 0) {
+            throw new Error("La compra debe tener al menos un producto");
+        }
+        const paymentMethod = validatePaymentMethod(data.paymentMethod);
+        const date = parseDate(data.date);
+        const updatedPurchase = await prisma_1.default.$transaction(async (tx) => {
+            const purchase = await tx.purchase.findUnique({
+                where: { id },
+                include: { items: true },
+            });
+            if (!purchase)
+                throw new Error("Compra no encontrada");
+            if (purchase.status === client_1.PurchaseStatus.CANCELLED) {
+                throw new Error("No se puede editar una compra cancelada");
+            }
+            const to = purchase.to;
+            const oldQtyByProduct = new Map();
+            for (const item of purchase.items) {
+                oldQtyByProduct.set(item.productId, {
+                    quantity: item.quantity ?? 0,
+                    quantityKg: item.quantityKg ?? 0,
+                });
+            }
+            const newProductIds = data.items.map((item) => {
+                if (!item.productId)
+                    throw new Error("Cada item debe tener productId");
+                return item.productId;
+            });
+            const allProductIds = Array.from(new Set([...newProductIds, ...oldQtyByProduct.keys()]));
+            const products = await tx.product.findMany({ where: { id: { in: allProductIds } } });
+            const productById = new Map(products.map((p) => [p.id, p]));
+            const movements = [];
+            const purchaseItems = [];
+            let totalAmount = 0;
+            for (const item of data.items) {
+                const product = productById.get(item.productId);
+                if (!product)
+                    throw new Error(`Producto no encontrado: ${item.productId}`);
+                if (!product.isActive)
+                    throw new Error(`El producto "${product.name}" está inactivo`);
+                if (product.isService)
+                    throw new Error(`"${product.name}" es un servicio, no puede ingresar stock`);
+                if (product.type === client_1.ProductType.COMPUESTO) {
+                    throw new Error(`No se puede comprar stock directo de "${product.name}" porque es un producto compuesto`);
+                }
+                const rawUnitCost = item.unitCost !== undefined && item.unitCost !== null && item.unitCost !== ""
+                    ? item.unitCost
+                    : product.purchasePrice ?? 0;
+                const unitCost = toNumber(rawUnitCost);
+                if (!Number.isFinite(unitCost) || unitCost < 0) {
+                    throw new Error(`El costo unitario de "${product.name}" debe ser válido`);
+                }
+                const old = oldQtyByProduct.get(item.productId) ?? { quantity: 0, quantityKg: 0 };
+                let quantity = null;
+                let quantityKg = null;
+                let subtotal = 0;
+                if (product.saleUnit === client_1.SaleUnit.UNIT) {
+                    const qty = toNumber(item.quantity);
+                    if (!Number.isFinite(qty) || qty <= 0)
+                        throw new Error(`Cantidad inválida para "${product.name}"`);
+                    quantity = Math.trunc(qty);
+                    subtotal = roundMoney(quantity * unitCost);
+                    const delta = quantity - old.quantity;
+                    if (delta !== 0) {
+                        if (delta < 0) {
+                            const currentStock = to === client_1.Location.LOCAL ? product.stockLocal : product.stockDeposito;
+                            if (currentStock < Math.abs(delta)) {
+                                throw new Error(`No hay stock suficiente de "${product.name}" para reducir la cantidad de esta compra`);
+                            }
+                        }
+                        await tx.product.update({
+                            where: { id: product.id },
+                            data: {
+                                ...(to === client_1.Location.LOCAL
+                                    ? { stockLocal: { increment: delta } }
+                                    : { stockDeposito: { increment: delta } }),
+                            },
+                        });
+                        movements.push({
+                            productId: product.id,
+                            userId,
+                            purchaseId: purchase.id,
+                            type: delta > 0 ? client_1.MovementType.INGRESS : client_1.MovementType.ADJUSTMENT,
+                            from: delta > 0 ? null : to,
+                            to: delta > 0 ? to : null,
+                            quantity: Math.abs(delta),
+                            reason: "Modificación de compra",
+                            reference: `[purchase-edit:${purchase.id}]`,
+                        });
+                    }
+                }
+                if (product.saleUnit === client_1.SaleUnit.KG) {
+                    const qtyKg = toNumber(item.quantityKg);
+                    if (!Number.isFinite(qtyKg) || qtyKg <= 0)
+                        throw new Error(`Cantidad KG inválida para "${product.name}"`);
+                    quantityKg = qtyKg;
+                    subtotal = roundMoney(quantityKg * unitCost);
+                    const deltaKg = roundMoney(quantityKg - old.quantityKg);
+                    if (deltaKg !== 0) {
+                        if (deltaKg < 0) {
+                            const currentStockKg = to === client_1.Location.LOCAL ? product.stockLocalKg : product.stockDepositoKg;
+                            if (currentStockKg < Math.abs(deltaKg)) {
+                                throw new Error(`No hay stock KG suficiente de "${product.name}" para reducir la cantidad de esta compra`);
+                            }
+                        }
+                        await tx.product.update({
+                            where: { id: product.id },
+                            data: {
+                                ...(to === client_1.Location.LOCAL
+                                    ? { stockLocalKg: { increment: deltaKg } }
+                                    : { stockDepositoKg: { increment: deltaKg } }),
+                            },
+                        });
+                        movements.push({
+                            productId: product.id,
+                            userId,
+                            purchaseId: purchase.id,
+                            type: deltaKg > 0 ? client_1.MovementType.INGRESS : client_1.MovementType.ADJUSTMENT,
+                            from: deltaKg > 0 ? null : to,
+                            to: deltaKg > 0 ? to : null,
+                            quantityKg: Math.abs(deltaKg),
+                            reason: "Modificación de compra",
+                            reference: `[purchase-edit:${purchase.id}]`,
+                        });
+                    }
+                }
+                totalAmount += subtotal;
+                purchaseItems.push({
+                    purchaseId: purchase.id,
+                    productId: product.id,
+                    quantity,
+                    quantityKg,
+                    unitCost,
+                    subtotal,
+                    productNameSnapshot: product.name,
+                    productSkuSnapshot: product.sku,
+                });
+            }
+            // Productos que estaban en la compra original y fueron quitados: revertir su stock por completo.
+            for (const [productId, old] of oldQtyByProduct.entries()) {
+                if (newProductIds.includes(productId))
+                    continue;
+                const product = productById.get(productId);
+                if (!product)
+                    continue;
+                if (old.quantity > 0) {
+                    const currentStock = to === client_1.Location.LOCAL ? product.stockLocal : product.stockDeposito;
+                    if (currentStock < old.quantity) {
+                        throw new Error(`No hay stock suficiente de "${product.name}" para quitarlo de esta compra`);
+                    }
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: to === client_1.Location.LOCAL
+                            ? { stockLocal: { decrement: old.quantity } }
+                            : { stockDeposito: { decrement: old.quantity } },
+                    });
+                    movements.push({
+                        productId,
+                        userId,
+                        purchaseId: purchase.id,
+                        type: client_1.MovementType.ADJUSTMENT,
+                        from: to,
+                        to: null,
+                        quantity: old.quantity,
+                        reason: "Modificación de compra",
+                        reference: `[purchase-edit:${purchase.id}]`,
+                    });
+                }
+                if (old.quantityKg > 0) {
+                    const currentStockKg = to === client_1.Location.LOCAL ? product.stockLocalKg : product.stockDepositoKg;
+                    if (currentStockKg < old.quantityKg) {
+                        throw new Error(`No hay stock KG suficiente de "${product.name}" para quitarlo de esta compra`);
+                    }
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: to === client_1.Location.LOCAL
+                            ? { stockLocalKg: { decrement: old.quantityKg } }
+                            : { stockDepositoKg: { decrement: old.quantityKg } },
+                    });
+                    movements.push({
+                        productId,
+                        userId,
+                        purchaseId: purchase.id,
+                        type: client_1.MovementType.ADJUSTMENT,
+                        from: to,
+                        to: null,
+                        quantityKg: old.quantityKg,
+                        reason: "Modificación de compra",
+                        reference: `[purchase-edit:${purchase.id}]`,
+                    });
+                }
+            }
+            await tx.purchaseItem.deleteMany({ where: { purchaseId: purchase.id } });
+            if (purchaseItems.length > 0) {
+                await tx.purchaseItem.createMany({ data: purchaseItems });
+            }
+            if (movements.length > 0) {
+                await tx.stockMovement.createMany({ data: movements });
+            }
+            const total = roundMoney(totalAmount);
+            const providerName = data.providerName !== undefined ? data.providerName?.trim() || null : purchase.providerName;
+            const invoiceNumber = data.invoiceNumber !== undefined ? data.invoiceNumber?.trim() || null : purchase.invoiceNumber;
+            const description = data.description !== undefined ? data.description?.trim() || null : purchase.description;
+            if (purchase.financeId) {
+                await tx.finance.update({
+                    where: { id: purchase.financeId },
+                    data: {
+                        amount: total,
+                        paymentMethod: paymentMethod ?? purchase.paymentMethod,
+                        date,
+                        description: `[purchase:${purchase.id}] Compra de mercadería${providerName ? ` - ${providerName}` : ""}`,
+                    },
+                });
+            }
+            return tx.purchase.update({
+                where: { id: purchase.id },
+                data: {
+                    providerName,
+                    invoiceNumber,
+                    description,
+                    paymentMethod: paymentMethod ?? purchase.paymentMethod,
+                    date,
+                    totalAmount: total,
+                },
+                include: {
+                    user: { select: { id: true, name: true, email: true } },
+                    finance: true,
+                    items: {
+                        include: {
+                            product: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    sku: true,
+                                    saleUnit: true,
+                                    stockLocal: true,
+                                    stockDeposito: true,
+                                    stockLocalKg: true,
+                                    stockDepositoKg: true,
+                                    purchasePrice: true,
+                                    isService: true,
+                                    isActive: true,
+                                    minStock: true,
+                                    minStockKg: true,
+                                    minStockDeposito: true,
+                                    minStockDepositoKg: true,
+                                },
+                            },
+                        },
+                    },
+                    stockMovements: true,
+                },
+            });
+        });
+        (0, simpleCache_1.invalidateCache)(PRODUCTS_LIST_CACHE_PREFIX);
+        for (const item of updatedPurchase.items) {
+            await alert_service_1.default
+                .checkProductStockFromData(item.product)
+                .catch(() => undefined);
+        }
+        return updatedPurchase;
+    },
+    async cancel(id, userId) {
+        if (!userId)
+            throw new Error("Falta userId para cancelar la compra");
+        const cancelled = await prisma_1.default.$transaction(async (tx) => {
+            const purchase = await tx.purchase.findUnique({
+                where: { id },
+                include: { items: { include: { product: true } }, finance: true },
+            });
+            if (!purchase)
+                throw new Error("Compra no encontrada");
+            if (purchase.status === client_1.PurchaseStatus.CANCELLED)
+                throw new Error("La compra ya está cancelada");
+            for (const item of purchase.items) {
+                const product = item.product;
+                if (product.saleUnit === client_1.SaleUnit.UNIT) {
+                    const qty = Number(item.quantity || 0);
+                    if (purchase.to === client_1.Location.LOCAL && product.stockLocal < qty) {
+                        throw new Error(`No hay stock local suficiente para revertir "${product.name}"`);
+                    }
+                    if (purchase.to === client_1.Location.DEPOSITO && product.stockDeposito < qty) {
+                        throw new Error(`No hay stock en depósito suficiente para revertir "${product.name}"`);
+                    }
+                    await tx.product.update({
+                        where: { id: product.id },
+                        data: purchase.to === client_1.Location.LOCAL
+                            ? { stockLocal: { decrement: qty } }
+                            : { stockDeposito: { decrement: qty } },
+                    });
+                    await tx.stockMovement.create({
+                        data: {
+                            productId: product.id,
+                            userId,
+                            purchaseId: purchase.id,
+                            type: client_1.MovementType.ADJUSTMENT,
+                            from: purchase.to,
+                            to: null,
+                            quantity: qty,
+                            reason: "Cancelación de compra de mercadería",
+                            reference: `[purchase-cancel:${purchase.id}]`,
+                        },
+                    });
+                }
+                if (product.saleUnit === client_1.SaleUnit.KG) {
+                    const qtyKg = Number(item.quantityKg || 0);
+                    if (purchase.to === client_1.Location.LOCAL && product.stockLocalKg < qtyKg) {
+                        throw new Error(`No hay stock local KG suficiente para revertir "${product.name}"`);
+                    }
+                    if (purchase.to === client_1.Location.DEPOSITO && product.stockDepositoKg < qtyKg) {
+                        throw new Error(`No hay stock en depósito KG suficiente para revertir "${product.name}"`);
+                    }
+                    await tx.product.update({
+                        where: { id: product.id },
+                        data: purchase.to === client_1.Location.LOCAL
+                            ? { stockLocalKg: { decrement: qtyKg } }
+                            : { stockDepositoKg: { decrement: qtyKg } },
+                    });
+                    await tx.stockMovement.create({
+                        data: {
+                            productId: product.id,
+                            userId,
+                            purchaseId: purchase.id,
+                            type: client_1.MovementType.ADJUSTMENT,
+                            from: purchase.to,
+                            to: null,
+                            quantityKg: qtyKg,
+                            reason: "Cancelación de compra de mercadería",
+                            reference: `[purchase-cancel:${purchase.id}]`,
+                        },
+                    });
+                }
+            }
+            await tx.finance.create({
+                data: {
+                    type: client_1.FinanceType.INGRESO,
+                    amount: purchase.totalAmount,
+                    category: client_1.CategoryFinance.CompraMercaderia,
+                    paymentMethod: purchase.paymentMethod,
+                    description: `[purchase-cancel:${purchase.id}] Reversión de compra de mercadería`,
+                    date: new Date(),
+                },
+            });
+            return tx.purchase.update({
+                where: { id: purchase.id },
+                data: { status: client_1.PurchaseStatus.CANCELLED },
+                include: { finance: true, items: { include: { product: true } }, stockMovements: true },
+            });
+        });
+        (0, simpleCache_1.invalidateCache)(PRODUCTS_LIST_CACHE_PREFIX);
+        for (const item of cancelled.items) {
+            await alert_service_1.default
+                .checkProductStockFromData(item.product)
+                .catch(() => undefined);
+        }
+        return cancelled;
+    },
+};
+//# sourceMappingURL=purchase.service.js.map

@@ -6,13 +6,18 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-10-24-descontar-saldo-a-favor';
+const WHATS_NEW_VERSION = '2026-10-24-saldo-a-favor-y-compras';
 
 const WHATS_NEW_ITEMS = [
   {
     title: 'Saldo a favor: se descuenta desde el POS',
     description:
       'Al elegir en el POS un cliente con plata a favor aparece el aviso con los botones "Descontar" y "No descontar". Si no elegís, al finalizar la venta te pregunta. Si lo descontás, el saldo se resta de lo que hay que cobrar (no hace falta usar cuenta corriente) y el ticket y el comprobante muestran "Descuento saldo a favor" y el importe "A pagar". Funciona aunque el cliente tenga la cuenta corriente desactivada, siempre que el saldo cubra lo descontado.',
+  },
+  {
+    title: 'Compras: editar el costo con punto o coma',
+    description:
+      'Al editar una compra desde Compras > Historial, el costo (y los kg) ya no se borran al escribir un punto o una coma. Podés usar cualquiera de los dos como separador de decimales: por ejemplo 1500,50 o 1500.50. El valor queda guardado al salir del campo.',
   },
   {
     title: 'Envío en ventas de consumidor final',

@@ -1,7 +1,7 @@
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
-import { getAccountBalanceText, getPaymentLines } from "./salePaymentSummary";
+import { getAccountBalanceText, getCreditApplied, getPaymentLines } from "./salePaymentSummary";
 
 type ComprobanteVentaSale = {
   id: string;
@@ -630,7 +630,9 @@ function drawTotals(
 ) {
   const x = PAGE.marginX;
 
-  if (y + 120 > PAGE.bottom) {
+  const creditApplied = getCreditApplied(sale);
+
+  if (y + (creditApplied > 0 ? 170 : 120) > PAGE.bottom) {
     doc.addPage({ size: "A4", margin: 0 });
     drawPageBackground(doc);
     drawNotFiscalBadge(doc);
@@ -734,6 +736,37 @@ function drawTotals(
       width: 134,
       align: "right",
     });
+
+  if (creditApplied > 0) {
+    const creditY = totalBoxY + 56;
+
+    doc
+      .fillColor(C.muted)
+      .font("Helvetica")
+      .fontSize(10.5)
+      .text("Saldo a favor aplicado", boxX, creditY, { width: 140, align: "left" });
+
+    doc
+      .fillColor(C.black)
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .text(`- ${money(creditApplied)}`, boxX + 120, creditY, { width: 120, align: "right" });
+
+    doc
+      .fillColor(C.muted)
+      .font("Helvetica")
+      .fontSize(10.5)
+      .text("A pagar", boxX, creditY + 22, { width: 100, align: "left" });
+
+    doc
+      .fillColor(C.black)
+      .font("Helvetica-Bold")
+      .fontSize(12)
+      .text(money(Math.max(Number(sale.total || 0) - creditApplied, 0)), boxX + 120, creditY + 22, {
+        width: 120,
+        align: "right",
+      });
+  }
 }
 
 function drawFooter(doc: PDFKit.PDFDocument, page: number, totalPages: number) {

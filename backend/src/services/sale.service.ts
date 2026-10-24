@@ -1038,12 +1038,14 @@ async function createAccountDebtMovement(
 
   if (!client) throw new Error("Cliente no encontrado");
 
-  if (!client.isAccountEnabled) {
-    throw new Error("La cuenta corriente de este cliente está deshabilitada");
-  }
-
   const previousBalance = round2(client.currentBalance);
   const newBalance = round2(previousBalance + debtAmount);
+
+  // Con la cuenta deshabilitada solo se permite si el saldo a favor cubre
+  // todo (no queda deuda real).
+  if (!client.isAccountEnabled && newBalance > 0) {
+    throw new Error("La cuenta corriente de este cliente está deshabilitada");
+  }
 
   if (
     client.creditLimit !== null &&
@@ -2118,13 +2120,13 @@ export const saleService = {
 
           if (!currentClient) throw new Error("Cliente no encontrado");
 
-          if (!currentClient.isAccountEnabled && debtDelta > 0) {
-            throw new Error("La cuenta corriente de este cliente está deshabilitada");
-          }
-
           const previousBalance = round2(currentClient.currentBalance);
           balanceBeforeDebt = previousBalance;
           const newBalance = round2(previousBalance + debtDelta);
+
+          if (!currentClient.isAccountEnabled && debtDelta > 0 && newBalance > 0) {
+            throw new Error("La cuenta corriente de este cliente está deshabilitada");
+          }
 
           if (
             debtDelta > 0 &&
@@ -2746,13 +2748,13 @@ export const saleService = {
 
         if (!client) throw new Error("Cliente no encontrado");
 
-        if (!client.isAccountEnabled && debtDelta > 0) {
-          throw new Error("La cuenta corriente de este cliente está deshabilitada");
-        }
-
         const previousBalance = round2(client.currentBalance);
         const newBalance = round2(previousBalance + debtDelta);
         balanceBeforeDebt = previousBalance;
+
+        if (!client.isAccountEnabled && debtDelta > 0 && newBalance > 0) {
+          throw new Error("La cuenta corriente de este cliente está deshabilitada");
+        }
 
         if (
           debtDelta > 0 &&

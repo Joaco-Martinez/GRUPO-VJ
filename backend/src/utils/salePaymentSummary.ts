@@ -41,6 +41,15 @@ export function getPaymentLineLabel(payment: PaymentLike) {
   return getPaymentMethodLabel(payment.method);
 }
 
+// Saldo a favor del cliente usado para pagar esta venta (no incluye abonos).
+export function getCreditApplied(sale: { payments?: PaymentLike[] | null }) {
+  const amount = (sale.payments ?? [])
+    .filter((p) => getPaymentLineLabel(p) === "Saldo a favor aplicado")
+    .reduce((acc, p) => acc + Number(p.amount || 0), 0);
+
+  return Math.round(amount * 100) / 100;
+}
+
 export function getPaymentLines(sale: {
   payments?: PaymentLike[] | null;
   paymentMethod?: string | null;

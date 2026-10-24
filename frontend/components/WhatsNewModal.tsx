@@ -6,18 +6,18 @@ import { Sparkles, X } from 'lucide-react';
 
 const WHATS_NEW_STORAGE_KEY = 'grupo-vj-whats-new-seen';
 // Cambiar este valor cada vez que haya novedades nuevas para volver a mostrar el cartel.
-const WHATS_NEW_VERSION = '2026-10-22-envio-manual-editar-venta';
+const WHATS_NEW_VERSION = '2026-10-24-descontar-saldo-a-favor';
 
 const WHATS_NEW_ITEMS = [
+  {
+    title: 'Saldo a favor: se descuenta desde el POS',
+    description:
+      'Al elegir en el POS un cliente con plata a favor aparece el aviso con los botones "Descontar" y "No descontar". Si no elegís, al finalizar la venta te pregunta. Si lo descontás, el saldo se resta de lo que hay que cobrar (no hace falta usar cuenta corriente) y el ticket y el comprobante muestran "Descuento saldo a favor" y el importe "A pagar". Funciona aunque el cliente tenga la cuenta corriente desactivada, siempre que el saldo cubra lo descontado.',
+  },
   {
     title: 'Envío en ventas de consumidor final',
     description:
       'Al editar una venta de consumidor final desde Ventas > Editar, ahora se puede agregar o cambiar el envío. Como no hay cliente para calcular por km, se carga a mano: escribís el costo de envío y, si querés, la dirección de entrega. Para sacarlo, dejá el costo en 0 o tocá "Quitar envío". Las ventas con cliente siguen calculando el envío por km como siempre.',
-  },
-  {
-    title: 'Saldo a favor: aviso en el POS',
-    description:
-      'Al elegir en el POS un cliente que tiene plata a favor, aparece el aviso "Este cliente tiene $X a favor". Si tiene la cuenta corriente activada, el saldo se descuenta solo cuando dejás la venta (o una parte) en cuenta corriente; si cobrás todo en efectivo u otro medio, el saldo no se usa y queda guardado. Si la cuenta está desactivada, el aviso lo indica: el saldo no se puede aplicar.',
   },
   {
     title: 'Saldo a favor en el ticket y el comprobante',

@@ -92,8 +92,10 @@ type ConfirmState = {
   title: string;
   message: string;
   confirmText?: string;
+  cancelText?: string;
   danger?: boolean;
   onConfirm: () => Promise<void> | void;
+  onCancel?: () => void;
 } | null;
 
 type PendingProductAdd = {
@@ -446,6 +448,8 @@ export default function POSPage() {
   const [discountValue, setDiscountValue] = useState("");
 
   const [paymentMode, setPaymentMode] = useState<"single" | "multi">("single");
+  // Saldo a favor del cliente: null = todavía no se eligió (se pregunta al finalizar).
+  const [useClientCredit, setUseClientCredit] = useState<boolean | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("EFECTIVO");
   const [payments, setPayments] = useState<SalePayment[]>([
     { method: "EFECTIVO", amount: 0 },
@@ -679,6 +683,7 @@ export default function POSPage() {
     const isPickingClientForPendingProduct = Boolean(pending && clientGateMode === "picker");
 
     setClientId(nextClientId);
+    setUseClientCredit(null);
     setClientSearch(nextClient ? clientName(nextClient) : "");
     setClientSuggestionsOpen(false);
     setDeliveryCalculation(null);
@@ -1243,13 +1248,26 @@ export default function POSPage() {
         : 0;
 
   const total = Math.max(0, productsSubtotal - discount + deliveryCostForTotal);
-  const paid =
-    paymentMode === "multi"
-      ? payments.filter((p) => p.method !== "CUENTA_CORRIENTE").reduce((a, p) => a + num(p.amount), 0)
-      : paymentMethod === "CUENTA_CORRIENTE"
-        ? 0
-        : total;
-  const debt = Math.max(0, total - paid);
+  const clientCredit =
+    selectedClient && num(selectedClient.currentBalance) < 0 ? -num(selectedClient.currentBalance) : 0;
+
+  // El saldo a favor se descuenta de lo que hay que cobrar (el total de la
+  // venta no cambia): se manda como parte en cuenta corriente y el backend
+  // la cubre con el saldo, quedando como "Saldo a favor aplicado".
+  const getCreditPlan = (applyCredit: boolean) => {
+    const creditApplied = applyCredit ? Math.round(Math.min(clientCredit, total) * 100) / 100 : 0;
+    const amountDue = Math.max(0, total - creditApplied);
+    const paid =
+      paymentMode === "multi"
+        ? payments.filter((p) => p.method !== "CUENTA_CORRIENTE").reduce((a, p) => a + num(p.amount), 0)
+        : paymentMethod === "CUENTA_CORRIENTE"
+          ? 0
+          : amountDue;
+
+    return { creditApplied, amountDue, debt: Math.max(0, amountDue - paid) };
+  };
+
+  const { creditApplied, amountDue, debt } = getCreditPlan(useClientCredit === true);
 
   const validateCartStock = () => {
     for (const item of cart) {
@@ -1319,7 +1337,36 @@ export default function POSPage() {
     return true;
   };
 
-  const submitSale = async (status: "COMPLETED" | "PENDING" = "COMPLETED") => {
+  const buildSalePayments = (applyCredit: boolean) => {
+    const plan = getCreditPlan(applyCredit);
+
+    if (paymentMode === "multi") {
+      const lines = payments
+        .filter((p) => p.amount > 0 || p.method === "CUENTA_CORRIENTE")
+        .map((p) => ({
+          method: p.method,
+          amount: p.method === "CUENTA_CORRIENTE" ? plan.debt + plan.creditApplied : num(p.amount),
+          reference: p.reference,
+          notes: p.notes,
+        }));
+
+      if (plan.creditApplied > 0 && !lines.some((p) => p.method === "CUENTA_CORRIENTE")) {
+        lines.push({ method: "CUENTA_CORRIENTE", amount: plan.creditApplied, reference: undefined, notes: undefined });
+      }
+
+      return lines.filter((p) => p.amount > 0);
+    }
+
+    // Todo en cuenta corriente: el backend ya usa el saldo a favor solo.
+    if (plan.creditApplied <= 0 || paymentMethod === "CUENTA_CORRIENTE") return undefined;
+
+    return [
+      ...(plan.amountDue > 0 ? [{ method: paymentMethod, amount: plan.amountDue }] : []),
+      { method: "CUENTA_CORRIENTE" as PaymentMethod, amount: plan.creditApplied },
+    ];
+  };
+
+  const submitSale = async (status: "COMPLETED" | "PENDING" = "COMPLETED", applyCredit = useClientCredit === true) => {
     if (!validateSale()) return;
 
     setSubmitting(true);
@@ -1373,17 +1420,7 @@ export default function POSPage() {
               ]
             : []),
         ],
-        payments:
-          paymentMode === "multi"
-            ? payments
-                .filter((p) => p.amount > 0 || p.method === "CUENTA_CORRIENTE")
-                .map((p) => ({
-                  method: p.method,
-                  amount: p.method === "CUENTA_CORRIENTE" ? debt : num(p.amount),
-                  reference: p.reference,
-                  notes: p.notes,
-                }))
-            : undefined,
+        payments: buildSalePayments(applyCredit),
       };
 
       console.log("🧾 Payload venta POS:", payload);
@@ -1391,6 +1428,7 @@ export default function POSPage() {
 
       setCart([]);
       setPayments([{ method: "EFECTIVO", amount: 0 }]);
+      setUseClientCredit(null);
       setDeliveryMode("PICKUP");
       setDeliveryCalculation(null);
       setManualDeliveryCost("");
@@ -1416,20 +1454,48 @@ export default function POSPage() {
     }
   };
 
-  const openSubmitConfirm = (status: "COMPLETED" | "PENDING" = "COMPLETED") => {
+  const openSubmitConfirm = (
+    status: "COMPLETED" | "PENDING" = "COMPLETED",
+    applyCredit: boolean | null = useClientCredit,
+  ) => {
     if (!validateSale()) return;
 
+    // Si el cliente tiene saldo a favor y todavía no se eligió, se pregunta.
+    if (applyCredit === null && clientCredit > 0 && total > 0) {
+      setConfirmModal({
+        title: "Saldo a favor",
+        message: `${selectedClient ? clientName(selectedClient) : "El cliente"} tiene ${fmtMoney(clientCredit)} a favor. ¿Querés descontarlo de esta venta?`,
+        confirmText: `Sí, descontar ${fmtMoney(Math.min(clientCredit, total))}`,
+        cancelText: "No descontar",
+        danger: false,
+        onConfirm: () => {
+          setUseClientCredit(true);
+          openSubmitConfirm(status, true);
+        },
+        onCancel: () => {
+          setUseClientCredit(false);
+          openSubmitConfirm(status, false);
+        },
+      });
+      return;
+    }
+
+    const plan = getCreditPlan(applyCredit === true);
     const isPending = status === "PENDING";
-    const debtNote = debt > 0 ? ` Quedará en cuenta corriente: ${fmtMoney(debt)}.` : "";
+    const creditNote =
+      plan.creditApplied > 0
+        ? ` Se descuentan ${fmtMoney(plan.creditApplied)} de saldo a favor: a cobrar ${fmtMoney(plan.amountDue)}.`
+        : "";
+    const debtNote = plan.debt > 0 ? ` Quedará en cuenta corriente: ${fmtMoney(plan.debt)}.` : "";
 
     setConfirmModal({
       title: isPending ? "Dejar venta pendiente" : "Finalizar venta",
       message: isPending
-        ? `¿Guardar esta venta por ${fmtMoney(total)} como pendiente? La vas a poder confirmar después desde Ventas.${debtNote}`
-        : `¿Confirmás registrar esta venta por ${fmtMoney(total)}?${debtNote}`,
+        ? `¿Guardar esta venta por ${fmtMoney(total)} como pendiente? La vas a poder confirmar después desde Ventas.${creditNote}${debtNote}`
+        : `¿Confirmás registrar esta venta por ${fmtMoney(total)}?${creditNote}${debtNote}`,
       confirmText: isPending ? "Dejar pendiente" : "Finalizar venta",
       danger: false,
-      onConfirm: () => submitSale(status),
+      onConfirm: () => submitSale(status, applyCredit === true),
     });
   };
 
@@ -1438,9 +1504,12 @@ export default function POSPage() {
 
     setConfirmLoading(true);
 
+    const modal = confirmModal;
+
     try {
-      await confirmModal.onConfirm();
-      setConfirmModal(null);
+      await modal.onConfirm();
+      // onConfirm puede abrir otro modal (ej: después de elegir el saldo a favor).
+      setConfirmModal((current) => (current === modal ? null : current));
     } finally {
       setConfirmLoading(false);
     }
@@ -1561,14 +1630,32 @@ export default function POSPage() {
         {selectedClient ? (
           <>
             <small className="pos-client-help">Seleccionado: {clientName(selectedClient)} · {clientCategoryLabel(selectedClient.category)}</small>
-            {num(selectedClient.currentBalance) < 0 && (
-              <div className={selectedClient.isAccountEnabled ? "pos-client-credit" : "pos-client-credit off"}>
-                <b>Este cliente tiene {fmtMoney(-num(selectedClient.currentBalance))} a favor.</b>
+            {clientCredit > 0 && (
+              <div className={useClientCredit === false ? "pos-client-credit off" : "pos-client-credit"}>
+                <b>Este cliente tiene {fmtMoney(clientCredit)} a favor.</b>
                 <span>
-                  {selectedClient.isAccountEnabled
-                    ? "Se descuenta solo si dejás la venta (o una parte) en cuenta corriente."
-                    : "Tiene la cuenta corriente desactivada: el saldo no se puede aplicar a esta venta."}
+                  {useClientCredit === true
+                    ? "Se descuenta de esta venta y sale en el ticket."
+                    : useClientCredit === false
+                      ? "No se descuenta en esta venta."
+                      : "¿Descontarlo de esta venta? Si no elegís, se pregunta al finalizar."}
                 </span>
+                <div className="pos-client-credit-actions">
+                  <button
+                    type="button"
+                    className={useClientCredit === true ? "active" : ""}
+                    onClick={() => setUseClientCredit(true)}
+                  >
+                    Descontar
+                  </button>
+                  <button
+                    type="button"
+                    className={useClientCredit === false ? "active" : ""}
+                    onClick={() => setUseClientCredit(false)}
+                  >
+                    No descontar
+                  </button>
+                </div>
               </div>
             )}
           </>
@@ -2158,6 +2245,8 @@ export default function POSPage() {
                       {deliveryMode === "LOCAL_DELIVERY" && deliveryCostForTotal > 0 && <div><span>Envío</span><b>{fmtMoney(deliveryCostForTotal)}</b></div>}
                       {discount > 0 && <div><span>Descuento</span><b>-{fmtMoney(discount)}</b></div>}
                       <div className="total"><span>Total</span><b>{fmtMoney(total)}</b></div>
+                      {creditApplied > 0 && <div><span>Saldo a favor</span><b>-{fmtMoney(creditApplied)}</b></div>}
+                      {creditApplied > 0 && <div className="total"><span>A cobrar</span><b>{fmtMoney(amountDue)}</b></div>}
                     </div>
                     {debt > 0 && <div className="badge badge-yellow debt-badge">Queda en cuenta corriente: {fmtMoney(debt)}</div>}
                     <div className="pos-finish-row">
@@ -2165,7 +2254,7 @@ export default function POSPage() {
                         Dejar pendiente
                       </button>
                       <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm()}>
-                        <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
+                        <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(amountDue)}`}
                       </button>
                     </div>
                   </footer>
@@ -2458,13 +2547,15 @@ export default function POSPage() {
                       {deliveryMode === "LOCAL_DELIVERY" && deliveryCostForTotal > 0 && <div><span>Envío</span><b>{fmtMoney(deliveryCostForTotal)}</b></div>}
                       {discount > 0 && <div><span>Descuento</span><b>-{fmtMoney(discount)}</b></div>}
                       <div className="total"><span>Total</span><b>{fmtMoney(total)}</b></div>
+                      {creditApplied > 0 && <div><span>Saldo a favor</span><b>-{fmtMoney(creditApplied)}</b></div>}
+                      {creditApplied > 0 && <div className="total"><span>A cobrar</span><b>{fmtMoney(amountDue)}</b></div>}
                     </div>
                     <div className="pos-finish-row">
                       <button type="button" className="pos-finish-secondary" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm("PENDING")}>
                         Dejar pendiente
                       </button>
                       <button type="button" className="pos-finish" disabled={submitting || !cart.length} onClick={() => openSubmitConfirm()}>
-                        <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(total)}`}
+                        <Check size={18} />{submitting ? "Registrando..." : `Finalizar · ${fmtMoney(amountDue)}`}
                       </button>
                     </div>
                   </footer>
@@ -2602,7 +2693,17 @@ export default function POSPage() {
                 </div>
               </div>
               <div className="modal-footer pos-confirm-footer">
-                <button className="btn btn-secondary" onClick={() => setConfirmModal(null)} disabled={confirmLoading}>Cancelar</button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    const modal = confirmModal;
+                    setConfirmModal(null);
+                    modal.onCancel?.();
+                  }}
+                  disabled={confirmLoading}
+                >
+                  {confirmModal.cancelText ?? "Cancelar"}
+                </button>
                 <button className={confirmModal.danger ? "btn btn-danger" : "btn btn-primary"} onClick={confirmAction} disabled={confirmLoading}>{confirmLoading ? <span className="spinner" /> : (confirmModal.confirmText ?? "Confirmar")}</button>
               </div>
             </div>
@@ -3000,6 +3101,12 @@ div[data-rht-toaster], div[data-rht-toaster] * { z-index: 2147483647 !important;
 .pos-client-credit b { color: var(--accent); }
 .pos-client-credit span { color: var(--text2); font-size: 11px; }
 .pos-client-credit.off { border-color: var(--border); background: transparent; }
+.pos-client-credit-actions { display: flex; gap: 6px; margin-top: 4px; }
+.pos-client-credit-actions button {
+  flex: 1; padding: 5px 8px; border-radius: 8px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border); background: transparent; color: var(--text2); cursor: pointer;
+}
+.pos-client-credit-actions button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
 .pos-client-credit.off b { color: var(--text2); }
 .pos-client-no-results { padding: 10px; text-align: center; }
 .pos-help.danger { color: var(--danger); }

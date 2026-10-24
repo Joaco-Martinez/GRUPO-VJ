@@ -2,6 +2,7 @@ import axios from "axios";
 import prisma from "../prisma";
 import {
   getAccountBalanceText,
+  getCreditApplied,
   getClientBalanceAfterSale,
   getPaymentLines,
   getPaymentMethodLabel,
@@ -240,6 +241,13 @@ function formatComprobanteNumero(puntoVenta: number, numero: number) {
   return `${pv}-${nro}`;
 }
 
+function formatMoneyTicket(value: number) {
+  return `$ ${value.toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function buildTicketPayload(sale: any, accountBalance: number | null = null) {
   const subtotal = numberOrZero(sale.subtotal);
   const total = numberOrZero(sale.total);
@@ -265,13 +273,19 @@ function buildTicketPayload(sale: any, accountBalance: number | null = null) {
       }`
     : "Ticket no fiscal - Gracias por su compra";
 
-  // El saldo de cuenta va en el pie, que el POS local siempre imprime.
+  // El saldo a favor usado y el saldo de cuenta van en el pie, que el POS
+  // local siempre imprime.
+  const creditApplied = getCreditApplied(sale);
+  const creditAppliedText =
+    creditApplied > 0
+      ? `Descuento saldo a favor: -${formatMoneyTicket(creditApplied)} | A pagar: ${formatMoneyTicket(Math.max(total - creditApplied, 0))}`
+      : "";
   const accountBalanceText =
     accountBalance !== null ? getAccountBalanceText(accountBalance) : "";
 
-  const footer = accountBalanceText
-    ? `${accountBalanceText} | ${baseFooter}`
-    : baseFooter;
+  const footer = [creditAppliedText, accountBalanceText, baseFooter]
+    .filter(Boolean)
+    .join(" | ");
 
   return {
     saleId,
@@ -363,6 +377,10 @@ function buildTicketPayload(sale: any, accountBalance: number | null = null) {
     subtotal,
     discount,
     total,
+
+    ...(creditApplied > 0
+      ? { creditApplied, amountToPay: Math.max(total - creditApplied, 0) }
+      : {}),
 
     ...(accountBalance !== null
       ? { accountBalance, accountBalanceText }

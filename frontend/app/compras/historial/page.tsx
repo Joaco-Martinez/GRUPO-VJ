@@ -160,6 +160,40 @@ function getErrorMessage(error: unknown, fallback: string) {
   );
 }
 
+function normalizeDecimalDraft(value: string) {
+  const normalized = value.replace(/,/g, ".");
+  let result = "";
+  let hasDot = false;
+
+  for (const char of normalized) {
+    if (/\d/.test(char)) {
+      result += char;
+      continue;
+    }
+
+    if (char === "." && !hasDot) {
+      result += char;
+      hasDot = true;
+    }
+  }
+
+  return result;
+}
+
+function parseDecimalDraft(value: string) {
+  const normalized = value.trim().replace(/,/g, ".");
+
+  if (!normalized || normalized === ".") return null;
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function editableNumberValue(value: number) {
+  if (!Number.isFinite(value)) return "";
+  return String(value);
+}
+
 function safeNum(value: number | string | null | undefined, fallback?: number | string | null) {
   const parsedValue =
     value === null || value === undefined || value === "" ? undefined : Number(value);
@@ -327,6 +361,7 @@ export default function ComprasHistorialPage() {
   const [editPaymentMethod, setEditPaymentMethod] = useState<PaymentMethod>("EFECTIVO");
   const [editDate, setEditDate] = useState("");
   const [editItems, setEditItems] = useState<EditItem[]>([]);
+  const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
 
   const [addProductQuery, setAddProductQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
@@ -485,6 +520,7 @@ export default function ComprasHistorialPage() {
     }).filter((item) => item.productId);
 
     setEditItems(items);
+    setEditDrafts({});
     setEditProviderId(purchase.providerId || "");
     setEditProvider(getProviderName(purchase) === "Sin proveedor" ? "" : getProviderName(purchase));
     setEditInvoice(getInvoiceNumber(purchase) === "—" ? "" : getInvoiceNumber(purchase));
@@ -529,8 +565,37 @@ export default function ComprasHistorialPage() {
     );
   };
 
+  const setEditDraft = (key: string, rawValue: string, apply: (value: number) => void) => {
+    const draft = normalizeDecimalDraft(rawValue);
+
+    setEditDrafts((prev) => ({ ...prev, [key]: draft }));
+
+    const parsed = parseDecimalDraft(draft);
+    if (parsed !== null) apply(parsed);
+  };
+
+  const commitEditDraft = (key: string, apply: (value: number) => void) => {
+    const draft = editDrafts[key];
+    if (draft === undefined) return;
+
+    const parsed = parseDecimalDraft(draft);
+    apply(parsed === null ? 0 : parsed);
+
+    setEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
   const removeEditItem = (productId: string) => {
     setEditItems((prev) => prev.filter((item) => item.productId !== productId));
+    setEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[`cost:${productId}`];
+      delete next[`kg:${productId}`];
+      return next;
+    });
   };
 
   const addEditItem = (product: Product) => {
@@ -1003,10 +1068,14 @@ export default function ComprasHistorialPage() {
                                 <label className="purchase-edit-qty">
                                   <span>Kg</span>
                                   <input
-                                    type="number"
-                                    step="0.001"
-                                    value={item.quantityKg}
-                                    onChange={(e) => setEditItemKg(item.productId, num(e.target.value))}
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editDrafts[`kg:${item.productId}`] ?? editableNumberValue(item.quantityKg)}
+                                    onFocus={(e) => e.currentTarget.select()}
+                                    onChange={(e) =>
+                                      setEditDraft(`kg:${item.productId}`, e.target.value, (v) => setEditItemKg(item.productId, v))
+                                    }
+                                    onBlur={() => commitEditDraft(`kg:${item.productId}`, (v) => setEditItemKg(item.productId, v))}
                                   />
                                 </label>
                               ) : (
@@ -1024,11 +1093,14 @@ export default function ComprasHistorialPage() {
                               <label className="purchase-edit-cost">
                                 <span>Costo</span>
                                 <input
-                                  type="number"
-                                  step="0.01"
-                                  value={item.unitCost}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editDrafts[`cost:${item.productId}`] ?? editableNumberValue(item.unitCost)}
                                   onFocus={(e) => e.currentTarget.select()}
-                                  onChange={(e) => setEditItemCost(item.productId, num(e.target.value))}
+                                  onChange={(e) =>
+                                    setEditDraft(`cost:${item.productId}`, e.target.value, (v) => setEditItemCost(item.productId, v))
+                                  }
+                                  onBlur={() => commitEditDraft(`cost:${item.productId}`, (v) => setEditItemCost(item.productId, v))}
                                 />
                               </label>
 
